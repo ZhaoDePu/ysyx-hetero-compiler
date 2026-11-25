@@ -1,0 +1,174 @@
+{
+  "task": "vision",
+  "seed": 19027,
+  "splits": {
+    "train": [
+      0,
+      1024
+    ],
+    "validation": [
+      1,
+      256
+    ],
+    "calibration": [
+      2,
+      256
+    ],
+    "test": [
+      3,
+      256
+    ]
+  },
+  "history": [
+    {
+      "epoch": 1,
+      "train_loss": 1.3274785354733467,
+      "validation_loss": 1.1865198612213135,
+      "validation_top1": 0.55859375
+    },
+    {
+      "epoch": 2,
+      "train_loss": 0.9050310738384724,
+      "validation_loss": 0.5758057832717896,
+      "validation_top1": 0.87890625
+    },
+    {
+      "epoch": 3,
+      "train_loss": 0.31198046589270234,
+      "validation_loss": 0.09084037691354752,
+      "validation_top1": 1.0
+    },
+    {
+      "epoch": 4,
+      "train_loss": 0.03806936903856695,
+      "validation_loss": 0.012670218013226986,
+      "validation_top1": 1.0
+    },
+    {
+      "epoch": 5,
+      "train_loss": 0.007505564979510382,
+      "validation_loss": 0.005154596175998449,
+      "validation_top1": 1.0
+    },
+    {
+      "epoch": 6,
+      "train_loss": 0.0034034698910545558,
+      "validation_loss": 0.003362561110407114,
+      "validation_top1": 1.0
+    },
+    {
+      "epoch": 7,
+      "train_loss": 0.002346781504456885,
+      "validation_loss": 0.002681388985365629,
+      "validation_top1": 1.0
+    },
+    {
+      "epoch": 8,
+      "train_loss": 0.0018315055058337748,
+      "validation_loss": 0.0023251990787684917,
+      "validation_top1": 1.0
+    },
+    {
+      "epoch": 9,
+      "train_loss": 0.0015354053830378689,
+      "validation_loss": 0.0019858821760863066,
+      "validation_top1": 1.0
+    },
+    {
+      "epoch": 10,
+      "train_loss": 0.0012969852577953134,
+      "validation_loss": 0.0017796483589336276,
+      "validation_top1": 1.0
+    },
+    {
+      "epoch": 11,
+      "train_loss": 0.0011156933178426698,
+      "validation_loss": 0.0015830120537430048,
+      "validation_top1": 1.0
+    },
+    {
+      "epoch": 12,
+      "train_loss": 0.0009758424766914686,
+      "validation_loss": 0.001431992743164301,
+      "validation_top1": 1.0
+    },
+    {
+      "epoch": 13,
+      "train_loss": 0.0008534648695786018,
+      "validation_loss": 0.001279489602893591,
+      "validation_top1": 1.0
+    },
+    {
+      "epoch": 14,
+      "train_loss": 0.0007577537107863463,
+      "validation_loss": 0.0011519546387717128,
+      "validation_top1": 1.0
+    },
+    {
+      "epoch": 15,
+      "train_loss": 0.0006745080045220675,
+      "validation_loss": 0.0010461434721946716,
+      "validation_top1": 1.0
+    },
+    {
+      "epoch": 16,
+      "train_loss": 0.0006056424244889058,
+      "validation_loss": 0.0009707668796181679,
+      "validation_top1": 1.0
+    },
+    {
+      "epoch": 17,
+      "train_loss": 0.0005468295894388575,
+      "validation_loss": 0.0009006071486510336,
+      "validation_top1": 1.0
+    },
+    {
+      "epoch": 18,
+      "train_loss": 0.0004964812433172483,
+      "validation_loss": 0.0008161197765730321,
+      "validation_top1": 1.0
+    },
+    {
+      "epoch": 19,
+      "train_loss": 0.00045029636748949997,
+      "validation_loss": 0.00076262466609478,
+      "validation_top1": 1.0
+    },
+    {
+      "epoch": 20,
+      "train_loss": 0.0004122254485992016,
+      "validation_loss": 0.0007089100545272231,
+      "validation_top1": 1.0
+    },
+    {
+      "epoch": 21,
+      "train_loss": 0.00037912241623416776,
+      "validation_loss": 0.0006699884543195367,
+      "validation_top1": 1.0
+    },
+    {
+      "epoch": 22,
+      "train_loss": 0.000350033947142947,
+      "validation_loss": 0.0006247833371162415,
+      "validation_top1": 1.0
+    }
+  ],
+  "validation_top1": 1.0,
+  "test_top1": 1.0,
+  "models": {
+    "fp32": "vision_fp32.onnx",
+    "int8": "vision_int8.onnx"
+  },
+  "sha256": {
+    "fp32": "70222ef701d014f5fd7ece1e61b2a74a7350ac0151bdc30592e015e7af49e377",
+    "int8": "c944cbca7fdfcc114b467f2f0319e320d8f1403f9a6d065420b0873a9a7ccc62"
+  },
+  "activation_scales": {
+    "input": 0.015625,
+    "c1": 0.0625,
+    "c2": 0.125,
+    "c3": 0.25
+  },
+  "input_scale": 0.015625,
+  "logit_scale": 0.25
+}

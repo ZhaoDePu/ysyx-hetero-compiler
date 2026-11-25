@@ -1,5 +1,7 @@
 """Independent scalar evaluation for layout transformations and reductions."""
 
+from decimal import Decimal, localcontext
+from functools import lru_cache
 import itertools
 import math
 import struct
@@ -14,6 +16,48 @@ def _offset(index, shape):
     for position, size in zip(index, shape, strict=True):
         offset = offset * size + position
     return offset
+
+
+@lru_cache(maxsize=32)
+def _exponents_q23(numerator, denominator):
+    # An independent high-precision oracle for the constant table. The
+    # emitted kernel compares integer weight and remainder magnitudes.
+    with localcontext() as context:
+        context.prec = 60
+        step = Decimal(-numerator) / denominator
+        return tuple(round((step*i).exp() * (1 << 23)) for i in range(256))
+
+
+def _softmax(data, shape, attrs):
+    def f32(value):
+        return struct.unpack("<f", struct.pack("<f", value))[0]
+
+    dim = attrs["axis"]
+    si = attrs["in_scale"][0] / attrs["in_scale"][1]
+    so = attrs["out_scale"][0] / attrs["out_scale"][1]
+    point = attrs["zero_point"]
+    causal = attrs.get("causal_offset")
+    table = _exponents_q23(*attrs["in_scale"]) if attrs.get("algorithm") == "q23" else None
+    quantum = attrs["out_scale"][1]
+    result = [point] * len(data)
+    for before in _coordinates(shape[:dim]):
+        active = shape[dim] if causal is None else min(shape[dim], before[-1] + causal + 1)
+        for after in _coordinates(shape[dim+1:]):
+            indexes = [_offset(before + (i,) + after, shape) for i in range(active)]
+            highest = max(data[i] for i in indexes)
+            changes = [highest - data[i] for i in indexes]
+            if table is None:
+                weights = [f32(math.exp(-si*d)) for d in changes]
+                total = sum(weights)
+                for i, weight in zip(indexes, weights, strict=True):
+                    result[i] += round(f32(f32(weight / total) / so))
+            else:
+                weights = [table[d] for d in changes]
+                total = sum(weights)
+                for i, weight in zip(indexes, weights, strict=True):
+                    q, rem = divmod(weight * quantum, total)
+                    result[i] += q + (rem*2 > total or (rem*2 == total and q % 2))
+    return result
 
 
 def evaluate_layout(op, args, shapes, dest, attrs):
@@ -67,22 +111,7 @@ def evaluate_layout(op, args, shapes, dest, attrs):
     if op == "Lookup":
         return [attrs["table"][value & 255] for value in data]
     if op == "QSoftmax":
-        def f32(value):
-            return struct.unpack("<f", struct.pack("<f", value))[0]
-
-        axis = attrs["axis"]
-        si = attrs["in_scale"][0] / attrs["in_scale"][1]
-        so = attrs["out_scale"][0] / attrs["out_scale"][1]
-        out = [0] * len(data)
-        for before in _coordinates(src[:axis]):
-            for after in _coordinates(src[axis+1:]):
-                indexes = [_offset(before + (j,) + after, src) for j in range(src[axis])]
-                highest = max(data[j] for j in indexes)
-                weights = [f32(math.exp(si*(data[j]-highest))) for j in indexes]
-                scale = sum(weights)
-                for pos, val in zip(indexes, weights, strict=True):
-                    out[pos] = round(f32(f32(val/scale)/so)) + attrs["zero_point"]
-        return out
+        return _softmax(data, src, attrs)
     if op == "Sigmoid":
         return [round(16/(1 + math.exp(-value/16))) for value in data]
     raise ValueError(f"no layout evaluator for {op}")

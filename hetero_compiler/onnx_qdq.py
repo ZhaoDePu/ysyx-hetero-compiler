@@ -100,7 +100,11 @@ class QuantizedIslands:
             self.consumed.add(val)
             return True
         if op in ("Sigmoid", "Gelu", "SiLU", "Softmax"):
-            if len(inputs) != 1 or not isinstance(self.virtual.get(inputs[0]), Dequantized):
+            arg = self.virtual.get(inputs[0]) if len(inputs) == 1 else None
+            mask = {}
+            if isinstance(arg, Operation) and op == "Softmax" and arg.op == "CausalMask":
+                mask, arg = arg.attrs, arg.inputs[0]
+            if not isinstance(arg, Dequantized):
                 raise GraphError(f"{op} requires a direct scalar DequantizeLinear input")
             if op == "Gelu":
                 if attrs.keys() - {"approximate"} or attrs.get("approximate", "none") not in ("none", "tanh"):
@@ -108,9 +112,26 @@ class QuantizedIslands:
             elif op == "Softmax":
                 if opset < 13 or attrs.keys() - {"axis"}:
                     raise GraphError("quantized Softmax requires opset 13+ and an optional axis")
+                if mask:
+                    rank = len(ir.spec(arg.tensor)["shape"])
+                    if axis(attrs.get("axis", -1), rank) != rank - 1:
+                        raise GraphError("causal Softmax must reduce its final axis")
             elif attrs:
                 raise GraphError(f"unsupported {op} attributes")
-            self._define(out, Operation(op, (self.virtual[inputs[0]],), attrs))
+            self._define(out, Operation(op, (arg,), {**attrs, **mask}))
+        elif op == "Add":
+            if len(inputs) != 2 or attrs:
+                raise GraphError("Q/DQ Add requires two operands and no attributes")
+            values = [self.virtual.get(i) for i in inputs]
+            if all(isinstance(v, Dequantized) for v in values):
+                self._define(out, Operation("Add", tuple(values), {}))
+            elif any(isinstance(v, Dequantized) for v in values) and values.count(None) == 1:
+                mask_index = values.index(None)
+                logits = values[1 - mask_index]
+                offset = self.causal_mask(logits, inputs[mask_index])
+                self._define(out, Operation("CausalMask", (logits,), {"causal_offset": offset}))
+            else:
+                raise GraphError("Q/DQ Add requires two direct dequantized bytes or a static causal mask")
         elif op == "Mul":
             if len(inputs) != 2 or attrs or not all(n in self.virtual for n in inputs):
                 raise GraphError("only Sigmoid(x)×x floating Mul is supported")
@@ -133,6 +154,29 @@ class QuantizedIslands:
             raise GraphError(f"unsupported floating operator {op} between quantized boundaries")
         self.consumed.update(name for name in inputs if name in self.virtual)
         return True
+
+    def causal_mask(self, logits, name):
+        ir = self.importer
+        source = ir.spec(logits.tensor)
+        scores = source["shape"]
+        shape = ir.spec(name)["shape"]
+        if (source["dtype"] not in ("int8", "uint8") or not 2 <= len(shape) <= len(scores)
+                or shape[-2:] != scores[-2:] or any(d != 1 for d in shape[:-2])):
+            raise GraphError("causal mask must broadcast a constant query×key plane")
+        values = ir.static(name, {"float32"})
+        rows, cols = shape[-2:]
+        # The centered byte logits are bounded by 255*scale. This
+        # conservative margin keeps each finite blocked entry at least
+        # 128 below the stable row maximum even after float32 rounding.
+        underflow = -256 - 4 * float(255 * logits.scale)
+        if any(not (value == 0 or value <= underflow) for value in values):
+            raise GraphError("causal mask requires zero entries or masks that provably underflow exp")
+        first = sum(v == 0 for v in values[:cols])
+        if first < 1 or any((value == 0) != (key < min(query + first, cols))
+                            for query in range(rows) for key, value in
+                            enumerate(values[query*cols:(query+1)*cols])):
+            raise GraphError("causal mask must expose a nonempty increasing key prefix per query")
+        return first - 1
 
     def conv_bias(self, inputs, scale):
         ir = self.importer
@@ -166,6 +210,18 @@ class QuantizedIslands:
         source = value.inputs[0]
         if not (_power_of_two(source.scale) and _power_of_two(scale)):
             raise GraphError("exact Q/DQ lowering requires power-of-two float scales")
+        if value.op == "Add":
+            a, b = value.inputs
+            if any(ir.spec(x.tensor)["dtype"] not in ("int8", "uint8") for x in (a, b)):
+                raise GraphError("Q/DQ Add requires byte input")
+            common = min(a.scale, b.scale)
+            bound = (ir.bound(a.tensor, a.point)*a.scale + ir.bound(b.tensor, b.point)*b.scale)/common
+            if not _power_of_two(b.scale) or bound >= 1 << 24:
+                raise GraphError("Q/DQ Add exceeds exact float32 dyadic mantissa or exponent envelope")
+            return ir.qadd([a.tensor, a.scale_name, a.point_name, b.tensor, b.scale_name, b.point_name,
+                            scale_name, point_name], out, ident)
+        if value.op == "CausalMask":
+            raise GraphError("causal mask must feed a Softmax before QuantizeLinear")
         if value.op == "Conv":
             a, b, bias = value.inputs
             product = a.scale*b.scale
@@ -182,11 +238,16 @@ class QuantizedIslands:
         if source_dtype not in ("int8", "uint8"):
             raise GraphError("quantized activation requires byte input")
         if value.op == "Softmax":
-            dim = axis(value.attrs.get("axis", -1), len(ir.spec(source.tensor)["shape"]))
-            return ir.emit("QSoftmax", [source.tensor], out,
-                           {"dtype": dtype, "axis": dim, "zero_point": point,
-                            "in_scale": [source.scale.numerator, source.scale.denominator],
-                            "out_scale": [scale.numerator, scale.denominator]}, ident)
+            shape = ir.spec(source.tensor)["shape"]
+            dim = axis(value.attrs.get("axis", -1), len(shape))
+            attrs = {"dtype": dtype, "axis": dim, "zero_point": point,
+                     "in_scale": [source.scale.numerator, source.scale.denominator],
+                     "out_scale": [scale.numerator, scale.denominator]}
+            if "causal_offset" in value.attrs:
+                attrs["causal_offset"] = value.attrs["causal_offset"]
+            if shape[dim] <= 255 and scale.numerator == 1 and scale.denominator <= 1 << 16:
+                attrs["algorithm"] = "q23"
+            return ir.emit("QSoftmax", [source.tensor], out, attrs, ident)
         table = []
         lo, hi = (-128, 127) if dtype == "int8" else (0, 255)
         for index in range(256):

@@ -7,7 +7,7 @@ import json
 
 _WIDTH = {"int8": 1, "uint8": 1, "int32": 4, "int64": 8}
 _LAYOUT = {"Transpose", "Reshape", "Slice", "Resize", "Concat", "Expand"}
-_ADVANCED = _LAYOUT | {"Cast", "Conv", "MaxPool", "ArgMax", "RowSoftmax", "RMSNorm"}
+_ADVANCED = _LAYOUT | {"Cast", "Conv", "MaxPool", "ArgMax", "RowSoftmax", "RMSNorm", "QSoftmax"}
 _LOAD = {"int8": 0, "uint8": 4, "int32": 2}
 _VARIANTS = {"v6", "g3", "g4"}
 _LEGACY_SILU_KNOTS = (0, 0, 1, 2, 5, 12, 31, 69, 128, 187, 225, 244, 251, 254, 255, 256, 256)
@@ -163,6 +163,11 @@ def _supports_advanced(op, inputs, out, attrs):
                 all(type(a) is int and type(b) is int and type(d) is int and 0 <= a < b <= dim
                     and d > 0 and n == (b - a + d - 1) // d
                     for a, b, d, dim, n in zip(starts, ends, steps, src, dst)))
+    if op == "QSoftmax":
+        axis = attrs.get("axis", len(src) - 1)
+        return (len(inputs) == 1 and src == dst and dtypes[0] in {"int8", "uint8"}
+                and dtype in {"int8", "uint8"} and attrs.get("algorithm") == "q23"
+                and type(axis) is int and 0 <= axis < len(src) and src[axis] <= 255)
     if op in {"RMSNorm", "RowSoftmax"}:
         return (len(inputs) == 1 and src == dst and len(src) == 2 and dtypes[0] == "int8"
                 and dtype == ("uint8" if op == "RowSoftmax" else "int8") and src[1] <= 4096)
@@ -324,7 +329,7 @@ def _activation(p, op, mode):
     _lookup(p, values, -128)
 
 
-def _lookup(p, values, first_input):
+def _lookup(p, values, first_input, value_reg=7, compare_reg=8, label="activation"):
     runs = []
     for x, value in enumerate(values, first_input):
         if not runs or runs[-1][1] != value:
@@ -332,19 +337,19 @@ def _lookup(p, values, first_input):
 
     def tree(first, end):
         if end - first == 1:
-            p.li(7, runs[first][1])
-            p.jump("activation_end")
+            p.li(value_reg, runs[first][1])
+            p.jump(f"{label}_end")
             return
         mid = (first + end) // 2
-        upper = f"activation_{first}_{mid}"
-        p.li(8, runs[mid][0])
-        p.branch(5, 7, 8, upper)
+        upper = f"{label}_{first}_{mid}"
+        p.li(compare_reg, runs[mid][0])
+        p.branch(5, value_reg, compare_reg, upper)
         tree(first, mid)
         p.label(upper)
         tree(mid, end)
 
     tree(0, len(runs))
-    p.label("activation_end")
+    p.label(f"{label}_end")
 
 
 def _gemm(p, inputs, offsets, attrs):
@@ -769,6 +774,105 @@ def _rows(p, op, tensor, offset, attrs):
     p.label("row_done")
 
 
+def _qsoftmax(p, tensor, offset, attrs):
+    """Integer Q23 exponent weights and RNE output on the RV32 GPU."""
+    shape, dtype = tensor["shape"], tensor["dtype"]
+    dim = attrs["axis"]
+    width, step = shape[dim], prod(shape[dim+1:])
+    span = width * step
+    zero = attrs["zero_point"]
+    causal = attrs.get("causal_offset")
+
+    def advance(reg):
+        if step <= 2047:
+            p.addi(reg, reg, step)
+        else:
+            p.li(15, step)
+            p.arithmetic(reg, reg, 15)
+
+    # Convert the flat output ID to a strided softmax lane.
+    _constant_arith(p, 8, 5, span, "divu", 15)
+    p.li(10, width)
+    if causal is not None:
+        _constant_arith(p, 11, 8, shape[-2], "remu", 15)
+        p.addi(11, 11, causal + 1)
+        p.branch(7, 11, 10, "qsoft_active")
+        p.addi(10, 11, 0)
+        p.label("qsoft_active")
+        _constant_arith(p, 11, 5, width, "remu", 15)
+        p.branch(6, 11, 10, "qsoft_unmasked")
+        p.li(7, zero)
+        p.jump("qsoft_done")
+        p.label("qsoft_unmasked")
+    _constant_arith(p, 8, 8, span, "mul", 15)
+    _constant_arith(p, 11, 5, step, "remu", 15)
+    p.arithmetic(8, 8, 11)
+    p.address(8, 8, offset, dtype, temp=15)
+    p.address(14, 5, offset, dtype, temp=15)
+    _constant_arith(p, 10, 10, step, "mul", 15)
+    p.arithmetic(10, 8, 10)
+
+    # Pass one finds the maximum among unmasked scores.
+    p.addi(9, 8, 0)
+    p.li(11, -128 if dtype == "int8" else 0)
+    p.label("qsoft_max")
+    p.load(12, 9, dtype)
+    p.branch(5, 11, 12, "qsoft_max_continue")
+    p.addi(11, 12, 0)
+    p.label("qsoft_max_continue")
+    advance(9)
+    p.branch(1, 9, 10, "qsoft_max")
+
+    # Pass two sums exponent weights. The delta is independent of the
+    # input quantizer's zero point and is always in [0, 255].
+    numerator, denominator = attrs["in_scale"]
+    si = numerator / denominator
+    weights = [round((1 << 23) * exp(-si*d)) for d in range(256)]
+    p.addi(9, 8, 0)
+    p.li(13, 0)
+    p.label("qsoft_sum")
+    p.load(12, 9, dtype)
+    p.arithmetic(12, 11, 12, f7=0x20)
+    _lookup(p, weights, 0, value_reg=12, compare_reg=15, label="qsoft_exponent")
+    p.branch(1, 9, 14, "qsoft_add")
+    p.addi(7, 12, 0)
+    p.label("qsoft_add")
+    p.arithmetic(13, 13, 12)
+    advance(9)
+    p.branch(0, 9, 10, "qsoft_normalize")
+    p.jump("qsoft_sum")
+
+    # Integer fractional long division avoids a wide numerator. The
+    # denominator is at most 255 * 2**23 and doubled remainder fits u32.
+    p.label("qsoft_normalize")
+    quantum = attrs["out_scale"][1]
+    p.branch(1, 7, 13, "qsoft_fraction")
+    p.li(7, quantum)
+    p.jump("qsoft_zero_point")
+    p.label("qsoft_fraction")
+    p.addi(8, 7, 0)
+    p.li(7, 0)
+    for bit in range(quantum.bit_length() - 1):
+        skip = f"qsoft_bit_{bit}"
+        p.addi(8, 8, 1, f3=1)
+        p.addi(7, 7, 1, f3=1)
+        p.branch(6, 8, 13, skip)
+        p.arithmetic(8, 8, 13, f7=0x20)
+        p.addi(7, 7, 1)
+        p.label(skip)
+    p.addi(8, 8, 1, f3=1)
+    p.branch(6, 8, 13, "qsoft_zero_point")
+    p.branch(6, 13, 8, "qsoft_round_up")
+    p.addi(9, 7, 1, f3=7)
+    p.branch(0, 9, 0, "qsoft_zero_point")
+    p.label("qsoft_round_up")
+    p.addi(7, 7, 1)
+    p.label("qsoft_zero_point")
+    if zero:
+        p.addi(7, 7, zero)
+    p.label("qsoft_done")
+
+
 def _advanced(p, op, inputs, offsets, output, attrs):
     if op in _LAYOUT:
         _layout(p, op, inputs, offsets, output, attrs)
@@ -781,6 +885,8 @@ def _advanced(p, op, inputs, offsets, output, attrs):
         _spatial(p, op, inputs, offsets, output, attrs)
     elif op == "ArgMax":
         _argmax(p, inputs[0], offsets[0], attrs)
+    elif op == "QSoftmax":
+        _qsoftmax(p, inputs[0], offsets[0], attrs)
     else:
         _rows(p, op, inputs[0], offsets[0], attrs)
 
@@ -843,6 +949,9 @@ def _is_pairable(node):
 def _stage_program(stage, graph, ranges, config, page):
     variant = config["variant"]
     lanes, warps = config["lanes"], config["warps"]
+    slots = config.get("launch_warps", warps)
+    if type(slots) is not int or not 1 <= slots <= warps:
+        raise ValueError("GPU launch_warps must fit physical Warp count")
     window = config["window_bytes"]
     parts = stage.get("fused") or [stage]
     # The frozen G3 cluster faults with scalar mode kept live across the

@@ -13,7 +13,7 @@ ATTRIBUTES = {
     "Resize": {"shape"}, "Concat": {"axis"}, "MaxPool": {"kernel_shape", "strides", "pads"},
     "ArgMax": {"axis", "keepdims", "select_last_index"}, "Sigmoid": set(),
     "Cast": set(), "Expand": {"shape"}, "Lookup": {"table"},
-    "QSoftmax": {"axis", "in_scale", "out_scale", "zero_point"},
+    "QSoftmax": {"axis", "in_scale", "out_scale", "zero_point", "algorithm", "causal_offset"},
 }
 
 
@@ -73,8 +73,21 @@ def infer(op, inputs, attrs, output_dtype):
             attrs["axis"] = axis(attrs.get("axis", -1), rank)
             for name in ("in_scale", "out_scale"):
                 _integer_list(attrs, name, 2, 1, 1 << 31)
-            if not lo <= attrs.get("zero_point", 0) <= hi:
+            point = attrs.setdefault("zero_point", 0)
+            if type(point) is not int or not lo <= point <= hi:
                 raise ValueError("QSoftmax zero_point does not fit output dtype")
+            algorithm = attrs.get("algorithm", "float32")
+            if algorithm not in ("float32", "q23"):
+                raise ValueError("QSoftmax unknown arithmetic contract")
+            if algorithm == "q23":
+                numerator, denominator = attrs["out_scale"]
+                if (shape[attrs["axis"]] > 255 or numerator != 1 or denominator > 1 << 16
+                        or denominator & (denominator - 1)):
+                    raise ValueError("Q23 Softmax requires at most 255 keys and a reciprocal power-of-two output scale")
+            if "causal_offset" in attrs and (
+                    rank < 2 or attrs["axis"] != rank - 1 or type(attrs["causal_offset"]) is not int
+                    or not 0 <= attrs["causal_offset"] < shape[-1]):
+                raise ValueError("causal QSoftmax requires a valid query/key prefix on the final axis")
         return shape[:], output_dtype
     if op == "Sigmoid":
         if dtype != "int8" or output_dtype not in (None, "int8", "uint8"):
