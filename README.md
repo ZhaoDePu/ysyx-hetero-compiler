@@ -9,8 +9,8 @@ for GPU stages.
 
 ```sh
 cd /home/zdp/ysyx-migration/work-compiler
-mkdir -p /dev/shm/ysyx_compiler_c4a
-case_dir=$(mktemp -d /dev/shm/ysyx_compiler_c4a/quick.XXXXXX)
+mkdir -p /dev/shm/ysyx_compiler_c4vpu
+case_dir=$(mktemp -d /dev/shm/ysyx_compiler_c4vpu/quick.XXXXXX)
 nice -n 10 ionice -c2 -n7 python3 -B -m hetero_compiler \
   --graph examples/mixed.json --profile fpga_zu15eg_balanced --out "$case_dir/bundle"
 ```
@@ -97,7 +97,7 @@ DMA extents, including concurrent ownership where applicable. The Z15
 runner compares stage results over actual AXI DMA and checks the emitted
 MMIO commands and GPU machine code. Phase 8 replays actual full arena images
 through the native descriptor and v6 GPU models. Build scripts read pinned
-hardware files into `/dev/shm/ysyx_compiler_c4a`, apply low-priority scheduling,
+hardware files into `/dev/shm/ysyx_compiler_c4vpu`, apply low-priority scheduling,
 and limit each build to four jobs.
 
 Standalone validation commands are `python3 -B -m tools.verify_npu_rtl`
@@ -131,7 +131,7 @@ Run the four configurations over the same inputs:
 
 ```sh
 nice -n 10 ionice -c2 -n7 python3 -B -m tools.run_c2_ablation \
-  --out /dev/shm/ysyx_compiler_c4a/ablation \
+  --out /dev/shm/ysyx_compiler_c4vpu/ablation \
   examples/yolo_block_int8.onnx examples/transformer_layer_int8.onnx examples/mixed.json
 ```
 
@@ -152,8 +152,8 @@ UIO CLI with a warning gate:
 nice -n 10 ionice -c2 -n7 make -C runtime -j2 CC=gcc
 bash runtime/build_verilator.sh
 nice -n 10 ionice -c2 -n7 python3 -B -m runtime.verify_yhb \
-  --bundle /dev/shm/ysyx_compiler_c4a/quick.example/bundle \
-  --scratch /dev/shm/ysyx_compiler_c4a/runtime/yhb-check
+  --bundle /dev/shm/ysyx_compiler_c4vpu/quick.example/bundle \
+  --scratch /dev/shm/ysyx_compiler_c4vpu/runtime/yhb-check
 ```
 
 The Verilator binary uses the pinned Balanced AXI/MMIO shell. The Linux
@@ -161,7 +161,7 @@ binary requires the matching UIO control and noncached reserved DDR devices
 on the board. All four standard targets support packing and inspection.
 
 The C1-preserving regression is reproducible with
-`bash tools/run_c2_regression.sh /dev/shm/ysyx_compiler_c4a/regression`.
+`bash tools/run_c2_regression.sh /dev/shm/ysyx_compiler_c4vpu/regression`.
 It checks all software tests, 42 legacy GPU full-page results, 13 native
 NPU/VPU outputs, all 13 frozen O4 examples, the other C1 complete bundles
 and YHB emission for all four targets. The C2 ablation and C99 runtime
@@ -182,3 +182,10 @@ commands above exercise additional ONNX and hardware paths.
 - [Run strict A0–A3 ablations on standard streaming ONNX](examples/c4a_streams/README.md).
 - [Drive the C99 KV checkpoints and feed back device-produced tokens](docs/yhb-format.md#optional-kv-checkpoints).
 - [Run the standalone Z15 deployment fixtures](deploy/z15_board_kit/README.md).
+
+## Phase C4-VPU and Step 2 Z15 ABI
+
+- [Native quantized ONNX fusion and resident KV](docs/c4vpu-lowering.md)
+- [Frozen latency and accuracy benchmarks](examples/c4vpu/README.md)
+- [YHB1 runtime format and MMIO preflight](docs/yhb-format.md)
+- [Step 2 standalone C99 deployment kit](deploy/z15_board_kit/README.md)

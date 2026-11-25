@@ -76,7 +76,7 @@ Run from the compiler repository on xu4090:
 
 ```sh
 nice -n 10 ionice -c2 -n7 python3 -B -m tools.verify_asic_c3_target \
-  --out /dev/shm/ysyx_compiler_c4a/targets/ip-native
+  --out /dev/shm/ysyx_compiler_c4vpu/targets/ip-native
 ```
 
 The fixture maps all six requested shared VPU arithmetic operations. It uses

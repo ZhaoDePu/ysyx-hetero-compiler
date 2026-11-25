@@ -10,11 +10,11 @@
 python3 -B -m hetero_compiler \
   --graph examples/c4a_streams/EdgeConv_Stream_C4A.onnx \
   --profile fpga_zu15eg_balanced \
-  --out /dev/shm/ysyx_compiler_c4a/edgeconv_bundle \
+  --out /dev/shm/ysyx_compiler_c4vpu/edgeconv_bundle \
   --pipeline-tiles --pipeline-scheduler bank-aware
 
 PYTHONHASHSEED=0 nice -n 10 python3 -B -m tools.run_c4a_ablation \
-  --out /dev/shm/ysyx_compiler_c4a/stream_ablation \
+  --out /dev/shm/ysyx_compiler_c4vpu/stream_ablation \
   examples/c4a_streams/EdgeConv_Stream_C4A.onnx \
   examples/c4a_streams/LongPrefix_Stream_C4A.onnx
 ```

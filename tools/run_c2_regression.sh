@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 repo=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
-scratch=/dev/shm/ysyx_compiler_c4a
+scratch=/dev/shm/ysyx_compiler_c4vpu
 root=${1:?new evidence directory under compiler C2 RAM required}
 [[ $(realpath -e -- "$scratch") == "$scratch" && -O "$scratch" ]]
 [[ $(realpath -m -- "$root") == "$root" && "$root" == "$scratch/"* && ! -e "$root" ]]
@@ -17,7 +17,7 @@ run() {
 compile() {
     local label=$1 target=$2 model=$3
     run "$label.compile" python3 -B -m hetero_compiler --graph "$model" \
-        --profile "$target" --out "$root/bundles/$label"
+        --profile "$target" --out "$root/bundles/$label" --vpu-lowering off
 }
 replay() {
     local label=$1

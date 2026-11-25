@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 repo=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
-root=/dev/shm/ysyx_compiler_c4a/targets
+root=/dev/shm/ysyx_compiler_c4vpu/targets
 hardware=/home/zdp/ysyx-migration/repos/ysyx-npu-ext
 commit=4d410d72508a5822bc5c8014981e5b55ef8faa56
 sdk=/home/zdp/ysyx-migration/tools/oss-cad-suite

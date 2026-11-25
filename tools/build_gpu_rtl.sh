@@ -3,7 +3,7 @@ set -euo pipefail
 workspace=$(cd "$(dirname "$0")/.." && pwd -P)
 hardware=/home/zdp/ysyx-migration/repos/ysyx-gpu-ext
 variant=$1
-base=/dev/shm/ysyx_compiler_c4a/gpu
+base=/dev/shm/ysyx_compiler_c4vpu/gpu
 case "$variant" in
     v6) pin=19852c9a370828fa06aa1cfb90ad5fcd668cad30;;
     g4-16t4w|g4-8t8w) pin=df2b2b732c0786acc3dd0e207be3e39c2a6a9e28;;

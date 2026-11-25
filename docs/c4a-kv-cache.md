@@ -50,7 +50,7 @@ Reproduce the byte-exact MMIO comparison with:
 
 ```sh
 export OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1
-nice -n 10 python3 -B -m tools.run_c4a_kv --out /dev/shm/ysyx_compiler_c4a/kv/replay
+nice -n 10 python3 -B -m tools.run_c4a_kv --out /dev/shm/ysyx_compiler_c4vpu/kv/replay
 ```
 
 The transcript contains frozen RTL wall ticks and actual AXI payload bytes.

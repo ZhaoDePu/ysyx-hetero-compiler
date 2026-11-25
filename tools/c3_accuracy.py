@@ -17,7 +17,7 @@ from hetero_compiler.profile import load_profile
 from hetero_compiler.reference import evaluate
 from hetero_compiler.yhb import inspect_yhb
 
-SCRATCH = Path("/dev/shm/ysyx_compiler_c4a/training")
+SCRATCH = Path("/dev/shm/ysyx_compiler_c4vpu/training")
 RUNNER = SCRATCH.parent / "runtime/verilator/ysyx_run"
 PRIORITY = ["nice", "-n", "10", "ionice", "-c2", "-n7"]
 NUMPY_DTYPES = {"int8": "i1", "uint8": "u1", "int32": "<i4", "int64": "<i8"}
@@ -127,7 +127,7 @@ def evaluate_trained(task, models, destination, runner, output_count, policy):
     if not 16 <= output_count <= len(x):
         raise ValueError("number of RTL samples must be between 16 and the test split size")
     manifest = compile_bundle(parse_model(path_int8.read_bytes()), load_profile("fpga_zu15eg_balanced"),
-                              root / "bundle", dialect="canonical", device_policy=policy)
+                              root / "bundle", dialect="canonical", device_policy=policy, vpu_lowering="off")
     program = root / "bundle" / manifest["program"]
     graph, input_specs = manifest["graph"], manifest["input_bindings"]
     if graph["inputs"] != [input_name] or set(graph["outputs"]) != {"logits", "prediction"}:

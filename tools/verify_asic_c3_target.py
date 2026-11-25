@@ -13,7 +13,7 @@ from hetero_compiler.reference import evaluate
 from hetero_compiler.yhb import inspect_yhb
 
 
-SCRATCH = Path("/dev/shm/ysyx_compiler_c4a/targets")
+SCRATCH = Path("/dev/shm/ysyx_compiler_c4vpu/targets")
 
 
 def fixture():

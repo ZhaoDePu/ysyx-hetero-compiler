@@ -22,7 +22,7 @@ SETTINGS = [
 ]
 FMAX_NPU_MHZ, FMAX_GPU_MHZ = 164.555, 124.239
 PRIORITY = ["nice", "-n", "10", "ionice", "-c2", "-n7"]
-SCRATCH = Path("/dev/shm/ysyx_compiler_c4a")
+SCRATCH = Path("/dev/shm/ysyx_compiler_c4vpu")
 
 
 def input_values(graph, seed, *, vary_defaults=False):
@@ -54,7 +54,7 @@ def run(root, model, records, seed, pipeline):
         try:
             manifest = compile_bundle(raw, target, destination,
                                       dialect="canonical" if path.suffix == ".onnx" else "auto",
-                                      pipeline_tiles=pipeline, **settings)
+                                      pipeline_tiles=pipeline, vpu_lowering="off", **settings)
         except (ValueError, OSError) as exc:
             result.update(status="compile_error", reason=str(exc))
             records.append(result)

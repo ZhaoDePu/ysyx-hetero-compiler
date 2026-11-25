@@ -12,7 +12,7 @@ from hetero_compiler.profile import load_profile
 from hetero_compiler.yhb import emit_yhb, inspect_yhb
 
 
-RAM = Path("/dev/shm/ysyx_compiler_c4a/runtime")
+RAM = Path("/dev/shm/ysyx_compiler_c4vpu/runtime")
 
 
 def make_fixture(folder):

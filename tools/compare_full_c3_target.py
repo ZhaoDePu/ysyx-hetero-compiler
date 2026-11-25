@@ -15,7 +15,7 @@ from hetero_compiler.profile import load_profile
 from hetero_compiler.reference import evaluate
 from hetero_compiler.yhb import inspect_yhb
 
-ROOT = Path("/dev/shm/ysyx_compiler_c4a/targets")
+ROOT = Path("/dev/shm/ysyx_compiler_c4vpu/targets")
 PRIORITY = ["nice", "-n", "10", "ionice", "-c2", "-n7"]
 SIZES = (72, 72, 64)
 CLOCKS = {16: (164.555, 124.239), 24: (153.022, 126.968)}

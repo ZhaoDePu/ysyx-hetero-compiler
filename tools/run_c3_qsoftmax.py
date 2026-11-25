@@ -28,7 +28,7 @@ def build_softmax(shape, scores, *, mask=None, axis=-1, scale=1/256, score_scale
     return model.encode()
 
 
-SCRATCH = Path("/dev/shm/ysyx_compiler_c4a/softmax")
+SCRATCH = Path("/dev/shm/ysyx_compiler_c4vpu/softmax")
 PRIORITY = ["nice", "-n", "10", "ionice", "-c2", "-n7"]
 
 
@@ -63,7 +63,7 @@ def main():
         model.write_bytes(blob)
         subprocess.run(PRIORITY + [
             sys.executable, "-B", "-m", "hetero_compiler", "--graph", str(model), "--profile",
-            "fpga_zu15eg_balanced", "--out", str(bundle)
+            "fpga_zu15eg_balanced", "--out", str(bundle), "--vpu-lowering", "off"
         ], check=True)
         proc = subprocess.run(PRIORITY + [
             sys.executable, "-B", "-m", "tools.verify_bundle", "--bundle", str(bundle),

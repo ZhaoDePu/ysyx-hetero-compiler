@@ -13,7 +13,7 @@ from hetero_compiler.onnx import parse_model
 from hetero_compiler.profile import load_profile
 from tools.run_c2_ablation import SETTINGS
 
-SCRATCH = Path("/dev/shm/ysyx_compiler_c4a")
+SCRATCH = Path("/dev/shm/ysyx_compiler_c4vpu")
 FMAX_MHZ = 164.555
 MINIMUM_A3_GAIN_PCT = 10.0
 
@@ -33,7 +33,7 @@ def _one(root, path, raw, label, options):
     try:
         bundle = root / stem
         manifest = compile_bundle(raw, profile, bundle, dialect="canonical",
-                                  pipeline_tiles=True, **options)
+                                  pipeline_tiles=True, vpu_lowering="off", **options)
         report = manifest["estimates"]
         result.update({key: report[key] for key in ("scratch_peak_live_bytes", "scratch_reserved_bytes",
                       "external_transfer_bytes", "scheduled_stage_count", "ir_operator_count")})

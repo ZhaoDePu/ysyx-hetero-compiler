@@ -3,7 +3,7 @@ set -euo pipefail
 work=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 hardware=/home/zdp/ysyx-migration/repos/ysyx-npu-ext
 commit=2741540496f6f683843a231361bfa88743d7fabe
-scratch=/dev/shm/ysyx_compiler_c4a/npu
+scratch=/dev/shm/ysyx_compiler_c4vpu/npu
 [[ "$(realpath -e -- "$scratch")" == "$scratch" && -O "$scratch" ]]
 mkdir -p -- "$scratch/p8-src"
 git -C "$hardware" archive "$commit" tiny-gpu/src | tar -xf - -C "$scratch/p8-src"
