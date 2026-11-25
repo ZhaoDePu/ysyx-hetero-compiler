@@ -3,7 +3,7 @@ set -euo pipefail
 work=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 base=/home/zdp/ysyx-migration
 board="$base/work-z15-bringup"
-scratch=/dev/shm/ysyx_compiler/npu
+scratch=/dev/shm/ysyx_compiler_c2/npu
 commit=4d410d72508a5822bc5c8014981e5b55ef8faa56
 [[ "$(realpath -e -- "$scratch")" == "$scratch" && -O "$scratch" ]]
 mkdir -p -- "$scratch/z15-src"
@@ -14,6 +14,7 @@ printf 'source_commit=%s\n' "$commit"
 cd "$scratch/z15-src"
 sha256sum rtl/gen/g3_cluster.v rtl/gen/g3_external.v rtl/z15_hetero_pl_wrapper.sv rtl/z15_bd_axi_shell.v sim/closed_loop.cpp
 export TMPDIR="$scratch" CCACHE_DISABLE=1 OMP_NUM_THREADS=1
+nice -n 15 ionice -c 3 python3 -B "$work/tools/z15_observed_rig.py" sim/closed_loop.cpp sim/c2_observed_loop.hpp
 verilator="$base/tools/oss-cad-suite/bin/verilator"
 "$verilator" --version
 exec nice -n 15 ionice -c 3 "$verilator" --cc --exe --build -j 2 -MAKEFLAGS OBJCACHE= -O2 -Wno-fatal --assert \

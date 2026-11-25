@@ -9,8 +9,8 @@ for GPU stages.
 
 ```sh
 cd /home/zdp/ysyx-migration/work-compiler
-mkdir -p /dev/shm/ysyx_compiler
-case_dir=$(mktemp -d /dev/shm/ysyx_compiler/quick.XXXXXX)
+mkdir -p /dev/shm/ysyx_compiler_c2
+case_dir=$(mktemp -d /dev/shm/ysyx_compiler_c2/quick.XXXXXX)
 nice -n 15 ionice -c 3 python3 -B -m hetero_compiler \
   --graph examples/mixed.json --profile fpga_zu15eg_balanced --out "$case_dir/bundle"
 ```
@@ -22,10 +22,9 @@ and `outputs`. Tensor shapes are positive and static; supported dtypes are
 `int8`, `uint8`, and `int32`. Use `kind: "input"` for replaceable inputs.
 Input `data` provides a fixture value. Non-input data is a constant.
 
-ONNX parsing supports static, inline integer initializers, rank-2
-`MatMulInteger` with implicit zero points, and same-shape integer
-`Add/Mul/Relu`. Static tensor types, dimensions, and supported operator
-semantics are required. The reader derives its message fields from the
+The ONNX importer requires static tensor shapes and supported operator
+semantics. See [C2 ONNX coverage](docs/c2-onnx.md) for quantized formats,
+layouts and exactness limits. The reader derives its message fields from the
 [ONNX protobuf schema](https://github.com/onnx/onnx/blob/main/onnx/onnx.proto3).
 
 The canonical dense and NHWC/HWIO convolution contracts use signed 32-bit
@@ -66,8 +65,8 @@ interface and the v6 scalar-issue path remains a separate hardware integration.
 
 A fused stage preserves original-node narrowing. Fusion requires private,
 single-use intermediates and an exact native or GPU lowering. A connected
-scratch component stays in one Z15 ownership half. GPU-addressed tensors are
-restricted to the first 4 KiB page. Independent tensor-only components can
+scratch component stays in one Z15 ownership half. GPU-addressed tensors share a 4 KiB page for each stage. ASIC targets
+address the first page through the Phase 8 compatibility contract. Independent tensor-only components can
 use the other half. Constant weights in native packed format are loaded once
 and remain resident through their last use. The planner honors the target's
 internal A/B/output ping-pong banks and allocates an explicit partial
@@ -98,9 +97,46 @@ DMA extents, including concurrent ownership where applicable. The Z15
 runner compares stage results over actual AXI DMA and checks the emitted
 MMIO commands and GPU machine code. Phase 8 replays actual full arena images
 through the native descriptor and v6 GPU models. Build scripts read pinned
-hardware files into `/dev/shm/ysyx_compiler`, apply low-priority scheduling,
+hardware files into `/dev/shm/ysyx_compiler_c2`, apply low-priority scheduling,
 and limit each build to two jobs.
 
 Standalone validation commands are `python3 -B -m tools.verify_npu_rtl`
 (`p8|z15`, executable, scratch directory) and
 `python3 -B tools/validate_gpu_backends.py` (`v6|g4-16t4w|g4-8t8w`).
+
+## Phase C2 optimizer and measurements
+
+See [the ONNX coverage](docs/c2-onnx.md) for exact static quantization contracts
+and instructions to regenerate the visual and Transformer examples.
+
+Use `-O3` for the default pipeline and select an ablation with
+`--device-policy auto|gpu-only|npu-greedy`, `--no-fusion`, `--no-overlap`,
+and `--no-mem-reuse`. Legacy flag names `--no-fuse` and `--no-reuse` remain.
+The reserved address footprint counts allocator spans in each ownership half.
+The live peak counts overlapping allocation lifetimes. These values measure
+different allocation costs.
+
+Z15 can select a different physical 4 KiB page for each GPU stage. All
+outstanding warps of that stage share the page. The planner first tries a
+resident layout, then packs page-local GPU components into the larger arena.
+When those groups do not fit, supported stages can use DDR-backed staging.
+Elementwise operations can tile along the linear index and GEMM can tile M
+while reusing the same K×N weights. Arbitrary oversized Conv, reductions
+and layout groups require an explicit additional tiling contract.
+`--stream-ddr` requests the staged schedule for experiments. It alternates
+ownership halves and prefetches an independent next tile during compute.
+Disabling overlap drains the active owner before that transfer.
+
+Run the four configurations over the same inputs:
+
+```sh
+nice -n 15 ionice -c 3 python3 -B -m tools.run_c2_ablation \
+  --out /dev/shm/ysyx_compiler_c2/ablation \
+  examples/yolo_block_int8.onnx examples/transformer_layer_int8.onnx examples/mixed.json
+```
+
+The replay records raw Z15 MMIO simulation wall ticks, AXI transactions and
+busy-overlap counters. The reported conversion divides wall ticks by
+164.555 MHz. The GPU busy projection separately divides observed GPU clock
+edges under the synchronized GPU busy flag by 124.239 MHz. The conversion
+uses Phase 12C routed Fmax and does not retime the simulator clocks.

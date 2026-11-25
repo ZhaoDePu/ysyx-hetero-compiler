@@ -13,7 +13,7 @@ from hetero_compiler.compiler import tensor_bytes
 from hetero_compiler.reference import evaluate
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRATCH = Path("/dev/shm/ysyx_compiler")
+SCRATCH = Path("/dev/shm/ysyx_compiler_c2")
 P8 = SCRATCH / "npu/p8-build/run-npu-p8"
 Z15 = SCRATCH / "npu/z15-build/run-npu-z15"
 LOW_PRIORITY = ["nice", "-n", "15", "ionice", "-c", "3"]
@@ -170,6 +170,47 @@ def _verify_z15(bundle, case, manifest, arena, values, execute_plan):
     _execute([Z15, control])
 
 
+def _verify_z15_stream(bundle, case, manifest, values, ddr):
+    img = case / "ddr-initial.bin"
+    img.write_bytes(ddr)
+    setup = ["- 0 0", f"ddr_put {img} 0 {len(ddr)}"]
+    products = manifest["backends"]
+    gpu = {s["id"]: s for s in products["gpu"]["stages"]}
+    npu = {s["stage"]: s for s in products["npu"]["commands"]}
+    stage_labels = {s["id"]: f"s{i}" for i, s in enumerate(manifest["plan"]["stages"])}
+    started, drained = set(), set()
+    for cmd in manifest["execution"]:
+        kind = cmd["type"]
+        if kind == "launch":
+            name = cmd["stage"]
+            _require(name not in started, f"repeated stage launch {name}")
+            started.add(name)
+            setup.extend(_z15_launch(bundle, name, gpu, npu))
+        elif kind == "fence":
+            name = cmd["wait_for"]
+            _require(name in started, f"wait references unlaunched stage {name}")
+            if name not in drained:
+                engine = "gpu" if name in gpu else "npu"
+                setup.append(f"wait_{engine} {stage_labels[name]}")
+                drained.add(name)
+        elif kind == "dma":
+            action = "dma_in" if cmd["direction"] == "load" else "dma_out"
+            setup.append(f"{action} {cmd['ddr_offset']} {cmd['scratch_offset']} {cmd['bytes']}")
+        elif kind == "dma-fence":
+            setup.append("dma_wait")
+        else:
+            raise ValueError(f"unrecognized streaming command {kind!r}")
+    _require(started == drained == stage_labels.keys(), "incomplete streaming execution")
+    for index, (name, spec) in enumerate(manifest["output_bindings"].items()):
+        data = tensor_bytes(values[name], spec["dtype"])
+        expected = case / f"output-{index}.bin"
+        expected.write_bytes(data)
+        setup.append(f"compare_ddr {expected} {spec['ddr_offset']} {len(data)}")
+    control = case / "z15-stream.txt"
+    control.write_text("\n".join(setup) + "\n", encoding="ascii")
+    _execute([Z15, control])
+
+
 def _verify_p8(bundle, case, manifest, arena, values):
     graph, plan, products = (manifest[x] for x in ("graph", "plan", "backends"))
     gpu = {s["id"]: s for s in products["gpu"]["stages"]}
@@ -215,18 +256,22 @@ def main():
     _require(name in ("fpga_zu15eg_balanced", "asic_nangate45_p8"), "target has no pinned replay binding")
     contents = (bundle / "initial.bin").read_bytes()
     _check_backend_files(bundle, manifest, contents)
-    arena = bytearray(contents)
+    streaming = "execution" in manifest
+    arena = bytearray((bundle / manifest["initial_ddr"]).read_bytes() if streaming else contents)
     runtime = json.loads(args.inputs.read_text()) if args.inputs else {}
     values = evaluate(graph, runtime)
     for tensor, data in runtime.items():
         binding = manifest["input_bindings"][tensor]
         encoded = tensor_bytes(data, binding["dtype"])
-        offset, size = binding["offset"], binding["size"]
+        offset, size = binding.get("ddr_offset", binding["offset"]), binding["size"]
         _require(len(encoded) == size, f"{tensor}: incorrect runtime input size")
         arena[offset:offset + size] = encoded
     print("replay command=" + shlex.join(sys.argv) + " binding=" + profile["binding"], flush=True)
     if name == "fpga_zu15eg_balanced":
-        _verify_z15(bundle, case, manifest, arena, values, args.execute_plan)
+        if streaming:
+            _verify_z15_stream(bundle, case, manifest, values, arena)
+        else:
+            _verify_z15(bundle, case, manifest, arena, values, args.execute_plan)
     else:
         _require(not args.execute_plan, "scheduled MMIO replay is available on balanced Z15")
         _verify_p8(bundle, case, manifest, arena, values)

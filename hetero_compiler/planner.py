@@ -33,7 +33,7 @@ def _candidate(chain, device):
     return stage
 
 
-def _placement(graph, profile, npu, gpu, fuse):
+def _placement(graph, profile, npu, gpu, fuse, device_policy):
     nodes = graph["nodes"]
     producers = {node["output"]: idx for idx, node in enumerate(nodes)}
     users = defaultdict(list)
@@ -53,6 +53,8 @@ def _placement(graph, profile, npu, gpu, fuse):
                 choices.insert(0, ("VPU", npu))
             if node["op"] == "Add" and profile["npu"]["variant"] == "p8":
                 choices.insert(0, ("NPU", npu))
+        if device_policy == "gpu-only":
+            choices = [("GPU", gpu)]
         chain, chain_idxs = [node], []
         if fuse and node["op"] in ("Gemm", "Conv"):
             tail, phase = node["output"], -1
@@ -79,14 +81,15 @@ def _placement(graph, profile, npu, gpu, fuse):
             if nodes[next_idx]["op"] == "YoloNMS":
                 chain.append(nodes[next_idx])
                 chain_idxs.append(next_idx)
+        counts = range(len(chain), 0, -1)
+        candidates = ((count, device, backend) for count in counts for device, backend in choices)
+        if device_policy == "npu-greedy":
+            candidates = ((count, device, backend) for device, backend in choices for count in counts)
         selected = None
-        for count in range(len(chain), 0, -1):
-            for device, backend in choices:
-                stage = _candidate(chain[:count], device)
-                if backend.supports(stage, graph, profile):
-                    selected = stage
-                    break
-            if selected is not None:
+        for count, device, backend in candidates:
+            stage = _candidate(chain[:count], device)
+            if backend.supports(stage, graph, profile):
+                selected = stage
                 contracted.update(chain_idxs[:count-1])
                 stages.append(selected)
                 break
@@ -95,7 +98,7 @@ def _placement(graph, profile, npu, gpu, fuse):
     return stages
 
 
-def _resources(graph, profile, stages, npu, gpu):
+def _resources(graph, profile, stages, npu, gpu, wide_pages=False):
     tensors = graph["tensors"]
     specs, groups = {}, []
     memory, gpu_limit = profile["sram"], profile["gpu"]["window_bytes"]
@@ -108,7 +111,7 @@ def _resources(graph, profile, stages, npu, gpu):
         raise GraphError(f"NPU command records require {reserve} B of the {npu_limit} B arena")
     for idx, stage in enumerate(stages):
         root = gpu if stage["device"] == "GPU" else npu
-        if stage["device"] == "GPU":
+        if stage["device"] == "GPU" and not wide_pages:
             limit = min(gpu_limit, metadata_end)
         else:
             limit = metadata_end
@@ -230,7 +233,10 @@ def _allocate(specs, groups, zone_size, reuse):
             records, key=lambda rec: (rec[7], rec[4], -rec[2], rec[0])):
         loc = _align(zone * zone_size, alignment)
         conflicts = sorted((lo, hi) for lo, hi, start, end in ranges[zone]
-                           if not reuse or (last >= start and first <= end))
+                           if last >= start and first <= end)
+        if not reuse:
+            loc = _align(max((r[1] for r in ranges[zone]), default=loc), alignment)
+            conflicts = []
         for lo, hi in conflicts:
             if loc + size <= lo:
                 break
@@ -246,17 +252,19 @@ def _allocate(specs, groups, zone_size, reuse):
     return allocs, ranges
 
 
-def _commands(stages):
+def _commands(stages, overlap=True):
     commands, active = [], {}
     for stage in stages:
         zone = stage["zone"]
         resource = "GPU" if stage["device"] == "GPU" else "TENSOR"
-        blockers = [key for key in active if key[0] != resource and key[1] == zone]
+        blockers = [key for key in active
+                    if key[0] != resource and (not overlap or key[1] == zone)]
         for key in blockers:
             previous = active.pop(key)
             commands.append({"type": "fence", "wait_for": previous["id"],
                              "from": previous["device"], "to": stage["device"], "zone": zone,
-                             "reason": "scratch ownership and write drain"})
+                             "reason": ("scratch ownership and write drain" if overlap
+                                        else "serial ablation")})
         launch = {"type": "launch", "stage": stage["id"], "device": stage["device"], "zone": zone}
         earlier = [previous for key, previous in active.items() if key[0] == resource]
         if earlier:
@@ -287,30 +295,106 @@ def _estimate(stage, graph, profile):
         fields["compute_cycles"] = cycles
     elif stage["device"] == "GPU":
         lanes, issue = (profile["gpu"][k] for k in ("lanes", "issue_width"))
-        # Issue-slot estimate. A separate runtime records actual RTL cycles.
-        work = 4 + (4 * t[ins[0]]["shape"][1] if op == "Gemm" else len(ins) * 2)
-        fields["compute_cycles"] = math.ceil(count/lanes) * math.ceil(work/issue)
+        # Nominal issued instructions per lane with no memory backpressure.
+        work = 4 + len(ins) * 2
+        dispatch_items = count
+        if op == "Gemm":
+            work = 12 + 4 * t[ins[0]]["shape"][1]
+        elif op == "Conv":
+            work = 25 + 7 * math.prod(t[ins[1]]["shape"][:-1])
+        elif op in ("RowSoftmax", "RMSNorm"):
+            width = t[ins[0]]["shape"][-1]
+            work = 20 + 20 * width
+            dispatch_items = math.prod(t[ins[0]]["shape"][:-1])
+        elif op == "ArgMax":
+            axis = stage["attrs"].get("axis", -1)
+            work = 14 + 7 * t[ins[0]]["shape"][axis]
+        elif op == "GatedBranch":
+            work = 16 + 15 * stage["attrs"]["rounds"]
+        work += sum(4 if part["op"] not in ("SiLU", "GELU") else 20
+                    for part in stage.get("fused", [])[1:])
+        fields["compute_cycles"] = math.ceil(dispatch_items/lanes) * math.ceil(work/issue)
     else:
         fields["compute_cycles"] = math.ceil(count/4)
     return fields
 
 
-def make_plan(graph, profile, *, fuse=True, reuse=True):
+def _allocate_pages(stages, specs, groups, zone_size, page_size, reuse):
+    page_sets = []
+    for stage in stages:
+        if stage["device"] != "GPU":
+            continue
+        members = set(stage["buffers"])
+        matching = [other for other in page_sets if other & members]
+        for other in matching:
+            members.update(other)
+            page_sets.remove(other)
+        page_sets.append(members)
+
+    outer = dict(specs)
+    inner = {}
+    for index, members in enumerate(page_sets):
+        key = f".__c2_gpu_page_{index}"
+        local_groups = [names for names in groups if members.intersection(names)]
+        if any(not members.issuperset(names) for names in local_groups):
+            raise GraphError("GPU address window overlaps a larger ordered native buffer group")
+        groups = [names for names in groups if names not in local_groups]
+        page_records = {name: {**specs[name], "zone": 0, "limit": page_size}
+                        for name in sorted(members)}
+        local, _ = _allocate(page_records, local_groups, page_size, reuse)
+        first = min(rec["reserved_first"] for rec in local.values())
+        last = max(rec["reserved_last"] for rec in local.values())
+        zone_set = {specs[name]["zone"] for name in members}
+        if len(zone_set) != 1:
+            raise GraphError("GPU component spans multiple ownership halves")
+        zone = zone_set.pop()
+        outer[key] = {"size": page_size, "stored_size": page_size, "kind": "page",
+                      "alignment": page_size, "first": first, "last": last,
+                      "limit": (zone + 1) * zone_size, "zone": zone, "gpu": True}
+        inner[key] = local
+        for name in members:
+            del outer[name]
+    result, ranges = _allocate(outer, groups, zone_size, reuse)
+    for key, local in inner.items():
+        page = result.pop(key)
+        for name, rec in local.items():
+            result[name] = {**specs[name], "offset": page["offset"] + rec["offset"],
+                            "reserved_first": rec["reserved_first"],
+                            "reserved_last": rec["reserved_last"]}
+    return result, ranges
+
+
+def make_plan(graph, profile, *, fuse=True, reuse=True, overlap=True, device_policy="auto"):
     validate_profile(profile)
+    if device_policy not in ("auto", "gpu-only", "npu-greedy"):
+        raise GraphError(f"unknown device policy {device_policy!r}")
     npu, gpu = _backend("npu"), _backend("gpu")
-    stages = _placement(graph, profile, npu, gpu, fuse)
+    stages = _placement(graph, profile, npu, gpu, fuse, device_policy)
     specs, groups, metadata_end = _resources(graph, profile, stages, npu, gpu)
     _zone_bounds(stages, specs, profile, groups)
-    allocations, ranges = _allocate(specs, groups, profile["sram"]["zone_bytes"], reuse)
+    zone_size = profile["sram"]["zone_bytes"]
+    try:
+        allocations, ranges = _allocate(specs, groups, zone_size, reuse)
+    except GraphError:
+        if profile["npu"]["variant"] != "z15":
+            raise
+        specs, groups, metadata_end = _resources(graph, profile, stages, npu, gpu, wide_pages=True)
+        _zone_bounds(stages, specs, profile, groups)
+        allocations, ranges = _allocate_pages(stages, specs, groups, zone_size,
+                                              profile["gpu"]["window_bytes"], reuse)
     all_ranges = [record for zone in ranges.values() for record in zone]
     peak_live = max(sum(hi - lo for lo, hi, first, last in all_ranges if first <= step <= last)
                     for step in range(-1, len(stages) + 1))
     for stage in stages:
         stage["estimate"] = _estimate(stage, graph, profile)
     return {"schema": "hetero-plan-v1", "profile": profile["name"], "stages": stages,
-            "allocations": allocations, "commands": _commands(stages),
+            "allocations": allocations, "commands": _commands(stages, overlap),
+            "options": {"device_policy": device_policy, "overlap": overlap,
+                        "fusion": fuse, "mem_reuse": reuse},
             "arena_end": metadata_end,
             "descriptor_metadata_bytes": profile["npu"]["window_bytes"] - metadata_end,
             "peak_live_bytes": peak_live,
             "high_water_bytes": max(a["offset"] + a["stored_size"] for a in allocations.values()),
+            "reserved_by_zone_bytes": {str(zone): max(hi for _, hi, _, _ in recs) - zone*zone_size
+                                       for zone, recs in ranges.items()},
             "compute_cycles_serial_estimate": sum(s["estimate"]["compute_cycles"] for s in stages)}

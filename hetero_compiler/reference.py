@@ -156,13 +156,13 @@ def _nms(data, score_threshold, iou_threshold):
 
 
 def _requant(x, attrs):
-    x = (x - attrs.get("input_zero_point", 0)) * attrs["multiplier"]
+    x = _wrap((x - attrs.get("input_zero_point", 0)) * attrs["multiplier"], 32)
     if attrs.get("rounding") == "nearest_even":
         divisor = attrs.get("divisor", 1 << attrs["shift"])
         q, r = divmod(x, divisor)
         q += 2*r > divisor or (2*r == divisor and q & 1)
     else:
-        q = _wrap(x, 32) >> attrs["shift"]
+        q = x >> attrs["shift"]
     return q + attrs["zero_point"]
 
 
@@ -247,7 +247,7 @@ def evaluate(graph, inputs=None):
             result = _gated(a, attrs["threshold"], attrs["rounds"])
         else:
             raise GraphError(f"no reference for {op}")
-        mathematical = op in LAYOUT_OPS or (op == "Requant" and attrs.get("rounding") == "nearest_even")
+        mathematical = op in LAYOUT_OPS
         values[dst] = [_narrow(x if mathematical else _wrap(x, 32), dtype,
                                attrs.get("narrowing", "saturate")) for x in result]
     return values

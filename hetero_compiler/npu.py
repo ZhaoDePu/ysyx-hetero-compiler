@@ -66,6 +66,8 @@ def _tensor_spec(stage, graph, target):
     main = chain[0]
     op, ins, attrs = main["op"], main["inputs"], main.get("attrs", {})
     a, b = (tensors[name] for name in ins[:2])
+    if attrs.get("a_zero_point", 0) or attrs.get("b_zero_point", 0):
+        raise ValueError("native tensor engines require zero operand zero-points")
     c = tensors[stage["output"]]
     main_out = tensors[main["output"]]
     n = c["shape"][-1]
@@ -84,8 +86,9 @@ def _tensor_spec(stage, graph, target):
         raise ValueError("tensor engine dimension limit exceeded")
     if transpose and (op != "Gemm" or k % 4 or n % 4 or k > 255 or target != "p8"):
         raise ValueError("Phase 8 linear transpose requires K and N divisible by four")
-    if target == "z15" and (k % 4 or (c["dtype"] == "int8" and n % 4) or not _constant(b)):
-        raise ValueError("Z15 tensor needs constant packed weights, K divisible by four and word-packed output rows")
+    if target == "z15" and (ins[0] == ins[1] or k % 4 or (c["dtype"] == "int8" and n % 4) or
+                            not _constant(b)):
+        raise ValueError("Z15 tensor needs distinct A and static packed B, with aligned K and output rows")
     bias = ins[2] if len(ins) == 3 else None
     bias_mode = "wide" if bias else None
     if bias and (tensors[bias]["dtype"] != "int32" or tensors[bias]["shape"] != [n]):
@@ -116,7 +119,12 @@ def _tensor_spec(stage, graph, target):
             else:
                 raise ValueError("unsupported tensor bias narrowing")
         elif part["op"] == "Requant" and not seen_requant and main_out["dtype"] == "int32":
+            shift_part = part_attrs.get("shift", 0)
+            rounding = part_attrs.get("rounding", "floor")
             if (part_attrs.get("multiplier", 1) != 1 or part_attrs.get("zero_point", 0) != 0 or
+                    part_attrs.get("input_zero_point", 0) or
+                    part_attrs.get("divisor", 1 << shift_part) != 1 << shift_part or
+                    (rounding != "floor" and (rounding != "nearest_even" or shift_part)) or
                     part_attrs.get("narrowing", "saturate") != "saturate" or
                     tensors[part["output"]]["dtype"] != "int8"):
                 raise ValueError("native requant requires a signed, saturating shift")
@@ -199,6 +207,8 @@ def _ewise_spec(stage, graph, target, profile):
 
 def _attention_spec(stage, graph, target):
     tensors = graph["tensors"]
+    if len(set(stage["inputs"])) != 3:
+        raise ValueError("Z15 attention requires three disjoint operand allocations")
     q, k, v = (tensors[name] for name in stage["inputs"])
     out = tensors[stage["output"]]
     attrs = stage.get("attrs", {})

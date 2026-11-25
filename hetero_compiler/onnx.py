@@ -457,23 +457,31 @@ class _Import:
             lower[i], upper[i], stride[i] = slice(start, stop, step).indices(shape[i])
         return {"starts": lower, "ends": upper, "steps": stride}
 
-    def split(self, inputs, outs, attrs, ident):
+    def split(self, inputs, outs, attrs, ident, opset):
         _check_args(inputs, 1, 2)
         _check_attrs(attrs, "axis", "num_outputs", "split")
         source = inputs[0]
         shape = self.spec(source)["shape"]
         split_axis = axis(attrs.get("axis", 0), len(shape))
         size = shape[split_axis]
+        if "num_outputs" in attrs and opset < 18:
+            raise GraphError("Split num_outputs requires opset 18 or newer")
+        if "split" in attrs and opset >= 13:
+            raise GraphError("Split opset 13 or newer requires sizes as a tensor input")
         if len(inputs) > 1 and inputs[1]:
-            if "split" in attrs or "num_outputs" in attrs:
-                raise GraphError("Split uses either static sizes or num_outputs")
+            if opset < 13 or "split" in attrs or "num_outputs" in attrs:
+                raise GraphError("Split uses either static sizes or num_outputs for that opset")
             widths = self.static(inputs[1], {"int64"})
         elif "split" in attrs:
             widths = attrs["split"]
         else:
+            if opset >= 18 and "num_outputs" not in attrs:
+                raise GraphError("Split requires num_outputs or a static sizes input")
             count = attrs.get("num_outputs", len(outs))
-            if count != len(outs):
+            if type(count) is not int or count != len(outs):
                 raise GraphError("Split num_outputs does not match output count")
+            if opset < 18 and size % count:
+                raise GraphError("Split implicit sizes must be equal before opset 18")
             width = (size + count - 1)//count
             widths = [width] * (count - 1) + [size - width*(count - 1)]
         if len(widths) != len(outs) or min(widths) <= 0 or sum(widths) != size:
@@ -532,7 +540,7 @@ class _Import:
         if op == "Split":
             if not outs:
                 raise GraphError("Split requires outputs")
-            return self.split(inputs, outs, attrs, ident)
+            return self.split(inputs, outs, attrs, ident, opset)
         if len(outs) != 1:
             raise GraphError("operator requires one output")
         out = outs[0]

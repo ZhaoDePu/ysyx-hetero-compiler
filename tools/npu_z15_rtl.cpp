@@ -1,5 +1,5 @@
 #define main board_regression_main
-#include "closed_loop.cpp"
+#include "c2_observed_loop.hpp"
 #undef main
 #include <fstream>
 #include <string>
@@ -21,14 +21,18 @@ static void wait_for(Rig &rig, unsigned mask, unsigned busy_mask = 0) {
     throw std::runtime_error("fabric operation timeout");
 }
 
-static void dma(Rig &rig, unsigned address, unsigned size, bool readback) {
+static void dma_start(Rig &rig, unsigned ddr, unsigned address, unsigned size, bool readback) {
     checked_write(rig, Z15_DMA_BASE, Z15_POOL_BASE);
-    checked_write(rig, Z15_DMA_OFFSET, address);
+    checked_write(rig, Z15_DMA_OFFSET, ddr);
     checked_write(rig, Z15_DMA_SCRATCH, address);
     checked_write(rig, Z15_DMA_BYTES, size);
     checked_write(rig, Z15_DMA_FLAGS, 2 | unsigned(readback));
     checked_write(rig, Z15_CTRL, Z15_START_DMA);
-    wait_for(rig, Z15_DMA_DONE);
+}
+
+static void dma(Rig &rig, unsigned address, unsigned size, bool readback) {
+    dma_start(rig, address, address, size, readback);
+    wait_for(rig, Z15_DMA_DONE, Z15_DMA_BUSY);
 }
 
 static std::vector<uint8_t> load_image(const std::string &file, unsigned size) {
@@ -82,7 +86,9 @@ int main(int argc, char **argv) {
         Rig rig;
         require(rig.read(Z15_MAGIC) == Z15_MAGIC_VALUE && rig.read(Z15_VERSION) == Z15_VERSION_VALUE,
                 "wrong Z15 MMIO ABI");
-        upload(rig, source, address, size);
+        bool dma_in_flight = false;
+        if (source != "-")
+            upload(rig, source, address, size);
         unsigned prior_npu = 0, prior_gpu = 0;
         while (control >> command) {
             if (command == "write") {
@@ -102,6 +108,36 @@ int main(int argc, char **argv) {
                 if (!(control >> source >> lo >> bytes))
                     throw std::runtime_error("malformed DMA upload");
                 upload(rig, source, lo, bytes);
+            } else if (command == "ddr_put" || command == "compare_ddr") {
+                unsigned lo, bytes;
+                if (!(control >> expected >> lo >> bytes) || !bytes ||
+                        uint64_t(lo) + bytes > Z15_POOL_SIZE)
+                    throw std::runtime_error("malformed DDR extent");
+                auto golden = load_image(expected, bytes);
+                if (command == "ddr_put") {
+                    Rig::put(&rig, lo, golden.data(), bytes);
+                } else {
+                    if (dma_in_flight) throw std::runtime_error("DDR comparison before DMA drain");
+                    std::vector<uint8_t> actual(bytes);
+                    Rig::get(&rig, lo, actual.data(), bytes);
+                    require(actual == golden, "DDR output differs from independent oracle");
+                    ++commands;
+                    printf("Z15_DDR_PASS offset=%u bytes=%u\n", lo, bytes);
+                }
+            } else if (command == "dma_in" || command == "dma_out" || command == "dma_wait") {
+                if (dma_in_flight) {
+                    wait_for(rig, Z15_DMA_DONE, Z15_DMA_BUSY);
+                    dma_in_flight = false;
+                }
+                if (command != "dma_wait") {
+                    unsigned ddr, lo, bytes;
+                    if (!(control >> ddr >> lo >> bytes) || ddr % 32 ||
+                            uint64_t(ddr) + bytes > Z15_POOL_SIZE)
+                        throw std::runtime_error("malformed DMA command");
+                    extent(lo, bytes);
+                    dma_start(rig, ddr, lo, bytes, command == "dma_out");
+                    dma_in_flight = true;
+                }
             } else if (command == "wait_npu" || command == "wait_gpu") {
                 if (!(control >> stage))
                     throw std::runtime_error("malformed launch wait");
@@ -146,6 +182,18 @@ int main(int argc, char **argv) {
         const unsigned overlap = rig.read(Z15_OVERLAP_CYCLES_LO);
         printf("Z15_RTL_PASS commands=%u wall_npu_ticks=%u axi_transactions=%u overlap_npu_ticks=%u\n",
                commands, wall, rig.transactions, overlap);
+        const auto *root = rig.dut.rootp;
+        printf("Z15_METRICS {\"wall_npu_ticks\":%u,\"axi_transactions\":%u,"
+               "\"npu_busy_ticks\":%llu,\"gpu_busy_ticks\":%llu,\"gpu_busy_edges\":%llu,"
+               "\"npu_gpu_overlap_ticks\":%u,\"dma_busy_ticks\":%llu,"
+               "\"compute_dma_overlap_ticks\":%llu,\"gpu_dma_overlap_ticks\":%llu,"
+               "\"npu_dma_overlap_ticks\":%llu,\"triple_overlap_ticks\":%llu}\n",
+               wall, rig.transactions,
+               (unsigned long long)root->z15_bd_axi_shell__DOT__implementation__DOT__npu_busy_cycles,
+               (unsigned long long)root->z15_bd_axi_shell__DOT__implementation__DOT__gpu_busy_cycles,
+               (unsigned long long)rig.c2_gpu_clock, overlap, (unsigned long long)rig.c2_dma,
+               (unsigned long long)rig.c2_compute_dma, (unsigned long long)rig.c2_dma_gpu,
+               (unsigned long long)rig.c2_dma_tensor, (unsigned long long)rig.c2_triple);
         rig.dut.final();
     } catch (const std::exception &e) {
         fprintf(stderr,"Z15_NPU_RTL_FAIL %s\n",e.what());

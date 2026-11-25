@@ -26,7 +26,10 @@ zero-point initializers are supported at import. Grouped or dilated convolution,
 per-axis quantization, and arbitrary floating-point subgraphs remain outside this
 subset. A quantization ratio is accepted when its numerator/denominator and the
 worst-case product fit the exact int32 envelope. Backend eligibility is checked
-separately on the normalized graph.
+separately on the normalized graph. The canonical Requant operation uses a
+signed wrapping 32-bit numerator and zero-point addition. The ONNX importer
+proves a conservative envelope that keeps accepted ONNX quantization within
+that range. An explicit divisor takes priority over the power-of-two shift.
 
 ## Fixtures
 

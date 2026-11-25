@@ -62,6 +62,18 @@ class QuantizedOnnx(unittest.TestCase):
         self.assertEqual(parsed["tensors"]["y"]["dtype"], "int64")
         self.assertEqual(evaluate(parsed, {"x": [7, 2, 5, 3, 8, 5]})["y"], [1, 0, 0])
 
+    def test_split_requires_the_selected_opset_contract(self):
+        inputs = [info("x", [5])]
+        outputs = [info("a", [3]), info("b", [2])]
+        with self.assertRaisesRegex(GraphError, "equal"):
+            parse_model(model([node("Split", ["x"], ["a", "b"])], inputs, outputs, opset=17))
+        with self.assertRaisesRegex(GraphError, "num_outputs"):
+            parse_model(model([node("Split", ["x"], ["a", "b"])], inputs, outputs))
+        num = field(1, "num_outputs") + field(3, 2) + field(20, 2)
+        parsed = normalize(parse_model(model([node("Split", ["x"], ["a", "b"], attrs=[num])],
+                                             inputs, outputs)))
+        self.assertEqual(evaluate(parsed, {"x": [1, 2, 3, 4, 5]})["b"], [4, 5])
+
     def test_node_specific_error_for_unsupported_conv_group(self):
         g = field(1, "group") + field(3, 2) + field(20, 2)
         w = field(1, b"\x01\x01\x01\x01") + scalar("w", 3, b"\x01")
