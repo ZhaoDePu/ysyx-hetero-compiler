@@ -43,7 +43,7 @@ From the repository root on xu4090, using the existing C3 Verilator runtime:
 
 ```sh
 export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
-export TMPDIR=/dev/shm/ysyx_compiler_c3/training
+export TMPDIR=/dev/shm/ysyx_compiler_c4a/training
 mkdir -p "$TMPDIR"
 nice -n 10 ionice -c2 -n7 python3 -B -m examples.c3_training.train --out "$TMPDIR/models"
 nice -n 10 ionice -c2 -n7 python3 -B -m tools.c3_accuracy \

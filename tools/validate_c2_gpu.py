@@ -9,7 +9,7 @@ import tempfile
 from hetero_compiler import gpu
 from hetero_compiler.profile import load_profile
 
-ROOT = Path("/dev/shm/ysyx_compiler_c3")
+ROOT = Path("/dev/shm/ysyx_compiler_c4a")
 PAGE = 4096
 FORMATS = {"int8": "b", "uint8": "B", "int32": "i", "int64": "q"}
 

@@ -22,7 +22,7 @@ SETTINGS = [
 ]
 FMAX_NPU_MHZ, FMAX_GPU_MHZ = 164.555, 124.239
 PRIORITY = ["nice", "-n", "10", "ionice", "-c2", "-n7"]
-SCRATCH = Path("/dev/shm/ysyx_compiler_c3")
+SCRATCH = Path("/dev/shm/ysyx_compiler_c4a")
 
 
 def input_values(graph, seed, *, vary_defaults=False):

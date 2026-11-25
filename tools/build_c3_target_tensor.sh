@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 repo=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
-root=/dev/shm/ysyx_compiler_c3/targets
+root=/dev/shm/ysyx_compiler_c4a/targets
 hardware=/home/zdp/ysyx-migration/repos/ysyx-npu-ext
 commit=4d410d72508a5822bc5c8014981e5b55ef8faa56
 sdk=/home/zdp/ysyx-migration/tools/oss-cad-suite
@@ -15,7 +15,7 @@ low=(nice -n 10 ionice -c2 -n7)
 for dim in 16 24; do
     build="$root/tensor-$dim"
     test ! -L "$build"
-    "${low[@]}" "$sdk/bin/verilator" --cc --exe --build -j 2 -MAKEFLAGS OBJCACHE= --threads 1 \
+    "${low[@]}" "$sdk/bin/verilator" --cc --exe --build -j 4 -MAKEFLAGS OBJCACHE= --threads 1 \
         --output-split 5000 --assert -Wno-fatal --top-module zu15eg_tensor_wide \
         --Mdir "$build" -GADDR_BITS=21 -GROWS="$dim" -GCOLS="$dim" -GPANEL_K=128 \
         -GWIDE_WORDS=16 -GENABLE_DSP_INT8_PACK2=1 -GHALF_GUARD=1 -GSTAGE_OPERANDS=1 \

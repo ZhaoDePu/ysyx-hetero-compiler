@@ -15,7 +15,7 @@ ASIC_IP_V3 = TARGET_IDS["asic_nangate45_ip"]
 DTYPES = {"int8": 1, "uint8": 2, "int32": 3, "int64": 4, "uint16": 5, "int16": 6}
 WIDTHS = {1: 1, 2: 1, 3: 4, 4: 8, 5: 2, 6: 2}
 ENGINE = {"GPU": 1, "NPU": 2, "VPU": 3}
-LAUNCH, WAIT_STAGE, DMA, WAIT_DMA = range(1, 5)
+LAUNCH, WAIT_STAGE, DMA, WAIT_DMA, KV_YIELD = range(1, 6)
 LOAD, STORE = 1, 2
 POOL_BYTES = 0x20000000
 MAX_BYTES = 0x20000000
@@ -153,6 +153,7 @@ def emit_yhb(directory, manifest):
                               job_offset, len(jobs) // 4, stage.get("zone", 0))))
 
     move_ids = {}
+    step = 0
     for item in _execution(manifest):
         kind = item["type"]
         if kind == "launch":
@@ -161,6 +162,11 @@ def emit_yhb(directory, manifest):
             opcode, operand = WAIT_STAGE, slots[item["wait_for"]]
         elif kind == "dma-fence":
             opcode, operand = WAIT_DMA, 0
+        elif kind == "yield":
+            if target != 1 or type(item.get("step")) is not int or item["step"] != step:
+                raise ValueError("expected consecutive Balanced KV checkpoint IDs starting at zero")
+            opcode, operand = KV_YIELD, step
+            step += 1
         elif kind == "dma":
             direction = {"load": LOAD, "store": STORE}[item["direction"]]
             ddr, scratch, length = (item[k] for k in ("ddr_offset", "scratch_offset", "bytes"))
@@ -178,6 +184,9 @@ def emit_yhb(directory, manifest):
         else:
             raise ValueError(f"cannot encode YHB instruction {kind!r}")
         commands.extend(_words((opcode, operand, 0, 0)))
+
+    if step and opcode != KV_YIELD:
+        raise ValueError("KV schedule must end at a checkpoint")
 
     image = (directory / manifest.get("initial_ddr", manifest["initial_image"])).read_bytes()
     if len(image) > POOL_BYTES:

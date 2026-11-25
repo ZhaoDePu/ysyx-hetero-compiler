@@ -17,7 +17,9 @@ def observe(source):
                         """    unsigned transactions=0;
     uint64_t c2_dma=0,c2_compute_dma=0,c2_triple=0,c2_gpu_clock=0;
     uint64_t c2_dma_gpu=0,c2_dma_tensor=0;
-    uint64_t c3_read_bytes=0,c3_write_bytes=0;""")
+    uint64_t c3_read_bytes=0,c3_write_bytes=0;
+    uint64_t c4_occupancy[8]={};
+    uint64_t c4_read_overlap_beats=0,c4_write_overlap_beats=0;""")
     result = substitute(result, "        gpu_phase+=2;",
                         "        const bool was_gpu_high=dut.clk_gpu;\n        gpu_phase+=2;")
     result = substitute(result, "        context.timeInc(1);\n        dut.eval();",
@@ -27,7 +29,14 @@ def observe(source):
            dut.rootp->z15_bd_axi_shell__DOT__implementation__DOT__gpu_busy)
             ++c2_gpu_clock;""")
     result = substitute(result, "            --read_left; ar_st+=32; read_hold=false;",
-                        "            c3_read_bytes+=32;\n            --read_left; ar_st+=32; read_hold=false;")
+                        """            c3_read_bytes+=32;
+            c4_read_overlap_beats+=dut.rootp->z15_bd_axi_shell__DOT__implementation__DOT__gpu_busy ||
+                                   dut.rootp->z15_bd_axi_shell__DOT__implementation__DOT__npu_busy;
+            --read_left; ar_st+=32; read_hold=false;""")
+    result = substitute(result, "            require(write_left!=0,\"W with no AW\");",
+                        """            require(write_left!=0,"W with no AW");
+            c4_write_overlap_beats+=dut.rootp->z15_bd_axi_shell__DOT__implementation__DOT__gpu_busy ||
+                                    dut.rootp->z15_bd_axi_shell__DOT__implementation__DOT__npu_busy;""")
     result = substitute(result, "                ddr[aw_st+j]=uint8_t(dut.m_axi_wdata[j/4]>>(8*(j%4)));",
                         """                {ddr[aw_st+j]=uint8_t(dut.m_axi_wdata[j/4]>>(8*(j%4)));
                  ++c3_write_bytes;}""")
@@ -38,6 +47,7 @@ def observe(source):
             const bool dma=r->z15_bd_axi_shell__DOT__implementation__DOT__dma_busy;
             const bool gpu=r->z15_bd_axi_shell__DOT__implementation__DOT__gpu_busy;
             const bool npu=r->z15_bd_axi_shell__DOT__implementation__DOT__npu_busy;
+            ++c4_occupancy[unsigned(npu) | unsigned(gpu)*2u | unsigned(dma)*4u];
             c2_dma+=dma;
             c2_compute_dma+=dma && (gpu || npu);
             c2_dma_gpu+=dma && gpu;

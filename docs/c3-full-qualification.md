@@ -40,5 +40,5 @@ advantage needs its own MMIO replay.
 ```sh
 bash tools/build_c3_target_tensor.sh
 nice -n 10 ionice -c2 -n7 python3 -B -m tools.compare_full_c3_target \
-  --out /dev/shm/ysyx_compiler_c3/targets/full-compare
+  --out /dev/shm/ysyx_compiler_c4a/targets/full-compare
 ```

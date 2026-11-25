@@ -9,7 +9,7 @@ import subprocess
 from hetero_compiler.reference import evaluate
 from hetero_compiler.yhb import emit_yhb, inspect_yhb
 
-ROOT = Path("/dev/shm/ysyx_compiler_c3/runtime")
+ROOT = Path("/dev/shm/ysyx_compiler_c4a/runtime")
 DEFAULT_RUNNER = ROOT / "verilator/ysyx_run"
 PRIORITY = ["nice", "-n", "10", "ionice", "-c2", "-n7"]
 FIELD = {"int8": "b", "uint8": "B", "int16": "h", "uint16": "H", "int32": "i", "int64": "q"}

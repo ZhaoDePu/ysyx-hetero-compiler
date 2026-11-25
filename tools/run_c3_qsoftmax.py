@@ -28,7 +28,7 @@ def build_softmax(shape, scores, *, mask=None, axis=-1, scale=1/256, score_scale
     return model.encode()
 
 
-SCRATCH = Path("/dev/shm/ysyx_compiler_c3/softmax")
+SCRATCH = Path("/dev/shm/ysyx_compiler_c4a/softmax")
 PRIORITY = ["nice", "-n", "10", "ionice", "-c2", "-n7"]
 
 

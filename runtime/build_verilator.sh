@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 runtime=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
-root=/dev/shm/ysyx_compiler_c3
+root=/dev/shm/ysyx_compiler_c4a
 out="$root/runtime/verilator"
 build="$root/npu/z15-build"
 src="$root/npu/z15-src"

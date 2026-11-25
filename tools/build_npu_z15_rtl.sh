@@ -3,7 +3,7 @@ set -euo pipefail
 work=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 base=/home/zdp/ysyx-migration
 board="$base/work-z15-bringup"
-scratch=/dev/shm/ysyx_compiler_c3/npu
+scratch=/dev/shm/ysyx_compiler_c4a/npu
 commit=4d410d72508a5822bc5c8014981e5b55ef8faa56
 [[ "$(realpath -e -- "$scratch")" == "$scratch" && -O "$scratch" ]]
 mkdir -p -- "$scratch/z15-src"
@@ -17,7 +17,7 @@ export TMPDIR="$scratch" CCACHE_DISABLE=1 OMP_NUM_THREADS=1
 nice -n 10 ionice -c2 -n7 python3 -B "$work/tools/z15_observed_rig.py" sim/closed_loop.cpp sim/c2_observed_loop.hpp
 verilator="$base/tools/oss-cad-suite/bin/verilator"
 "$verilator" --version
-exec nice -n 10 ionice -c2 -n7 "$verilator" --cc --exe --build -j 2 -MAKEFLAGS OBJCACHE= -O2 -Wno-fatal --assert \
+exec nice -n 10 ionice -c2 -n7 "$verilator" --cc --exe --build -j 4 -MAKEFLAGS OBJCACHE= -O2 -Wno-fatal --assert \
   --top-module z15_bd_axi_shell --Mdir "$scratch/z15-build" \
   -Ifpga/vivado2020 -Itiny-gpu -Itiny-gpu/src -CFLAGS "-std=c++17 -I$PWD/app -I$PWD/sim -O2" \
   -f fpga/vivado2020/filelist.f rtl/gen/g3_cluster.v rtl/gen/g3_external.v \

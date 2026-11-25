@@ -17,7 +17,7 @@ from hetero_compiler.profile import load_profile
 from hetero_compiler.reference import evaluate
 from hetero_compiler.yhb import inspect_yhb
 
-SCRATCH = Path("/dev/shm/ysyx_compiler_c3/training")
+SCRATCH = Path("/dev/shm/ysyx_compiler_c4a/training")
 RUNNER = SCRATCH.parent / "runtime/verilator/ysyx_run"
 PRIORITY = ["nice", "-n", "10", "ionice", "-c2", "-n7"]
 NUMPY_DTYPES = {"int8": "i1", "uint8": "u1", "int32": "<i4", "int64": "<i8"}
