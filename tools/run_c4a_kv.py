@@ -11,7 +11,7 @@ from hetero_compiler.kv_reference import evaluate_kv
 from hetero_compiler.kv_schedule import compile_kv_bundle
 from tools.verify_bundle import _z15_launch
 
-_ROOT = Path("/dev/shm/ysyx_compiler_c4a")
+_ROOT = Path("/dev/shm/ysyx_compiler_c4vpu")
 _FROZEN = _ROOT/"npu/z15-build/run-npu-z15"
 
 
@@ -21,6 +21,14 @@ def _blob(case, name, data):
     return path
 
 
+def _fixed_reference(manifest):
+    kv = manifest["kv"]
+    if kv.get("vpu_lowering", "off") == "off":
+        return evaluate_kv(kv["model"])
+    return evaluate_kv(kv["model"], vpu_lowering=kv["vpu_lowering"],
+                       vpu_attention=kv.get("vpu_attention", "exact"))
+
+
 def replay(bundle,manifest,case,runner=_FROZEN):
     case.mkdir()
     weights=bundle/manifest["initial_ddr"]
@@ -28,7 +36,7 @@ def replay(bundle,manifest,case,runner=_FROZEN):
     backend=manifest["backends"]
     gpu={stage["id"]:stage for stage in backend["gpu"]["stages"]}
     npu={stage["stage"]:stage for stage in backend["npu"]["commands"]}
-    expected=evaluate_kv(manifest["kv"]["model"])
+    expected=_fixed_reference(manifest)
     pending=[]
     output_bindings=manifest["output_bindings"]
     command_labels={stage["id"]:f"s{i}" for i,stage in enumerate(manifest["plan"]["stages"])}
@@ -93,7 +101,7 @@ def export_case(bundle,manifest,case):
     model=manifest["kv"]["model"]
     _blob(case,"input-0.bin",tensor_bytes(model["prompt"],"int8"))
     lines=["input\tprompt\tinput-0.bin"]
-    expected=evaluate_kv(model)
+    expected=_fixed_reference(manifest)
     for idx,(name,info) in enumerate(manifest["output_bindings"].items()):
         file=f"output-{idx}.bin"
         _blob(case,file,tensor_bytes(expected[name],info["dtype"]))
