@@ -1,0 +1,35 @@
+{
+  "schema": "ysyx-target-v1",
+  "name": "fpga_zu15eg_full",
+  "binding": "z15_mmio_v1_projected_full",
+  "npu": {
+    "variant": "z15",
+    "rows": 24,
+    "cols": 24,
+    "window_bytes": 2097152,
+    "double_buffer": true
+  },
+  "gpu": {
+    "variant": "g4",
+    "lanes": 8,
+    "warps": 8,
+    "issue_width": 2,
+    "window_bytes": 4096,
+    "code_bytes": 16384
+  },
+  "vpu": {
+    "enabled": true,
+    "verified": false,
+    "status": "z15_elementwise"
+  },
+  "sram": {
+    "capacity": 2097152,
+    "alignment": 32,
+    "zone_bytes": 1048576,
+    "metadata_reserve": 0
+  },
+  "dma": {
+    "beat_bytes": 32,
+    "max_burst_beats": 16
+  }
+}

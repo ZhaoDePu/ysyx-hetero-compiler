@@ -1,0 +1,35 @@
+{
+  "schema": "ysyx-target-v1",
+  "name": "asic_nangate45_p8",
+  "binding": "phase8_arena4k",
+  "npu": {
+    "variant": "p8",
+    "rows": 4,
+    "cols": 4,
+    "window_bytes": 4096,
+    "double_buffer": false
+  },
+  "gpu": {
+    "variant": "v6",
+    "lanes": 4,
+    "warps": 1,
+    "issue_width": 2,
+    "window_bytes": 4096,
+    "code_bytes": 65536
+  },
+  "vpu": {
+    "enabled": false,
+    "verified": false,
+    "status": "absent"
+  },
+  "sram": {
+    "capacity": 4096,
+    "alignment": 8,
+    "zone_bytes": 4096,
+    "metadata_reserve": 1024
+  },
+  "dma": {
+    "beat_bytes": 0,
+    "max_burst_beats": 0
+  }
+}
