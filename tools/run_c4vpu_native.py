@@ -12,7 +12,7 @@ from hetero_compiler import npu
 from hetero_compiler.profile import load_profile
 from hetero_compiler.z15_vpu import attention, mul, rmsnorm, softmax
 
-SCRATCH = Path("/dev/shm/ysyx_compiler_c4vpu")
+SCRATCH = Path("/dev/shm/ysyx_compiler_c5")
 RUNNER = SCRATCH / "npu/z15-build/run-npu-z15"
 PROFILE = {**load_profile("fpga_zu15eg_balanced"), "vpu_fused_lowering": True}
 

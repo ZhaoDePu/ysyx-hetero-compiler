@@ -13,7 +13,7 @@ from hetero_compiler.onnx import parse_model
 from hetero_compiler.profile import load_profile
 from tools.run_c2_ablation import SETTINGS
 
-SCRATCH = Path("/dev/shm/ysyx_compiler_c4vpu")
+SCRATCH = Path("/dev/shm/ysyx_compiler_c5")
 FMAX_MHZ = 164.555
 MINIMUM_A3_GAIN_PCT = 10.0
 

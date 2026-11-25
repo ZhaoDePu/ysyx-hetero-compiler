@@ -30,7 +30,7 @@ Regenerate and measure on the pinned Balanced binding:
 nice -n 10 ionice -c2 -n7 python3 -B -m examples.c3_streams.generate
 bash tools/build_npu_z15_rtl.sh
 nice -n 10 ionice -c2 -n7 python3 -B -m tools.run_c2_ablation --pipeline-tiles \
-  --out /dev/shm/ysyx_compiler_c4vpu/stream-rtl \
+  --out /dev/shm/ysyx_compiler_c5/stream-rtl \
   examples/c3_streams/StreamVision_MultiTile.onnx examples/c3_streams/StreamLLM_MultiTile.onnx
 ```
 

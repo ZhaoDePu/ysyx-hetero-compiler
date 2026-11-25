@@ -32,7 +32,7 @@ the accuracy ledger measures differences on the same workload inputs.
 python3 -m hetero_compiler \
   --graph examples/c4vpu/TransformerLayer_INT8_C4VPU.onnx \
   --profile fpga_zu15eg_balanced --pipeline-tiles --pipeline-scheduler bank-aware \
-  --vpu-lowering on --vpu-attention exact --out /dev/shm/ysyx_compiler_c4vpu/layer
+  --vpu-lowering on --vpu-attention exact --out /dev/shm/ysyx_compiler_c5/layer
 ```
 
 See [the native runtime format](yhb-format.md) for the Step 2 MMIO and
@@ -45,5 +45,5 @@ the full prefix during decode. Absolute causal positions exclude padded
 and future keys. The published K/V outputs retain logical unpadded shapes.
 
 ```sh
-python3 -m hetero_compiler.kv_schedule --graph examples/c4a_kv/causal_kv32.json   --vpu-lowering on --vpu-attention exact --out /dev/shm/ysyx_compiler_c4vpu/kv
+python3 -m hetero_compiler.kv_schedule --graph examples/c4a_kv/causal_kv32.json   --vpu-lowering on --vpu-attention exact --out /dev/shm/ysyx_compiler_c5/kv
 ```

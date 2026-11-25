@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 repo=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
-scratch=/dev/shm/ysyx_compiler_c4vpu
+scratch=/dev/shm/ysyx_compiler_c5
 root=${1:?new evidence directory under compiler C2 RAM required}
 [[ $(realpath -e -- "$scratch") == "$scratch" && -O "$scratch" ]]
 [[ $(realpath -m -- "$root") == "$root" && "$root" == "$scratch/"* && ! -e "$root" ]]

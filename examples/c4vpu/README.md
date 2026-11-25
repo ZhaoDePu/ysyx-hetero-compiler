@@ -19,7 +19,7 @@ the VPU setting with cached append and full-prefix recompute.
 ```sh
 export PYTHONHASHSEED=0 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1
 python3 -B -m tools.run_c4vpu_eval \
-  --out /dev/shm/ysyx_compiler_c4vpu/bench/release
+  --out /dev/shm/ysyx_compiler_c5/bench/release
 ```
 
 The runner checks each output in frozen RTL against the fixed-point oracle

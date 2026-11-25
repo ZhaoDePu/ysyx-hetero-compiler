@@ -131,7 +131,7 @@ loading, device feedback, host feedback and a host override:
 
 ```sh
 nice -n 10 python3 -B -m tools.verify_c4a_session \
-  --out /dev/shm/ysyx_compiler_c4vpu/runtime/session-proof
+  --out /dev/shm/ysyx_compiler_c5/runtime/session-proof
 ```
 
 ## Build and execute
@@ -181,7 +181,7 @@ C compiler compatibility does not establish board operation.
 The Verilator build links the same C files against the frozen compiled
 Z15 RTL and the C++ AXI/DDR rig. Run `bash tools/build_npu_z15_rtl.sh`
 before `bash runtime/build_verilator.sh`. The bridge instruments the
-copied rig and does not change frozen HDL. On xu4090 use `/dev/shm/ysyx_compiler_c4vpu`. Launch compilation and
+copied rig and does not change frozen HDL. On xu4090 use `/dev/shm/ysyx_compiler_c5`. Launch compilation and
 simulation via low-priority `nice` and `ionice`, with make capped at four
 jobs. The ABI gate includes counter rollover and HAL-call sequencing,
 designated DMA rejections with repaired CRCs, and byte-exact RTL kit
@@ -189,7 +189,7 @@ replay.
 
 ```sh
 nice -n 10 make -C runtime -j4 check
-nice -n 10 python3 -B -m runtime.verify_z15_abi --out /dev/shm/ysyx_compiler_c4vpu/runtime/abi-verify
+nice -n 10 python3 -B -m runtime.verify_z15_abi --out /dev/shm/ysyx_compiler_c5/runtime/abi-verify
 ```
 
 ```sh

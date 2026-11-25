@@ -8,7 +8,7 @@ import subprocess
 import tempfile
 
 
-SCRATCH = Path("/dev/shm/ysyx_compiler_c4vpu/gpu")
+SCRATCH = Path("/dev/shm/ysyx_compiler_c5/gpu")
 BUILD = Path(__file__).with_name("build_gpu_rtl.sh")
 PRIORITY = ["nice", "-n", "10", "ionice", "-c2", "-n7"]
 

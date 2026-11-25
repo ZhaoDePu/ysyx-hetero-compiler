@@ -11,7 +11,7 @@ from hetero_compiler.kv_reference import evaluate_kv
 from hetero_compiler.kv_schedule import compile_kv_bundle
 from tools.verify_bundle import _z15_launch
 
-_ROOT = Path("/dev/shm/ysyx_compiler_c4vpu")
+_ROOT = Path("/dev/shm/ysyx_compiler_c5")
 _FROZEN = _ROOT/"npu/z15-build/run-npu-z15"
 
 

@@ -21,7 +21,7 @@ from tools.run_c2_ablation import SETTINGS
 from tools.run_c4a_kv import _fixed_reference, export_case, replay
 
 
-SCRATCH = Path("/dev/shm/ysyx_compiler_c4vpu")
+SCRATCH = Path("/dev/shm/ysyx_compiler_c5")
 CLOCKS = {"phase12c": 164.555, "step2": 125.00}
 MODELS = {
     "window": Path("examples/c4a_streams/LongPrefix_Stream_C4A.onnx"),
