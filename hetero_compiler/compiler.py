@@ -10,6 +10,7 @@ from . import gpu, npu
 from .ir import GraphError, normalize
 from .planner import make_plan
 from .streaming import make_stream_plan
+from .yhb import TARGET_IDS, emit_yhb
 
 
 def tensor_bytes(values, dtype):
@@ -102,7 +103,7 @@ def _stream_images(graph, plan, profile, native):
 
 
 def compile_bundle(raw_graph, profile, output, *, dialect="auto", fuse=True, reuse=True,
-                   overlap=True, device_policy="auto", stream_ddr=False):
+                   overlap=True, device_policy="auto", stream_ddr=False, emit_binary=None):
     graph = normalize(raw_graph, dialect=dialect)
     physical, execution = graph, None
     options = {"fuse": fuse, "reuse": reuse, "overlap": overlap, "device_policy": device_policy}
@@ -172,6 +173,10 @@ def compile_bundle(raw_graph, profile, output, *, dialect="auto", fuse=True, reu
                     "estimates": estimate}
         if execution is not None:
             manifest.update(execution=execution, initial_ddr="initial_ddr.bin", output_bindings=outputs)
+        if emit_binary is None:
+            emit_binary = profile["name"] in TARGET_IDS
+        if emit_binary:
+            manifest["program"] = emit_yhb(staging, manifest).name
         # Round-trip the returned dictionary into the same JSON shape as the file.
         encoded = json.dumps(manifest, indent=2, ensure_ascii=False) + "\n"
         (staging / "bundle.json").write_text(encoded, encoding="utf-8")

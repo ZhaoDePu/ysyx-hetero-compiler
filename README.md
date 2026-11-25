@@ -140,3 +140,22 @@ busy-overlap counters. The reported conversion divides wall ticks by
 164.555 MHz. The GPU busy projection separately divides observed GPU clock
 edges under the synchronized GPU busy flag by 124.239 MHz. The conversion
 uses Phase 12C routed Fmax and does not retime the simulator clocks.
+
+## Single-file programs and Z15 runtime
+
+Standard profiles emit `program.yhb` by default. The [YHB1 format](docs/yhb-format.md)
+describes the byte layout, CRC, inputs and both backends. Use `--no-yhb` for
+native/textual artifacts alone. Build the portable C99 library and the Linux
+UIO CLI with a warning gate:
+
+```sh
+nice -n 15 ionice -c 3 make -C runtime -j2 CC=gcc
+bash runtime/build_verilator.sh
+nice -n 15 ionice -c 3 python3 -B -m runtime.verify_yhb \
+  --bundle /dev/shm/ysyx_compiler_c2/quick.example/bundle \
+  --scratch /dev/shm/ysyx_compiler_c2/runtime/yhb-check
+```
+
+The Verilator binary uses the pinned Balanced AXI/MMIO shell. The Linux
+binary requires the matching UIO control and noncached reserved DDR devices
+on the board. All four standard targets support packing and inspection.

@@ -18,6 +18,11 @@ def main():
     parser.add_argument("--device-policy", choices=("auto", "gpu-only", "npu-greedy"), default="auto")
     parser.add_argument("--no-fusion", "--no-fuse", dest="no_fuse", action="store_true")
     parser.add_argument("--no-overlap", action="store_true")
+    binary = parser.add_mutually_exclusive_group()
+    binary.add_argument("--emit-yhb", dest="emit_binary", action="store_true", default=None,
+                        help="Write program.yhb (default for standard profiles)")
+    binary.add_argument("--no-yhb", dest="emit_binary", action="store_false",
+                        help="Emit textual/native artifacts only")
     parser.add_argument("--stream-ddr", action="store_true",
                         help="Use the DDR-backed Z15 scratch schedule even when the graph fits resident")
     parser.add_argument("--no-mem-reuse", "--no-reuse", dest="no_reuse", action="store_true")
@@ -32,7 +37,7 @@ def main():
         result = compile_bundle(raw, load_profile(args.profile), args.out, dialect=dialect,
                                 fuse=not args.no_fuse, reuse=not args.no_reuse,
                                 overlap=not args.no_overlap, device_policy=args.device_policy,
-                                stream_ddr=args.stream_ddr)
+                                stream_ddr=args.stream_ddr, emit_binary=args.emit_binary)
     except (ValueError, OSError) as exc:
         parser.exit(2, f"compiler error: {exc}\n")
     plan = result["plan"]

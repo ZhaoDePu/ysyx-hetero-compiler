@@ -37,6 +37,8 @@ class BundleTests(unittest.TestCase):
                              ["launch", "fence", "launch"])
             self.assertEqual(len((output / "initial.bin").read_bytes()), 2 << 20)
             self.assertTrue((output / "npu.bin").stat().st_size)
+            self.assertEqual(manifest["program"], "program.yhb")
+            self.assertEqual((output / "program.yhb").read_bytes()[:4], b"YHB1")
             self.assertTrue((output / manifest["backends"]["gpu"]["stages"][0]["elf"])
                             .read_bytes().startswith(b"\x7fELF"))
             self.assertEqual({n for cmd in manifest["dma"] for n in cmd["tensors"]},
