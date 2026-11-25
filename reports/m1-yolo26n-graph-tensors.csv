@@ -1,0 +1,630 @@
+name,shape,dtype,kind,onnx_bytes,int8_bytes,producer,first_step,last_consumer,consumer_count,consumers,onnx_limit,int8_limit,cross_layer,producer_scope,consumer_scopes,ddr_candidate
+/model.0/act/Mul_output_0,"[1,16,160,160]",float32,activation,1638400,409600,2,2,3,1,[3],exceeds-half,within-half,false,model.0,"[""model.1""]",false
+/model.0/act/Sigmoid_output_0,"[1,16,160,160]",float32,activation,1638400,409600,1,1,2,1,[2],exceeds-half,within-half,false,model.0,"[""model.0""]",false
+/model.0/conv/Conv_output_0,"[1,16,160,160]",float32,activation,1638400,409600,0,0,2,2,"[1,2]",exceeds-half,within-half,true,model.0,"[""model.0""]",true
+/model.1/act/Mul_output_0,"[1,32,80,80]",float32,activation,819200,204800,5,5,6,1,[6],within-half,within-half,false,model.1,"[""model.2""]",false
+/model.1/act/Sigmoid_output_0,"[1,32,80,80]",float32,activation,819200,204800,4,4,5,1,[5],within-half,within-half,false,model.1,"[""model.1""]",false
+/model.1/conv/Conv_output_0,"[1,32,80,80]",float32,activation,819200,204800,3,3,5,2,"[4,5]",within-half,within-half,true,model.1,"[""model.1""]",true
+/model.10/Concat_output_0,"[1,256,10,10]",float32,activation,102400,25600,142,142,143,1,[143],within-half,within-half,false,model.10,"[""model.10""]",false
+/model.10/Split_output_0,"[1,128,10,10]",float32,activation,51200,12800,121,121,142,1,[142],within-half,within-half,true,model.10,"[""model.10""]",true
+/model.10/Split_output_1,"[1,128,10,10]",float32,activation,51200,12800,121,121,136,2,"[122,136]",within-half,within-half,true,model.10,"[""model.10""]",true
+/model.10/cv1/act/Mul_output_0,"[1,256,10,10]",float32,activation,102400,25600,120,120,121,1,[121],within-half,within-half,false,model.10,"[""model.10""]",false
+/model.10/cv1/act/Sigmoid_output_0,"[1,256,10,10]",float32,activation,102400,25600,119,119,120,1,[120],within-half,within-half,false,model.10,"[""model.10""]",false
+/model.10/cv1/conv/Conv_output_0,"[1,256,10,10]",float32,activation,102400,25600,118,118,120,2,"[119,120]",within-half,within-half,true,model.10,"[""model.10""]",true
+/model.10/cv2/act/Mul_output_0,"[1,256,10,10]",float32,activation,102400,25600,145,145,281,2,"[146,281]",within-half,within-half,true,model.10,"[""model.11"",""model.21""]",true
+/model.10/cv2/act/Sigmoid_output_0,"[1,256,10,10]",float32,activation,102400,25600,144,144,145,1,[145],within-half,within-half,false,model.10,"[""model.10""]",false
+/model.10/cv2/conv/Conv_output_0,"[1,256,10,10]",float32,activation,102400,25600,143,143,145,2,"[144,145]",within-half,within-half,true,model.10,"[""model.10""]",true
+/model.10/m/m.0/Add_1_output_0,"[1,128,10,10]",float32,activation,51200,12800,141,141,142,1,[142],within-half,within-half,false,model.10,"[""model.10""]",false
+/model.10/m/m.0/Add_output_0,"[1,128,10,10]",float32,activation,51200,12800,136,136,141,2,"[137,141]",within-half,within-half,true,model.10,"[""model.10""]",true
+/model.10/m/m.0/attn/Add_output_0,"[1,128,10,10]",float32,activation,51200,12800,134,134,135,1,[135],within-half,within-half,false,model.10,"[""model.10""]",false
+/model.10/m/m.0/attn/Constant_1_output_0,[],float32,constant,4,1,-1,-1,312,2,"[125,312]",within-half,within-half,false,(graph input or initializer),"[""model.10"",""model.22""]",false
+/model.10/m/m.0/attn/Constant_3_output_0,[4],int64,constant,32,32,-1,-1,320,4,"[126,133,313,320]",within-half,within-half,false,(graph input or initializer),"[""model.10"",""model.22""]",false
+/model.10/m/m.0/attn/Constant_output_0,[4],int64,constant,32,32,-1,-1,310,2,"[123,310]",within-half,within-half,false,(graph input or initializer),"[""model.10"",""model.22""]",false
+/model.10/m/m.0/attn/MatMul_1_output_0,"[1,2,64,100]",float32,activation,51200,12800,132,132,133,1,[133],within-half,within-half,false,model.10,"[""model.10""]",false
+/model.10/m/m.0/attn/MatMul_output_0,"[1,2,100,100]",float32,activation,80000,20000,129,129,130,1,[130],within-half,within-half,false,model.10,"[""model.10""]",false
+/model.10/m/m.0/attn/Mul_output_0,"[1,2,32,100]",float32,activation,25600,6400,125,125,127,1,[127],within-half,within-half,true,model.10,"[""model.10""]",true
+/model.10/m/m.0/attn/Reshape_1_output_0,"[1,128,10,10]",float32,activation,51200,12800,133,133,134,1,[134],within-half,within-half,false,model.10,"[""model.10""]",false
+/model.10/m/m.0/attn/Reshape_2_output_0,"[1,128,10,10]",float32,activation,51200,12800,126,126,128,1,[128],within-half,within-half,true,model.10,"[""model.10""]",true
+/model.10/m/m.0/attn/Reshape_output_0,"[1,2,128,100]",float32,activation,102400,25600,123,123,124,1,[124],within-half,within-half,false,model.10,"[""model.10""]",false
+/model.10/m/m.0/attn/Softmax_output_0,"[1,2,100,100]",float32,activation,80000,20000,130,130,131,1,[131],within-half,within-half,false,model.10,"[""model.10""]",false
+/model.10/m/m.0/attn/Split_output_0,"[1,2,32,100]",float32,activation,25600,6400,124,124,125,1,[125],within-half,within-half,false,model.10,"[""model.10""]",false
+/model.10/m/m.0/attn/Split_output_1,"[1,2,32,100]",float32,activation,25600,6400,124,124,129,1,[129],within-half,within-half,true,model.10,"[""model.10""]",true
+/model.10/m/m.0/attn/Split_output_2,"[1,2,64,100]",float32,activation,51200,12800,124,124,132,2,"[126,132]",within-half,within-half,true,model.10,"[""model.10""]",true
+/model.10/m/m.0/attn/Transpose_1_output_0,"[1,2,100,100]",float32,activation,80000,20000,131,131,132,1,[132],within-half,within-half,false,model.10,"[""model.10""]",false
+/model.10/m/m.0/attn/Transpose_output_0,"[1,2,100,32]",float32,activation,25600,6400,127,127,129,1,[129],within-half,within-half,true,model.10,"[""model.10""]",true
+/model.10/m/m.0/attn/pe/conv/Conv_output_0,"[1,128,10,10]",float32,activation,51200,12800,128,128,134,1,[134],within-half,within-half,true,model.10,"[""model.10""]",true
+/model.10/m/m.0/attn/proj/conv/Conv_output_0,"[1,128,10,10]",float32,activation,51200,12800,135,135,136,1,[136],within-half,within-half,false,model.10,"[""model.10""]",false
+/model.10/m/m.0/attn/qkv/conv/Conv_output_0,"[1,256,10,10]",float32,activation,102400,25600,122,122,123,1,[123],within-half,within-half,false,model.10,"[""model.10""]",false
+/model.10/m/m.0/ffn/ffn.0/act/Mul_output_0,"[1,256,10,10]",float32,activation,102400,25600,139,139,140,1,[140],within-half,within-half,false,model.10,"[""model.10""]",false
+/model.10/m/m.0/ffn/ffn.0/act/Sigmoid_output_0,"[1,256,10,10]",float32,activation,102400,25600,138,138,139,1,[139],within-half,within-half,false,model.10,"[""model.10""]",false
+/model.10/m/m.0/ffn/ffn.0/conv/Conv_output_0,"[1,256,10,10]",float32,activation,102400,25600,137,137,139,2,"[138,139]",within-half,within-half,true,model.10,"[""model.10""]",true
+/model.10/m/m.0/ffn/ffn.1/conv/Conv_output_0,"[1,128,10,10]",float32,activation,51200,12800,140,140,141,1,[141],within-half,within-half,false,model.10,"[""model.10""]",false
+/model.11/Constant_output_0,[4],float32,constant,16,4,-1,-1,180,2,"[146,180]",within-half,within-half,false,(graph input or initializer),"[""model.11"",""model.14""]",false
+/model.11/Resize_output_0,"[1,256,20,20]",float32,activation,409600,102400,146,146,147,1,[147],within-half,within-half,false,model.11,"[""model.12""]",false
+/model.12/Concat_output_0,"[1,384,20,20]",float32,activation,614400,153600,147,147,148,1,[148],within-half,within-half,false,model.12,"[""model.13""]",false
+/model.13/Concat_output_0,"[1,192,20,20]",float32,activation,307200,76800,176,176,177,1,[177],within-half,within-half,false,model.13,"[""model.13""]",false
+/model.13/Split_output_0,"[1,64,20,20]",float32,activation,102400,25600,151,151,176,1,[176],within-half,within-half,true,model.13,"[""model.13""]",true
+/model.13/Split_output_1,"[1,64,20,20]",float32,activation,102400,25600,151,151,176,3,"[152,153,176]",within-half,within-half,true,model.13,"[""model.13""]",true
+/model.13/cv1/act/Mul_output_0,"[1,128,20,20]",float32,activation,204800,51200,150,150,151,1,[151],within-half,within-half,false,model.13,"[""model.13""]",false
+/model.13/cv1/act/Sigmoid_output_0,"[1,128,20,20]",float32,activation,204800,51200,149,149,150,1,[150],within-half,within-half,false,model.13,"[""model.13""]",false
+/model.13/cv1/conv/Conv_output_0,"[1,128,20,20]",float32,activation,204800,51200,148,148,150,2,"[149,150]",within-half,within-half,true,model.13,"[""model.13""]",true
+/model.13/cv2/act/Mul_output_0,"[1,128,20,20]",float32,activation,204800,51200,179,179,223,2,"[180,223]",within-half,within-half,true,model.13,"[""model.14"",""model.18""]",true
+/model.13/cv2/act/Sigmoid_output_0,"[1,128,20,20]",float32,activation,204800,51200,178,178,179,1,[179],within-half,within-half,false,model.13,"[""model.13""]",false
+/model.13/cv2/conv/Conv_output_0,"[1,128,20,20]",float32,activation,204800,51200,177,177,179,2,"[178,179]",within-half,within-half,true,model.13,"[""model.13""]",true
+/model.13/m.0/Concat_output_0,"[1,64,20,20]",float32,activation,102400,25600,172,172,173,1,[173],within-half,within-half,false,model.13,"[""model.13""]",false
+/model.13/m.0/cv1/act/Mul_output_0,"[1,32,20,20]",float32,activation,51200,12800,156,156,164,2,"[158,164]",within-half,within-half,true,model.13,"[""model.13""]",true
+/model.13/m.0/cv1/act/Sigmoid_output_0,"[1,32,20,20]",float32,activation,51200,12800,154,154,156,1,[156],within-half,within-half,true,model.13,"[""model.13""]",true
+/model.13/m.0/cv1/conv/Conv_output_0,"[1,32,20,20]",float32,activation,51200,12800,152,152,156,2,"[154,156]",within-half,within-half,true,model.13,"[""model.13""]",true
+/model.13/m.0/cv2/act/Mul_output_0,"[1,32,20,20]",float32,activation,51200,12800,157,157,172,1,[172],within-half,within-half,true,model.13,"[""model.13""]",true
+/model.13/m.0/cv2/act/Sigmoid_output_0,"[1,32,20,20]",float32,activation,51200,12800,155,155,157,1,[157],within-half,within-half,true,model.13,"[""model.13""]",true
+/model.13/m.0/cv2/conv/Conv_output_0,"[1,32,20,20]",float32,activation,51200,12800,153,153,157,2,"[155,157]",within-half,within-half,true,model.13,"[""model.13""]",true
+/model.13/m.0/cv3/act/Mul_output_0,"[1,64,20,20]",float32,activation,102400,25600,175,175,176,1,[176],within-half,within-half,false,model.13,"[""model.13""]",false
+/model.13/m.0/cv3/act/Sigmoid_output_0,"[1,64,20,20]",float32,activation,102400,25600,174,174,175,1,[175],within-half,within-half,false,model.13,"[""model.13""]",false
+/model.13/m.0/cv3/conv/Conv_output_0,"[1,64,20,20]",float32,activation,102400,25600,173,173,175,2,"[174,175]",within-half,within-half,true,model.13,"[""model.13""]",true
+/model.13/m.0/m/m.0/Add_output_0,"[1,32,20,20]",float32,activation,51200,12800,164,164,171,2,"[165,171]",within-half,within-half,true,model.13,"[""model.13""]",true
+/model.13/m.0/m/m.0/cv1/act/Mul_output_0,"[1,32,20,20]",float32,activation,51200,12800,160,160,161,1,[161],within-half,within-half,false,model.13,"[""model.13""]",false
+/model.13/m.0/m/m.0/cv1/act/Sigmoid_output_0,"[1,32,20,20]",float32,activation,51200,12800,159,159,160,1,[160],within-half,within-half,false,model.13,"[""model.13""]",false
+/model.13/m.0/m/m.0/cv1/conv/Conv_output_0,"[1,32,20,20]",float32,activation,51200,12800,158,158,160,2,"[159,160]",within-half,within-half,true,model.13,"[""model.13""]",true
+/model.13/m.0/m/m.0/cv2/act/Mul_output_0,"[1,32,20,20]",float32,activation,51200,12800,163,163,164,1,[164],within-half,within-half,false,model.13,"[""model.13""]",false
+/model.13/m.0/m/m.0/cv2/act/Sigmoid_output_0,"[1,32,20,20]",float32,activation,51200,12800,162,162,163,1,[163],within-half,within-half,false,model.13,"[""model.13""]",false
+/model.13/m.0/m/m.0/cv2/conv/Conv_output_0,"[1,32,20,20]",float32,activation,51200,12800,161,161,163,2,"[162,163]",within-half,within-half,true,model.13,"[""model.13""]",true
+/model.13/m.0/m/m.1/Add_output_0,"[1,32,20,20]",float32,activation,51200,12800,171,171,172,1,[172],within-half,within-half,false,model.13,"[""model.13""]",false
+/model.13/m.0/m/m.1/cv1/act/Mul_output_0,"[1,32,20,20]",float32,activation,51200,12800,167,167,168,1,[168],within-half,within-half,false,model.13,"[""model.13""]",false
+/model.13/m.0/m/m.1/cv1/act/Sigmoid_output_0,"[1,32,20,20]",float32,activation,51200,12800,166,166,167,1,[167],within-half,within-half,false,model.13,"[""model.13""]",false
+/model.13/m.0/m/m.1/cv1/conv/Conv_output_0,"[1,32,20,20]",float32,activation,51200,12800,165,165,167,2,"[166,167]",within-half,within-half,true,model.13,"[""model.13""]",true
+/model.13/m.0/m/m.1/cv2/act/Mul_output_0,"[1,32,20,20]",float32,activation,51200,12800,170,170,171,1,[171],within-half,within-half,false,model.13,"[""model.13""]",false
+/model.13/m.0/m/m.1/cv2/act/Sigmoid_output_0,"[1,32,20,20]",float32,activation,51200,12800,169,169,170,1,[170],within-half,within-half,false,model.13,"[""model.13""]",false
+/model.13/m.0/m/m.1/cv2/conv/Conv_output_0,"[1,32,20,20]",float32,activation,51200,12800,168,168,170,2,"[169,170]",within-half,within-half,true,model.13,"[""model.13""]",true
+/model.14/Resize_output_0,"[1,128,40,40]",float32,activation,819200,204800,180,180,181,1,[181],within-half,within-half,false,model.14,"[""model.15""]",false
+/model.15/Concat_output_0,"[1,256,40,40]",float32,activation,1638400,409600,181,181,182,1,[182],exceeds-half,within-half,false,model.15,"[""model.16""]",false
+/model.16/Concat_output_0,"[1,96,40,40]",float32,activation,614400,153600,210,210,211,1,[211],within-half,within-half,false,model.16,"[""model.16""]",false
+/model.16/Split_output_0,"[1,32,40,40]",float32,activation,204800,51200,185,185,210,1,[210],within-half,within-half,true,model.16,"[""model.16""]",true
+/model.16/Split_output_1,"[1,32,40,40]",float32,activation,204800,51200,185,185,210,3,"[186,187,210]",within-half,within-half,true,model.16,"[""model.16""]",true
+/model.16/cv1/act/Mul_output_0,"[1,64,40,40]",float32,activation,409600,102400,184,184,185,1,[185],within-half,within-half,false,model.16,"[""model.16""]",false
+/model.16/cv1/act/Sigmoid_output_0,"[1,64,40,40]",float32,activation,409600,102400,183,183,184,1,[184],within-half,within-half,false,model.16,"[""model.16""]",false
+/model.16/cv1/conv/Conv_output_0,"[1,64,40,40]",float32,activation,409600,102400,182,182,184,2,"[183,184]",within-half,within-half,true,model.16,"[""model.16""]",true
+/model.16/cv2/act/Mul_output_0,"[1,64,40,40]",float32,activation,409600,102400,213,213,216,3,"[214,215,216]",within-half,within-half,true,model.16,"[""model.17"",""model.23""]",true
+/model.16/cv2/act/Sigmoid_output_0,"[1,64,40,40]",float32,activation,409600,102400,212,212,213,1,[213],within-half,within-half,false,model.16,"[""model.16""]",false
+/model.16/cv2/conv/Conv_output_0,"[1,64,40,40]",float32,activation,409600,102400,211,211,213,2,"[212,213]",within-half,within-half,true,model.16,"[""model.16""]",true
+/model.16/m.0/Concat_output_0,"[1,32,40,40]",float32,activation,204800,51200,206,206,207,1,[207],within-half,within-half,false,model.16,"[""model.16""]",false
+/model.16/m.0/cv1/act/Mul_output_0,"[1,16,40,40]",float32,activation,102400,25600,190,190,198,2,"[192,198]",within-half,within-half,true,model.16,"[""model.16""]",true
+/model.16/m.0/cv1/act/Sigmoid_output_0,"[1,16,40,40]",float32,activation,102400,25600,188,188,190,1,[190],within-half,within-half,true,model.16,"[""model.16""]",true
+/model.16/m.0/cv1/conv/Conv_output_0,"[1,16,40,40]",float32,activation,102400,25600,186,186,190,2,"[188,190]",within-half,within-half,true,model.16,"[""model.16""]",true
+/model.16/m.0/cv2/act/Mul_output_0,"[1,16,40,40]",float32,activation,102400,25600,191,191,206,1,[206],within-half,within-half,true,model.16,"[""model.16""]",true
+/model.16/m.0/cv2/act/Sigmoid_output_0,"[1,16,40,40]",float32,activation,102400,25600,189,189,191,1,[191],within-half,within-half,true,model.16,"[""model.16""]",true
+/model.16/m.0/cv2/conv/Conv_output_0,"[1,16,40,40]",float32,activation,102400,25600,187,187,191,2,"[189,191]",within-half,within-half,true,model.16,"[""model.16""]",true
+/model.16/m.0/cv3/act/Mul_output_0,"[1,32,40,40]",float32,activation,204800,51200,209,209,210,1,[210],within-half,within-half,false,model.16,"[""model.16""]",false
+/model.16/m.0/cv3/act/Sigmoid_output_0,"[1,32,40,40]",float32,activation,204800,51200,208,208,209,1,[209],within-half,within-half,false,model.16,"[""model.16""]",false
+/model.16/m.0/cv3/conv/Conv_output_0,"[1,32,40,40]",float32,activation,204800,51200,207,207,209,2,"[208,209]",within-half,within-half,true,model.16,"[""model.16""]",true
+/model.16/m.0/m/m.0/Add_output_0,"[1,16,40,40]",float32,activation,102400,25600,198,198,205,2,"[199,205]",within-half,within-half,true,model.16,"[""model.16""]",true
+/model.16/m.0/m/m.0/cv1/act/Mul_output_0,"[1,16,40,40]",float32,activation,102400,25600,194,194,195,1,[195],within-half,within-half,false,model.16,"[""model.16""]",false
+/model.16/m.0/m/m.0/cv1/act/Sigmoid_output_0,"[1,16,40,40]",float32,activation,102400,25600,193,193,194,1,[194],within-half,within-half,false,model.16,"[""model.16""]",false
+/model.16/m.0/m/m.0/cv1/conv/Conv_output_0,"[1,16,40,40]",float32,activation,102400,25600,192,192,194,2,"[193,194]",within-half,within-half,true,model.16,"[""model.16""]",true
+/model.16/m.0/m/m.0/cv2/act/Mul_output_0,"[1,16,40,40]",float32,activation,102400,25600,197,197,198,1,[198],within-half,within-half,false,model.16,"[""model.16""]",false
+/model.16/m.0/m/m.0/cv2/act/Sigmoid_output_0,"[1,16,40,40]",float32,activation,102400,25600,196,196,197,1,[197],within-half,within-half,false,model.16,"[""model.16""]",false
+/model.16/m.0/m/m.0/cv2/conv/Conv_output_0,"[1,16,40,40]",float32,activation,102400,25600,195,195,197,2,"[196,197]",within-half,within-half,true,model.16,"[""model.16""]",true
+/model.16/m.0/m/m.1/Add_output_0,"[1,16,40,40]",float32,activation,102400,25600,205,205,206,1,[206],within-half,within-half,false,model.16,"[""model.16""]",false
+/model.16/m.0/m/m.1/cv1/act/Mul_output_0,"[1,16,40,40]",float32,activation,102400,25600,201,201,202,1,[202],within-half,within-half,false,model.16,"[""model.16""]",false
+/model.16/m.0/m/m.1/cv1/act/Sigmoid_output_0,"[1,16,40,40]",float32,activation,102400,25600,200,200,201,1,[201],within-half,within-half,false,model.16,"[""model.16""]",false
+/model.16/m.0/m/m.1/cv1/conv/Conv_output_0,"[1,16,40,40]",float32,activation,102400,25600,199,199,201,2,"[200,201]",within-half,within-half,true,model.16,"[""model.16""]",true
+/model.16/m.0/m/m.1/cv2/act/Mul_output_0,"[1,16,40,40]",float32,activation,102400,25600,204,204,205,1,[205],within-half,within-half,false,model.16,"[""model.16""]",false
+/model.16/m.0/m/m.1/cv2/act/Sigmoid_output_0,"[1,16,40,40]",float32,activation,102400,25600,203,203,204,1,[204],within-half,within-half,false,model.16,"[""model.16""]",false
+/model.16/m.0/m/m.1/cv2/conv/Conv_output_0,"[1,16,40,40]",float32,activation,102400,25600,202,202,204,2,"[203,204]",within-half,within-half,true,model.16,"[""model.16""]",true
+/model.17/act/Mul_output_0,"[1,64,20,20]",float32,activation,102400,25600,220,220,223,1,[223],within-half,within-half,true,model.17,"[""model.18""]",true
+/model.17/act/Sigmoid_output_0,"[1,64,20,20]",float32,activation,102400,25600,217,217,220,1,[220],within-half,within-half,true,model.17,"[""model.17""]",true
+/model.17/conv/Conv_output_0,"[1,64,20,20]",float32,activation,102400,25600,214,214,220,2,"[217,220]",within-half,within-half,true,model.17,"[""model.17""]",true
+/model.18/Concat_output_0,"[1,192,20,20]",float32,activation,307200,76800,223,223,226,1,[226],within-half,within-half,true,model.18,"[""model.19""]",true
+/model.19/Concat_output_0,"[1,192,20,20]",float32,activation,307200,76800,268,268,269,1,[269],within-half,within-half,false,model.19,"[""model.19""]",false
+/model.19/Split_output_0,"[1,64,20,20]",float32,activation,102400,25600,235,235,268,1,[268],within-half,within-half,true,model.19,"[""model.19""]",true
+/model.19/Split_output_1,"[1,64,20,20]",float32,activation,102400,25600,235,235,268,3,"[238,239,268]",within-half,within-half,true,model.19,"[""model.19""]",true
+/model.19/cv1/act/Mul_output_0,"[1,128,20,20]",float32,activation,204800,51200,232,232,235,1,[235],within-half,within-half,true,model.19,"[""model.19""]",true
+/model.19/cv1/act/Sigmoid_output_0,"[1,128,20,20]",float32,activation,204800,51200,229,229,232,1,[232],within-half,within-half,true,model.19,"[""model.19""]",true
+/model.19/cv1/conv/Conv_output_0,"[1,128,20,20]",float32,activation,204800,51200,226,226,232,2,"[229,232]",within-half,within-half,true,model.19,"[""model.19""]",true
+/model.19/cv2/act/Mul_output_0,"[1,128,20,20]",float32,activation,204800,51200,271,271,274,3,"[272,273,274]",within-half,within-half,true,model.19,"[""model.20"",""model.23""]",true
+/model.19/cv2/act/Sigmoid_output_0,"[1,128,20,20]",float32,activation,204800,51200,270,270,271,1,[271],within-half,within-half,false,model.19,"[""model.19""]",false
+/model.19/cv2/conv/Conv_output_0,"[1,128,20,20]",float32,activation,204800,51200,269,269,271,2,"[270,271]",within-half,within-half,true,model.19,"[""model.19""]",true
+/model.19/m.0/Concat_output_0,"[1,64,20,20]",float32,activation,102400,25600,264,264,265,1,[265],within-half,within-half,false,model.19,"[""model.19""]",false
+/model.19/m.0/cv1/act/Mul_output_0,"[1,32,20,20]",float32,activation,51200,12800,244,244,256,2,"[247,256]",within-half,within-half,true,model.19,"[""model.19""]",true
+/model.19/m.0/cv1/act/Sigmoid_output_0,"[1,32,20,20]",float32,activation,51200,12800,241,241,244,1,[244],within-half,within-half,true,model.19,"[""model.19""]",true
+/model.19/m.0/cv1/conv/Conv_output_0,"[1,32,20,20]",float32,activation,51200,12800,238,238,244,2,"[241,244]",within-half,within-half,true,model.19,"[""model.19""]",true
+/model.19/m.0/cv2/act/Mul_output_0,"[1,32,20,20]",float32,activation,51200,12800,245,245,264,1,[264],within-half,within-half,true,model.19,"[""model.19""]",true
+/model.19/m.0/cv2/act/Sigmoid_output_0,"[1,32,20,20]",float32,activation,51200,12800,242,242,245,1,[245],within-half,within-half,true,model.19,"[""model.19""]",true
+/model.19/m.0/cv2/conv/Conv_output_0,"[1,32,20,20]",float32,activation,51200,12800,239,239,245,2,"[242,245]",within-half,within-half,true,model.19,"[""model.19""]",true
+/model.19/m.0/cv3/act/Mul_output_0,"[1,64,20,20]",float32,activation,102400,25600,267,267,268,1,[268],within-half,within-half,false,model.19,"[""model.19""]",false
+/model.19/m.0/cv3/act/Sigmoid_output_0,"[1,64,20,20]",float32,activation,102400,25600,266,266,267,1,[267],within-half,within-half,false,model.19,"[""model.19""]",false
+/model.19/m.0/cv3/conv/Conv_output_0,"[1,64,20,20]",float32,activation,102400,25600,265,265,267,2,"[266,267]",within-half,within-half,true,model.19,"[""model.19""]",true
+/model.19/m.0/m/m.0/Add_output_0,"[1,32,20,20]",float32,activation,51200,12800,256,256,263,2,"[257,263]",within-half,within-half,true,model.19,"[""model.19""]",true
+/model.19/m.0/m/m.0/cv1/act/Mul_output_0,"[1,32,20,20]",float32,activation,51200,12800,251,251,253,1,[253],within-half,within-half,true,model.19,"[""model.19""]",true
+/model.19/m.0/m/m.0/cv1/act/Sigmoid_output_0,"[1,32,20,20]",float32,activation,51200,12800,249,249,251,1,[251],within-half,within-half,true,model.19,"[""model.19""]",true
+/model.19/m.0/m/m.0/cv1/conv/Conv_output_0,"[1,32,20,20]",float32,activation,51200,12800,247,247,251,2,"[249,251]",within-half,within-half,true,model.19,"[""model.19""]",true
+/model.19/m.0/m/m.0/cv2/act/Mul_output_0,"[1,32,20,20]",float32,activation,51200,12800,255,255,256,1,[256],within-half,within-half,false,model.19,"[""model.19""]",false
+/model.19/m.0/m/m.0/cv2/act/Sigmoid_output_0,"[1,32,20,20]",float32,activation,51200,12800,254,254,255,1,[255],within-half,within-half,false,model.19,"[""model.19""]",false
+/model.19/m.0/m/m.0/cv2/conv/Conv_output_0,"[1,32,20,20]",float32,activation,51200,12800,253,253,255,2,"[254,255]",within-half,within-half,true,model.19,"[""model.19""]",true
+/model.19/m.0/m/m.1/Add_output_0,"[1,32,20,20]",float32,activation,51200,12800,263,263,264,1,[264],within-half,within-half,false,model.19,"[""model.19""]",false
+/model.19/m.0/m/m.1/cv1/act/Mul_output_0,"[1,32,20,20]",float32,activation,51200,12800,259,259,260,1,[260],within-half,within-half,false,model.19,"[""model.19""]",false
+/model.19/m.0/m/m.1/cv1/act/Sigmoid_output_0,"[1,32,20,20]",float32,activation,51200,12800,258,258,259,1,[259],within-half,within-half,false,model.19,"[""model.19""]",false
+/model.19/m.0/m/m.1/cv1/conv/Conv_output_0,"[1,32,20,20]",float32,activation,51200,12800,257,257,259,2,"[258,259]",within-half,within-half,true,model.19,"[""model.19""]",true
+/model.19/m.0/m/m.1/cv2/act/Mul_output_0,"[1,32,20,20]",float32,activation,51200,12800,262,262,263,1,[263],within-half,within-half,false,model.19,"[""model.19""]",false
+/model.19/m.0/m/m.1/cv2/act/Sigmoid_output_0,"[1,32,20,20]",float32,activation,51200,12800,261,261,262,1,[262],within-half,within-half,false,model.19,"[""model.19""]",false
+/model.19/m.0/m/m.1/cv2/conv/Conv_output_0,"[1,32,20,20]",float32,activation,51200,12800,260,260,262,2,"[261,262]",within-half,within-half,true,model.19,"[""model.19""]",true
+/model.2/Concat_output_0,"[1,48,80,80]",float32,activation,1228800,307200,17,17,18,1,[18],exceeds-half,within-half,false,model.2,"[""model.2""]",false
+/model.2/Split_output_0,"[1,16,80,80]",float32,activation,409600,102400,9,9,17,1,[17],within-half,within-half,true,model.2,"[""model.2""]",true
+/model.2/Split_output_1,"[1,16,80,80]",float32,activation,409600,102400,9,9,17,3,"[10,16,17]",within-half,within-half,true,model.2,"[""model.2""]",true
+/model.2/cv1/act/Mul_output_0,"[1,32,80,80]",float32,activation,819200,204800,8,8,9,1,[9],within-half,within-half,false,model.2,"[""model.2""]",false
+/model.2/cv1/act/Sigmoid_output_0,"[1,32,80,80]",float32,activation,819200,204800,7,7,8,1,[8],within-half,within-half,false,model.2,"[""model.2""]",false
+/model.2/cv1/conv/Conv_output_0,"[1,32,80,80]",float32,activation,819200,204800,6,6,8,2,"[7,8]",within-half,within-half,true,model.2,"[""model.2""]",true
+/model.2/cv2/act/Mul_output_0,"[1,64,80,80]",float32,activation,1638400,409600,20,20,21,1,[21],exceeds-half,within-half,false,model.2,"[""model.3""]",false
+/model.2/cv2/act/Sigmoid_output_0,"[1,64,80,80]",float32,activation,1638400,409600,19,19,20,1,[20],exceeds-half,within-half,false,model.2,"[""model.2""]",false
+/model.2/cv2/conv/Conv_output_0,"[1,64,80,80]",float32,activation,1638400,409600,18,18,20,2,"[19,20]",exceeds-half,within-half,true,model.2,"[""model.2""]",true
+/model.2/m.0/Add_output_0,"[1,16,80,80]",float32,activation,409600,102400,16,16,17,1,[17],within-half,within-half,false,model.2,"[""model.2""]",false
+/model.2/m.0/cv1/act/Mul_output_0,"[1,8,80,80]",float32,activation,204800,51200,12,12,13,1,[13],within-half,within-half,false,model.2,"[""model.2""]",false
+/model.2/m.0/cv1/act/Sigmoid_output_0,"[1,8,80,80]",float32,activation,204800,51200,11,11,12,1,[12],within-half,within-half,false,model.2,"[""model.2""]",false
+/model.2/m.0/cv1/conv/Conv_output_0,"[1,8,80,80]",float32,activation,204800,51200,10,10,12,2,"[11,12]",within-half,within-half,true,model.2,"[""model.2""]",true
+/model.2/m.0/cv2/act/Mul_output_0,"[1,16,80,80]",float32,activation,409600,102400,15,15,16,1,[16],within-half,within-half,false,model.2,"[""model.2""]",false
+/model.2/m.0/cv2/act/Sigmoid_output_0,"[1,16,80,80]",float32,activation,409600,102400,14,14,15,1,[15],within-half,within-half,false,model.2,"[""model.2""]",false
+/model.2/m.0/cv2/conv/Conv_output_0,"[1,16,80,80]",float32,activation,409600,102400,13,13,15,2,"[14,15]",within-half,within-half,true,model.2,"[""model.2""]",true
+/model.20/act/Mul_output_0,"[1,128,10,10]",float32,activation,51200,12800,278,278,281,1,[281],within-half,within-half,true,model.20,"[""model.21""]",true
+/model.20/act/Sigmoid_output_0,"[1,128,10,10]",float32,activation,51200,12800,275,275,278,1,[278],within-half,within-half,true,model.20,"[""model.20""]",true
+/model.20/conv/Conv_output_0,"[1,128,10,10]",float32,activation,51200,12800,272,272,278,2,"[275,278]",within-half,within-half,true,model.20,"[""model.20""]",true
+/model.21/Concat_output_0,"[1,384,10,10]",float32,activation,153600,38400,281,281,284,1,[284],within-half,within-half,true,model.21,"[""model.22""]",true
+/model.22/Concat_output_0,"[1,384,10,10]",float32,activation,153600,38400,329,329,330,1,[330],within-half,within-half,false,model.22,"[""model.22""]",false
+/model.22/Split_output_0,"[1,128,10,10]",float32,activation,51200,12800,293,293,329,1,[329],within-half,within-half,true,model.22,"[""model.22""]",true
+/model.22/Split_output_1,"[1,128,10,10]",float32,activation,51200,12800,293,293,329,3,"[296,308,329]",within-half,within-half,true,model.22,"[""model.22""]",true
+/model.22/cv1/act/Mul_output_0,"[1,256,10,10]",float32,activation,102400,25600,290,290,293,1,[293],within-half,within-half,true,model.22,"[""model.22""]",true
+/model.22/cv1/act/Sigmoid_output_0,"[1,256,10,10]",float32,activation,102400,25600,287,287,290,1,[290],within-half,within-half,true,model.22,"[""model.22""]",true
+/model.22/cv1/conv/Conv_output_0,"[1,256,10,10]",float32,activation,102400,25600,284,284,290,2,"[287,290]",within-half,within-half,true,model.22,"[""model.22""]",true
+/model.22/cv2/act/Mul_output_0,"[1,256,10,10]",float32,activation,102400,25600,332,332,334,2,"[333,334]",within-half,within-half,true,model.22,"[""model.23""]",true
+/model.22/cv2/act/Sigmoid_output_0,"[1,256,10,10]",float32,activation,102400,25600,331,331,332,1,[332],within-half,within-half,false,model.22,"[""model.22""]",false
+/model.22/cv2/conv/Conv_output_0,"[1,256,10,10]",float32,activation,102400,25600,330,330,332,2,"[331,332]",within-half,within-half,true,model.22,"[""model.22""]",true
+/model.22/m.0/m.0.0/Add_output_0,"[1,128,10,10]",float32,activation,51200,12800,308,308,323,2,"[309,323]",within-half,within-half,true,model.22,"[""model.22""]",true
+/model.22/m.0/m.0.0/cv1/act/Mul_output_0,"[1,64,10,10]",float32,activation,25600,6400,300,300,302,1,[302],within-half,within-half,true,model.22,"[""model.22""]",true
+/model.22/m.0/m.0.0/cv1/act/Sigmoid_output_0,"[1,64,10,10]",float32,activation,25600,6400,298,298,300,1,[300],within-half,within-half,true,model.22,"[""model.22""]",true
+/model.22/m.0/m.0.0/cv1/conv/Conv_output_0,"[1,64,10,10]",float32,activation,25600,6400,296,296,300,2,"[298,300]",within-half,within-half,true,model.22,"[""model.22""]",true
+/model.22/m.0/m.0.0/cv2/act/Mul_output_0,"[1,128,10,10]",float32,activation,51200,12800,306,306,308,1,[308],within-half,within-half,true,model.22,"[""model.22""]",true
+/model.22/m.0/m.0.0/cv2/act/Sigmoid_output_0,"[1,128,10,10]",float32,activation,51200,12800,304,304,306,1,[306],within-half,within-half,true,model.22,"[""model.22""]",true
+/model.22/m.0/m.0.0/cv2/conv/Conv_output_0,"[1,128,10,10]",float32,activation,51200,12800,302,302,306,2,"[304,306]",within-half,within-half,true,model.22,"[""model.22""]",true
+/model.22/m.0/m.0.1/Add_1_output_0,"[1,128,10,10]",float32,activation,51200,12800,328,328,329,1,[329],within-half,within-half,false,model.22,"[""model.22""]",false
+/model.22/m.0/m.0.1/Add_output_0,"[1,128,10,10]",float32,activation,51200,12800,323,323,328,2,"[324,328]",within-half,within-half,true,model.22,"[""model.22""]",true
+/model.22/m.0/m.0.1/attn/Add_output_0,"[1,128,10,10]",float32,activation,51200,12800,321,321,322,1,[322],within-half,within-half,false,model.22,"[""model.22""]",false
+/model.22/m.0/m.0.1/attn/MatMul_1_output_0,"[1,2,64,100]",float32,activation,51200,12800,319,319,320,1,[320],within-half,within-half,false,model.22,"[""model.22""]",false
+/model.22/m.0/m.0.1/attn/MatMul_output_0,"[1,2,100,100]",float32,activation,80000,20000,316,316,317,1,[317],within-half,within-half,false,model.22,"[""model.22""]",false
+/model.22/m.0/m.0.1/attn/Mul_output_0,"[1,2,32,100]",float32,activation,25600,6400,312,312,314,1,[314],within-half,within-half,true,model.22,"[""model.22""]",true
+/model.22/m.0/m.0.1/attn/Reshape_1_output_0,"[1,128,10,10]",float32,activation,51200,12800,320,320,321,1,[321],within-half,within-half,false,model.22,"[""model.22""]",false
+/model.22/m.0/m.0.1/attn/Reshape_2_output_0,"[1,128,10,10]",float32,activation,51200,12800,313,313,315,1,[315],within-half,within-half,true,model.22,"[""model.22""]",true
+/model.22/m.0/m.0.1/attn/Reshape_output_0,"[1,2,128,100]",float32,activation,102400,25600,310,310,311,1,[311],within-half,within-half,false,model.22,"[""model.22""]",false
+/model.22/m.0/m.0.1/attn/Softmax_output_0,"[1,2,100,100]",float32,activation,80000,20000,317,317,318,1,[318],within-half,within-half,false,model.22,"[""model.22""]",false
+/model.22/m.0/m.0.1/attn/Split_output_0,"[1,2,32,100]",float32,activation,25600,6400,311,311,312,1,[312],within-half,within-half,false,model.22,"[""model.22""]",false
+/model.22/m.0/m.0.1/attn/Split_output_1,"[1,2,32,100]",float32,activation,25600,6400,311,311,316,1,[316],within-half,within-half,true,model.22,"[""model.22""]",true
+/model.22/m.0/m.0.1/attn/Split_output_2,"[1,2,64,100]",float32,activation,51200,12800,311,311,319,2,"[313,319]",within-half,within-half,true,model.22,"[""model.22""]",true
+/model.22/m.0/m.0.1/attn/Transpose_1_output_0,"[1,2,100,100]",float32,activation,80000,20000,318,318,319,1,[319],within-half,within-half,false,model.22,"[""model.22""]",false
+/model.22/m.0/m.0.1/attn/Transpose_output_0,"[1,2,100,32]",float32,activation,25600,6400,314,314,316,1,[316],within-half,within-half,true,model.22,"[""model.22""]",true
+/model.22/m.0/m.0.1/attn/pe/conv/Conv_output_0,"[1,128,10,10]",float32,activation,51200,12800,315,315,321,1,[321],within-half,within-half,true,model.22,"[""model.22""]",true
+/model.22/m.0/m.0.1/attn/proj/conv/Conv_output_0,"[1,128,10,10]",float32,activation,51200,12800,322,322,323,1,[323],within-half,within-half,false,model.22,"[""model.22""]",false
+/model.22/m.0/m.0.1/attn/qkv/conv/Conv_output_0,"[1,256,10,10]",float32,activation,102400,25600,309,309,310,1,[310],within-half,within-half,false,model.22,"[""model.22""]",false
+/model.22/m.0/m.0.1/ffn/ffn.0/act/Mul_output_0,"[1,256,10,10]",float32,activation,102400,25600,326,326,327,1,[327],within-half,within-half,false,model.22,"[""model.22""]",false
+/model.22/m.0/m.0.1/ffn/ffn.0/act/Sigmoid_output_0,"[1,256,10,10]",float32,activation,102400,25600,325,325,326,1,[326],within-half,within-half,false,model.22,"[""model.22""]",false
+/model.22/m.0/m.0.1/ffn/ffn.0/conv/Conv_output_0,"[1,256,10,10]",float32,activation,102400,25600,324,324,326,2,"[325,326]",within-half,within-half,true,model.22,"[""model.22""]",true
+/model.22/m.0/m.0.1/ffn/ffn.1/conv/Conv_output_0,"[1,128,10,10]",float32,activation,51200,12800,327,327,328,1,[328],within-half,within-half,false,model.22,"[""model.22""]",false
+/model.23/Add_1_output_0,"[1,2,2100]",float32,activation,16800,4200,356,356,358,1,[358],within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/Cast_2_output_0,"[1,300]",int64,activation,2400,2400,376,376,378,1,[378],within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/Cast_output_0,"[1,300,1]",float32,activation,1200,300,379,379,383,1,[383],within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/Concat_1_output_0,"[1,80,2100]",float32,activation,672000,168000,362,362,363,1,[363],within-half,within-half,false,model.23,"[""model.23""]",false
+/model.23/Concat_2_output_0,"[1,4,2100]",float32,activation,33600,8400,358,358,360,1,[360],within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/Concat_3_output_0,"[1,84,2100]",float32,activation,705600,176400,364,364,365,1,[365],within-half,within-half,false,model.23,"[""model.23""]",false
+/model.23/Concat_output_0,"[1,4,2100]",float32,activation,33600,8400,349,349,353,2,"[352,353]",within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/Constant_12_output_0,"[1,2,2100]",float32,constant,16800,4200,-1,-1,355,1,[355],within-half,within-half,false,(graph input or initializer),"[""model.23""]",false
+/model.23/Constant_13_output_0,"[1,2,2100]",float32,constant,16800,4200,-1,-1,356,1,[356],within-half,within-half,false,(graph input or initializer),"[""model.23""]",false
+/model.23/Constant_14_output_0,"[1,2100]",float32,constant,8400,2100,-1,-1,360,1,[360],within-half,within-half,false,(graph input or initializer),"[""model.23""]",false
+/model.23/Constant_15_output_0,[1],int64,constant,8,8,-1,-1,367,1,[367],within-half,within-half,false,(graph input or initializer),"[""model.23""]",false
+/model.23/Constant_16_output_0,[1],int64,constant,8,8,-1,-1,373,2,"[368,373]",within-half,within-half,false,(graph input or initializer),"[""model.23""]",false
+/model.23/Constant_23_output_0,[],int64,constant,8,8,-1,-1,376,2,"[375,376]",within-half,within-half,false,(graph input or initializer),"[""model.23""]",false
+/model.23/Constant_3_output_0,[3],int64,constant,24,24,-1,-1,361,3,"[252,307,361]",within-half,within-half,false,(graph input or initializer),"[""model.23""]",false
+/model.23/Constant_6_output_0,[1],int64,constant,8,8,-1,-1,353,2,"[352,353]",within-half,within-half,false,(graph input or initializer),"[""model.23""]",false
+/model.23/Constant_7_output_0,[1],int64,constant,8,8,-1,-1,352,1,[352],within-half,within-half,false,(graph input or initializer),"[""model.23""]",false
+/model.23/Constant_output_0,[3],int64,constant,24,24,-1,-1,347,3,"[236,294,347]",within-half,within-half,false,(graph input or initializer),"[""model.23""]",false
+/model.23/Expand_1_output_0,"[1,300,4]",int64,activation,9600,9600,381,381,382,1,[382],within-half,within-half,false,model.23,"[""model.23""]",false
+/model.23/Expand_output_0,"[1,300,80]",int64,activation,192000,192000,370,370,371,1,[371],within-half,within-half,false,model.23,"[""model.23""]",false
+/model.23/Flatten_output_0,"[1,24000]",float32,activation,96000,24000,372,372,373,1,[373],within-half,within-half,false,model.23,"[""model.23""]",false
+/model.23/GatherElements_1_output_0,"[1,300]",int64,activation,2400,2400,378,378,380,1,[380],within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/GatherElements_2_output_0,"[1,300,4]",float32,activation,4800,1200,382,382,383,1,[383],within-half,within-half,false,model.23,"[""model.23""]",false
+/model.23/GatherElements_output_0,"[1,300,80]",float32,activation,96000,24000,371,371,372,1,[372],within-half,within-half,false,model.23,"[""model.23""]",false
+/model.23/Mod_output_0,"[1,300]",int64,activation,2400,2400,375,375,377,1,[377],within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/Mul_1_output_0,[1],int64,constant,8,8,-1,-1,353,1,[353],within-half,within-half,false,(graph input or initializer),"[""model.23""]",false
+/model.23/Mul_2_output_0,"[1,4,2100]",float32,activation,33600,8400,360,360,364,1,[364],within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/Mul_output_0,[1],int64,constant,8,8,-1,-1,380,6,"[352,353,369,374,377,380]",within-half,within-half,false,(graph input or initializer),"[""model.23""]",false
+/model.23/ReduceMax_output_0,"[1,2100]",float32,activation,8400,2100,367,367,368,1,[368],within-half,within-half,false,model.23,"[""model.23""]",false
+/model.23/Reshape_1_output_0,"[1,4,400]",float32,activation,6400,1600,294,294,349,1,[349],within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/Reshape_2_output_0,"[1,4,100]",float32,activation,1600,400,347,347,349,1,[349],within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/Reshape_3_output_0,"[1,80,1600]",float32,activation,512000,128000,252,252,362,1,[362],within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/Reshape_4_output_0,"[1,80,400]",float32,activation,128000,32000,307,307,362,1,[362],within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/Reshape_5_output_0,"[1,80,100]",float32,activation,32000,8000,361,361,362,1,[362],within-half,within-half,false,model.23,"[""model.23""]",false
+/model.23/Reshape_output_0,"[1,4,1600]",float32,activation,25600,6400,236,236,349,1,[349],within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/Sigmoid_output_0,"[1,80,2100]",float32,activation,672000,168000,363,363,364,1,[364],within-half,within-half,false,model.23,"[""model.23""]",false
+/model.23/Slice_1_output_0,"[1,2,2100]",float32,activation,16800,4200,353,353,356,1,[356],within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/Slice_output_0,"[1,2,2100]",float32,activation,16800,4200,352,352,355,1,[355],within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/Split_output_0,"[1,2100,4]",float32,activation,33600,8400,366,366,382,1,[382],within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/Split_output_1,"[1,2100,80]",float32,activation,672000,168000,366,366,371,2,"[367,371]",within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/Sub_output_0,"[1,2,2100]",float32,activation,16800,4200,355,355,358,1,[358],within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/TopK_1_output_0,"[1,300]",float32,activation,1200,300,373,373,374,1,[374],within-half,within-half,false,model.23,"[""model.23""]",false
+/model.23/TopK_1_output_1,"[1,300]",int64,activation,2400,2400,373,373,376,2,"[375,376]",within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/TopK_output_0,"[1,300]",float32,activation,1200,300,368,368,368,0,[],within-half,within-half,false,model.23,[],false
+/model.23/TopK_output_1,"[1,300]",int64,activation,2400,2400,368,368,378,2,"[369,378]",within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/Transpose_output_0,"[1,2100,84]",float32,activation,705600,176400,365,365,366,1,[366],within-half,within-half,false,model.23,"[""model.23""]",false
+/model.23/Unsqueeze_1_output_0,"[1,300,1]",float32,activation,1200,300,374,374,383,1,[383],within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/Unsqueeze_2_output_0,"[1,300,1]",int64,activation,2400,2400,377,377,379,1,[379],within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/Unsqueeze_3_output_0,"[1,300,1]",int64,activation,2400,2400,380,380,381,1,[381],within-half,within-half,false,model.23,"[""model.23""]",false
+/model.23/Unsqueeze_output_0,"[1,300,1]",int64,activation,2400,2400,369,369,370,1,[370],within-half,within-half,false,model.23,"[""model.23""]",false
+/model.23/Where_1_output_0,[3],int64,constant,24,24,-1,-1,381,1,[381],within-half,within-half,false,(graph input or initializer),"[""model.23""]",false
+/model.23/Where_output_0,[3],int64,constant,24,24,-1,-1,370,1,[370],within-half,within-half,false,(graph input or initializer),"[""model.23""]",false
+/model.23/one2one_cv2.0/one2one_cv2.0.0/act/Mul_output_0,"[1,16,40,40]",float32,activation,102400,25600,221,221,224,1,[224],within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/one2one_cv2.0/one2one_cv2.0.0/act/Sigmoid_output_0,"[1,16,40,40]",float32,activation,102400,25600,218,218,221,1,[221],within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/one2one_cv2.0/one2one_cv2.0.0/conv/Conv_output_0,"[1,16,40,40]",float32,activation,102400,25600,215,215,221,2,"[218,221]",within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/one2one_cv2.0/one2one_cv2.0.1/act/Mul_output_0,"[1,16,40,40]",float32,activation,102400,25600,230,230,233,1,[233],within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/one2one_cv2.0/one2one_cv2.0.1/act/Sigmoid_output_0,"[1,16,40,40]",float32,activation,102400,25600,227,227,230,1,[230],within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/one2one_cv2.0/one2one_cv2.0.1/conv/Conv_output_0,"[1,16,40,40]",float32,activation,102400,25600,224,224,230,2,"[227,230]",within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/one2one_cv2.0/one2one_cv2.0.2/Conv_output_0,"[1,4,40,40]",float32,activation,25600,6400,233,233,236,1,[236],within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/one2one_cv2.1/one2one_cv2.1.0/act/Mul_output_0,"[1,16,20,20]",float32,activation,25600,6400,279,279,282,1,[282],within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/one2one_cv2.1/one2one_cv2.1.0/act/Sigmoid_output_0,"[1,16,20,20]",float32,activation,25600,6400,276,276,279,1,[279],within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/one2one_cv2.1/one2one_cv2.1.0/conv/Conv_output_0,"[1,16,20,20]",float32,activation,25600,6400,273,273,279,2,"[276,279]",within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/one2one_cv2.1/one2one_cv2.1.1/act/Mul_output_0,"[1,16,20,20]",float32,activation,25600,6400,288,288,291,1,[291],within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/one2one_cv2.1/one2one_cv2.1.1/act/Sigmoid_output_0,"[1,16,20,20]",float32,activation,25600,6400,285,285,288,1,[288],within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/one2one_cv2.1/one2one_cv2.1.1/conv/Conv_output_0,"[1,16,20,20]",float32,activation,25600,6400,282,282,288,2,"[285,288]",within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/one2one_cv2.1/one2one_cv2.1.2/Conv_output_0,"[1,4,20,20]",float32,activation,6400,1600,291,291,294,1,[294],within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/one2one_cv2.2/one2one_cv2.2.0/act/Mul_output_0,"[1,16,10,10]",float32,activation,6400,1600,337,337,339,1,[339],within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/one2one_cv2.2/one2one_cv2.2.0/act/Sigmoid_output_0,"[1,16,10,10]",float32,activation,6400,1600,335,335,337,1,[337],within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/one2one_cv2.2/one2one_cv2.2.0/conv/Conv_output_0,"[1,16,10,10]",float32,activation,6400,1600,333,333,337,2,"[335,337]",within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/one2one_cv2.2/one2one_cv2.2.1/act/Mul_output_0,"[1,16,10,10]",float32,activation,6400,1600,343,343,345,1,[345],within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/one2one_cv2.2/one2one_cv2.2.1/act/Sigmoid_output_0,"[1,16,10,10]",float32,activation,6400,1600,341,341,343,1,[343],within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/one2one_cv2.2/one2one_cv2.2.1/conv/Conv_output_0,"[1,16,10,10]",float32,activation,6400,1600,339,339,343,2,"[341,343]",within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/one2one_cv2.2/one2one_cv2.2.2/Conv_output_0,"[1,4,10,10]",float32,activation,1600,400,345,345,347,1,[347],within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/one2one_cv3.0/one2one_cv3.0.0/one2one_cv3.0.0.0/act/Mul_output_0,"[1,64,40,40]",float32,activation,409600,102400,222,222,225,1,[225],within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/one2one_cv3.0/one2one_cv3.0.0/one2one_cv3.0.0.0/act/Sigmoid_output_0,"[1,64,40,40]",float32,activation,409600,102400,219,219,222,1,[222],within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/one2one_cv3.0/one2one_cv3.0.0/one2one_cv3.0.0.0/conv/Conv_output_0,"[1,64,40,40]",float32,activation,409600,102400,216,216,222,2,"[219,222]",within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/one2one_cv3.0/one2one_cv3.0.0/one2one_cv3.0.0.1/act/Mul_output_0,"[1,80,40,40]",float32,activation,512000,128000,231,231,234,1,[234],within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/one2one_cv3.0/one2one_cv3.0.0/one2one_cv3.0.0.1/act/Sigmoid_output_0,"[1,80,40,40]",float32,activation,512000,128000,228,228,231,1,[231],within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/one2one_cv3.0/one2one_cv3.0.0/one2one_cv3.0.0.1/conv/Conv_output_0,"[1,80,40,40]",float32,activation,512000,128000,225,225,231,2,"[228,231]",within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/one2one_cv3.0/one2one_cv3.0.1/one2one_cv3.0.1.0/act/Mul_output_0,"[1,80,40,40]",float32,activation,512000,128000,240,240,243,1,[243],within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/one2one_cv3.0/one2one_cv3.0.1/one2one_cv3.0.1.0/act/Sigmoid_output_0,"[1,80,40,40]",float32,activation,512000,128000,237,237,240,1,[240],within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/one2one_cv3.0/one2one_cv3.0.1/one2one_cv3.0.1.0/conv/Conv_output_0,"[1,80,40,40]",float32,activation,512000,128000,234,234,240,2,"[237,240]",within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/one2one_cv3.0/one2one_cv3.0.1/one2one_cv3.0.1.1/act/Mul_output_0,"[1,80,40,40]",float32,activation,512000,128000,248,248,250,1,[250],within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/one2one_cv3.0/one2one_cv3.0.1/one2one_cv3.0.1.1/act/Sigmoid_output_0,"[1,80,40,40]",float32,activation,512000,128000,246,246,248,1,[248],within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/one2one_cv3.0/one2one_cv3.0.1/one2one_cv3.0.1.1/conv/Conv_output_0,"[1,80,40,40]",float32,activation,512000,128000,243,243,248,2,"[246,248]",within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/one2one_cv3.0/one2one_cv3.0.2/Conv_output_0,"[1,80,40,40]",float32,activation,512000,128000,250,250,252,1,[252],within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/one2one_cv3.1/one2one_cv3.1.0/one2one_cv3.1.0.0/act/Mul_output_0,"[1,128,20,20]",float32,activation,204800,51200,280,280,283,1,[283],within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/one2one_cv3.1/one2one_cv3.1.0/one2one_cv3.1.0.0/act/Sigmoid_output_0,"[1,128,20,20]",float32,activation,204800,51200,277,277,280,1,[280],within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/one2one_cv3.1/one2one_cv3.1.0/one2one_cv3.1.0.0/conv/Conv_output_0,"[1,128,20,20]",float32,activation,204800,51200,274,274,280,2,"[277,280]",within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/one2one_cv3.1/one2one_cv3.1.0/one2one_cv3.1.0.1/act/Mul_output_0,"[1,80,20,20]",float32,activation,128000,32000,289,289,292,1,[292],within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/one2one_cv3.1/one2one_cv3.1.0/one2one_cv3.1.0.1/act/Sigmoid_output_0,"[1,80,20,20]",float32,activation,128000,32000,286,286,289,1,[289],within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/one2one_cv3.1/one2one_cv3.1.0/one2one_cv3.1.0.1/conv/Conv_output_0,"[1,80,20,20]",float32,activation,128000,32000,283,283,289,2,"[286,289]",within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/one2one_cv3.1/one2one_cv3.1.1/one2one_cv3.1.1.0/act/Mul_output_0,"[1,80,20,20]",float32,activation,128000,32000,297,297,299,1,[299],within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/one2one_cv3.1/one2one_cv3.1.1/one2one_cv3.1.1.0/act/Sigmoid_output_0,"[1,80,20,20]",float32,activation,128000,32000,295,295,297,1,[297],within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/one2one_cv3.1/one2one_cv3.1.1/one2one_cv3.1.1.0/conv/Conv_output_0,"[1,80,20,20]",float32,activation,128000,32000,292,292,297,2,"[295,297]",within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/one2one_cv3.1/one2one_cv3.1.1/one2one_cv3.1.1.1/act/Mul_output_0,"[1,80,20,20]",float32,activation,128000,32000,303,303,305,1,[305],within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/one2one_cv3.1/one2one_cv3.1.1/one2one_cv3.1.1.1/act/Sigmoid_output_0,"[1,80,20,20]",float32,activation,128000,32000,301,301,303,1,[303],within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/one2one_cv3.1/one2one_cv3.1.1/one2one_cv3.1.1.1/conv/Conv_output_0,"[1,80,20,20]",float32,activation,128000,32000,299,299,303,2,"[301,303]",within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/one2one_cv3.1/one2one_cv3.1.2/Conv_output_0,"[1,80,20,20]",float32,activation,128000,32000,305,305,307,1,[307],within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/one2one_cv3.2/one2one_cv3.2.0/one2one_cv3.2.0.0/act/Mul_output_0,"[1,256,10,10]",float32,activation,102400,25600,338,338,340,1,[340],within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/one2one_cv3.2/one2one_cv3.2.0/one2one_cv3.2.0.0/act/Sigmoid_output_0,"[1,256,10,10]",float32,activation,102400,25600,336,336,338,1,[338],within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/one2one_cv3.2/one2one_cv3.2.0/one2one_cv3.2.0.0/conv/Conv_output_0,"[1,256,10,10]",float32,activation,102400,25600,334,334,338,2,"[336,338]",within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/one2one_cv3.2/one2one_cv3.2.0/one2one_cv3.2.0.1/act/Mul_output_0,"[1,80,10,10]",float32,activation,32000,8000,344,344,346,1,[346],within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/one2one_cv3.2/one2one_cv3.2.0/one2one_cv3.2.0.1/act/Sigmoid_output_0,"[1,80,10,10]",float32,activation,32000,8000,342,342,344,1,[344],within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/one2one_cv3.2/one2one_cv3.2.0/one2one_cv3.2.0.1/conv/Conv_output_0,"[1,80,10,10]",float32,activation,32000,8000,340,340,344,2,"[342,344]",within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/one2one_cv3.2/one2one_cv3.2.1/one2one_cv3.2.1.0/act/Mul_output_0,"[1,80,10,10]",float32,activation,32000,8000,350,350,351,1,[351],within-half,within-half,false,model.23,"[""model.23""]",false
+/model.23/one2one_cv3.2/one2one_cv3.2.1/one2one_cv3.2.1.0/act/Sigmoid_output_0,"[1,80,10,10]",float32,activation,32000,8000,348,348,350,1,[350],within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/one2one_cv3.2/one2one_cv3.2.1/one2one_cv3.2.1.0/conv/Conv_output_0,"[1,80,10,10]",float32,activation,32000,8000,346,346,350,2,"[348,350]",within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/one2one_cv3.2/one2one_cv3.2.1/one2one_cv3.2.1.1/act/Mul_output_0,"[1,80,10,10]",float32,activation,32000,8000,357,357,359,1,[359],within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/one2one_cv3.2/one2one_cv3.2.1/one2one_cv3.2.1.1/act/Sigmoid_output_0,"[1,80,10,10]",float32,activation,32000,8000,354,354,357,1,[357],within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/one2one_cv3.2/one2one_cv3.2.1/one2one_cv3.2.1.1/conv/Conv_output_0,"[1,80,10,10]",float32,activation,32000,8000,351,351,357,2,"[354,357]",within-half,within-half,true,model.23,"[""model.23""]",true
+/model.23/one2one_cv3.2/one2one_cv3.2.2/Conv_output_0,"[1,80,10,10]",float32,activation,32000,8000,359,359,361,1,[361],within-half,within-half,true,model.23,"[""model.23""]",true
+/model.3/act/Mul_output_0,"[1,64,40,40]",float32,activation,409600,102400,23,23,24,1,[24],within-half,within-half,false,model.3,"[""model.4""]",false
+/model.3/act/Sigmoid_output_0,"[1,64,40,40]",float32,activation,409600,102400,22,22,23,1,[23],within-half,within-half,false,model.3,"[""model.3""]",false
+/model.3/conv/Conv_output_0,"[1,64,40,40]",float32,activation,409600,102400,21,21,23,2,"[22,23]",within-half,within-half,true,model.3,"[""model.3""]",true
+/model.4/Concat_output_0,"[1,96,40,40]",float32,activation,614400,153600,35,35,36,1,[36],within-half,within-half,false,model.4,"[""model.4""]",false
+/model.4/Split_output_0,"[1,32,40,40]",float32,activation,204800,51200,27,27,35,1,[35],within-half,within-half,true,model.4,"[""model.4""]",true
+/model.4/Split_output_1,"[1,32,40,40]",float32,activation,204800,51200,27,27,35,3,"[28,34,35]",within-half,within-half,true,model.4,"[""model.4""]",true
+/model.4/cv1/act/Mul_output_0,"[1,64,40,40]",float32,activation,409600,102400,26,26,27,1,[27],within-half,within-half,false,model.4,"[""model.4""]",false
+/model.4/cv1/act/Sigmoid_output_0,"[1,64,40,40]",float32,activation,409600,102400,25,25,26,1,[26],within-half,within-half,false,model.4,"[""model.4""]",false
+/model.4/cv1/conv/Conv_output_0,"[1,64,40,40]",float32,activation,409600,102400,24,24,26,2,"[25,26]",within-half,within-half,true,model.4,"[""model.4""]",true
+/model.4/cv2/act/Mul_output_0,"[1,128,40,40]",float32,activation,819200,204800,38,38,181,2,"[39,181]",within-half,within-half,true,model.4,"[""model.5"",""model.15""]",true
+/model.4/cv2/act/Sigmoid_output_0,"[1,128,40,40]",float32,activation,819200,204800,37,37,38,1,[38],within-half,within-half,false,model.4,"[""model.4""]",false
+/model.4/cv2/conv/Conv_output_0,"[1,128,40,40]",float32,activation,819200,204800,36,36,38,2,"[37,38]",within-half,within-half,true,model.4,"[""model.4""]",true
+/model.4/m.0/Add_output_0,"[1,32,40,40]",float32,activation,204800,51200,34,34,35,1,[35],within-half,within-half,false,model.4,"[""model.4""]",false
+/model.4/m.0/cv1/act/Mul_output_0,"[1,16,40,40]",float32,activation,102400,25600,30,30,31,1,[31],within-half,within-half,false,model.4,"[""model.4""]",false
+/model.4/m.0/cv1/act/Sigmoid_output_0,"[1,16,40,40]",float32,activation,102400,25600,29,29,30,1,[30],within-half,within-half,false,model.4,"[""model.4""]",false
+/model.4/m.0/cv1/conv/Conv_output_0,"[1,16,40,40]",float32,activation,102400,25600,28,28,30,2,"[29,30]",within-half,within-half,true,model.4,"[""model.4""]",true
+/model.4/m.0/cv2/act/Mul_output_0,"[1,32,40,40]",float32,activation,204800,51200,33,33,34,1,[34],within-half,within-half,false,model.4,"[""model.4""]",false
+/model.4/m.0/cv2/act/Sigmoid_output_0,"[1,32,40,40]",float32,activation,204800,51200,32,32,33,1,[33],within-half,within-half,false,model.4,"[""model.4""]",false
+/model.4/m.0/cv2/conv/Conv_output_0,"[1,32,40,40]",float32,activation,204800,51200,31,31,33,2,"[32,33]",within-half,within-half,true,model.4,"[""model.4""]",true
+/model.5/act/Mul_output_0,"[1,128,20,20]",float32,activation,204800,51200,41,41,42,1,[42],within-half,within-half,false,model.5,"[""model.6""]",false
+/model.5/act/Sigmoid_output_0,"[1,128,20,20]",float32,activation,204800,51200,40,40,41,1,[41],within-half,within-half,false,model.5,"[""model.5""]",false
+/model.5/conv/Conv_output_0,"[1,128,20,20]",float32,activation,204800,51200,39,39,41,2,"[40,41]",within-half,within-half,true,model.5,"[""model.5""]",true
+/model.6/Concat_output_0,"[1,192,20,20]",float32,activation,307200,76800,70,70,71,1,[71],within-half,within-half,false,model.6,"[""model.6""]",false
+/model.6/Split_output_0,"[1,64,20,20]",float32,activation,102400,25600,45,45,70,1,[70],within-half,within-half,true,model.6,"[""model.6""]",true
+/model.6/Split_output_1,"[1,64,20,20]",float32,activation,102400,25600,45,45,70,3,"[46,47,70]",within-half,within-half,true,model.6,"[""model.6""]",true
+/model.6/cv1/act/Mul_output_0,"[1,128,20,20]",float32,activation,204800,51200,44,44,45,1,[45],within-half,within-half,false,model.6,"[""model.6""]",false
+/model.6/cv1/act/Sigmoid_output_0,"[1,128,20,20]",float32,activation,204800,51200,43,43,44,1,[44],within-half,within-half,false,model.6,"[""model.6""]",false
+/model.6/cv1/conv/Conv_output_0,"[1,128,20,20]",float32,activation,204800,51200,42,42,44,2,"[43,44]",within-half,within-half,true,model.6,"[""model.6""]",true
+/model.6/cv2/act/Mul_output_0,"[1,128,20,20]",float32,activation,204800,51200,73,73,147,2,"[74,147]",within-half,within-half,true,model.6,"[""model.7"",""model.12""]",true
+/model.6/cv2/act/Sigmoid_output_0,"[1,128,20,20]",float32,activation,204800,51200,72,72,73,1,[73],within-half,within-half,false,model.6,"[""model.6""]",false
+/model.6/cv2/conv/Conv_output_0,"[1,128,20,20]",float32,activation,204800,51200,71,71,73,2,"[72,73]",within-half,within-half,true,model.6,"[""model.6""]",true
+/model.6/m.0/Concat_output_0,"[1,64,20,20]",float32,activation,102400,25600,66,66,67,1,[67],within-half,within-half,false,model.6,"[""model.6""]",false
+/model.6/m.0/cv1/act/Mul_output_0,"[1,32,20,20]",float32,activation,51200,12800,50,50,58,2,"[52,58]",within-half,within-half,true,model.6,"[""model.6""]",true
+/model.6/m.0/cv1/act/Sigmoid_output_0,"[1,32,20,20]",float32,activation,51200,12800,48,48,50,1,[50],within-half,within-half,true,model.6,"[""model.6""]",true
+/model.6/m.0/cv1/conv/Conv_output_0,"[1,32,20,20]",float32,activation,51200,12800,46,46,50,2,"[48,50]",within-half,within-half,true,model.6,"[""model.6""]",true
+/model.6/m.0/cv2/act/Mul_output_0,"[1,32,20,20]",float32,activation,51200,12800,51,51,66,1,[66],within-half,within-half,true,model.6,"[""model.6""]",true
+/model.6/m.0/cv2/act/Sigmoid_output_0,"[1,32,20,20]",float32,activation,51200,12800,49,49,51,1,[51],within-half,within-half,true,model.6,"[""model.6""]",true
+/model.6/m.0/cv2/conv/Conv_output_0,"[1,32,20,20]",float32,activation,51200,12800,47,47,51,2,"[49,51]",within-half,within-half,true,model.6,"[""model.6""]",true
+/model.6/m.0/cv3/act/Mul_output_0,"[1,64,20,20]",float32,activation,102400,25600,69,69,70,1,[70],within-half,within-half,false,model.6,"[""model.6""]",false
+/model.6/m.0/cv3/act/Sigmoid_output_0,"[1,64,20,20]",float32,activation,102400,25600,68,68,69,1,[69],within-half,within-half,false,model.6,"[""model.6""]",false
+/model.6/m.0/cv3/conv/Conv_output_0,"[1,64,20,20]",float32,activation,102400,25600,67,67,69,2,"[68,69]",within-half,within-half,true,model.6,"[""model.6""]",true
+/model.6/m.0/m/m.0/Add_output_0,"[1,32,20,20]",float32,activation,51200,12800,58,58,65,2,"[59,65]",within-half,within-half,true,model.6,"[""model.6""]",true
+/model.6/m.0/m/m.0/cv1/act/Mul_output_0,"[1,32,20,20]",float32,activation,51200,12800,54,54,55,1,[55],within-half,within-half,false,model.6,"[""model.6""]",false
+/model.6/m.0/m/m.0/cv1/act/Sigmoid_output_0,"[1,32,20,20]",float32,activation,51200,12800,53,53,54,1,[54],within-half,within-half,false,model.6,"[""model.6""]",false
+/model.6/m.0/m/m.0/cv1/conv/Conv_output_0,"[1,32,20,20]",float32,activation,51200,12800,52,52,54,2,"[53,54]",within-half,within-half,true,model.6,"[""model.6""]",true
+/model.6/m.0/m/m.0/cv2/act/Mul_output_0,"[1,32,20,20]",float32,activation,51200,12800,57,57,58,1,[58],within-half,within-half,false,model.6,"[""model.6""]",false
+/model.6/m.0/m/m.0/cv2/act/Sigmoid_output_0,"[1,32,20,20]",float32,activation,51200,12800,56,56,57,1,[57],within-half,within-half,false,model.6,"[""model.6""]",false
+/model.6/m.0/m/m.0/cv2/conv/Conv_output_0,"[1,32,20,20]",float32,activation,51200,12800,55,55,57,2,"[56,57]",within-half,within-half,true,model.6,"[""model.6""]",true
+/model.6/m.0/m/m.1/Add_output_0,"[1,32,20,20]",float32,activation,51200,12800,65,65,66,1,[66],within-half,within-half,false,model.6,"[""model.6""]",false
+/model.6/m.0/m/m.1/cv1/act/Mul_output_0,"[1,32,20,20]",float32,activation,51200,12800,61,61,62,1,[62],within-half,within-half,false,model.6,"[""model.6""]",false
+/model.6/m.0/m/m.1/cv1/act/Sigmoid_output_0,"[1,32,20,20]",float32,activation,51200,12800,60,60,61,1,[61],within-half,within-half,false,model.6,"[""model.6""]",false
+/model.6/m.0/m/m.1/cv1/conv/Conv_output_0,"[1,32,20,20]",float32,activation,51200,12800,59,59,61,2,"[60,61]",within-half,within-half,true,model.6,"[""model.6""]",true
+/model.6/m.0/m/m.1/cv2/act/Mul_output_0,"[1,32,20,20]",float32,activation,51200,12800,64,64,65,1,[65],within-half,within-half,false,model.6,"[""model.6""]",false
+/model.6/m.0/m/m.1/cv2/act/Sigmoid_output_0,"[1,32,20,20]",float32,activation,51200,12800,63,63,64,1,[64],within-half,within-half,false,model.6,"[""model.6""]",false
+/model.6/m.0/m/m.1/cv2/conv/Conv_output_0,"[1,32,20,20]",float32,activation,51200,12800,62,62,64,2,"[63,64]",within-half,within-half,true,model.6,"[""model.6""]",true
+/model.7/act/Mul_output_0,"[1,256,10,10]",float32,activation,102400,25600,76,76,77,1,[77],within-half,within-half,false,model.7,"[""model.8""]",false
+/model.7/act/Sigmoid_output_0,"[1,256,10,10]",float32,activation,102400,25600,75,75,76,1,[76],within-half,within-half,false,model.7,"[""model.7""]",false
+/model.7/conv/Conv_output_0,"[1,256,10,10]",float32,activation,102400,25600,74,74,76,2,"[75,76]",within-half,within-half,true,model.7,"[""model.7""]",true
+/model.8/Concat_output_0,"[1,384,10,10]",float32,activation,153600,38400,105,105,106,1,[106],within-half,within-half,false,model.8,"[""model.8""]",false
+/model.8/Split_output_0,"[1,128,10,10]",float32,activation,51200,12800,80,80,105,1,[105],within-half,within-half,true,model.8,"[""model.8""]",true
+/model.8/Split_output_1,"[1,128,10,10]",float32,activation,51200,12800,80,80,105,3,"[81,82,105]",within-half,within-half,true,model.8,"[""model.8""]",true
+/model.8/cv1/act/Mul_output_0,"[1,256,10,10]",float32,activation,102400,25600,79,79,80,1,[80],within-half,within-half,false,model.8,"[""model.8""]",false
+/model.8/cv1/act/Sigmoid_output_0,"[1,256,10,10]",float32,activation,102400,25600,78,78,79,1,[79],within-half,within-half,false,model.8,"[""model.8""]",false
+/model.8/cv1/conv/Conv_output_0,"[1,256,10,10]",float32,activation,102400,25600,77,77,79,2,"[78,79]",within-half,within-half,true,model.8,"[""model.8""]",true
+/model.8/cv2/act/Mul_output_0,"[1,256,10,10]",float32,activation,102400,25600,108,108,117,2,"[109,117]",within-half,within-half,true,model.8,"[""model.9""]",true
+/model.8/cv2/act/Sigmoid_output_0,"[1,256,10,10]",float32,activation,102400,25600,107,107,108,1,[108],within-half,within-half,false,model.8,"[""model.8""]",false
+/model.8/cv2/conv/Conv_output_0,"[1,256,10,10]",float32,activation,102400,25600,106,106,108,2,"[107,108]",within-half,within-half,true,model.8,"[""model.8""]",true
+/model.8/m.0/Concat_output_0,"[1,128,10,10]",float32,activation,51200,12800,101,101,102,1,[102],within-half,within-half,false,model.8,"[""model.8""]",false
+/model.8/m.0/cv1/act/Mul_output_0,"[1,64,10,10]",float32,activation,25600,6400,85,85,93,2,"[87,93]",within-half,within-half,true,model.8,"[""model.8""]",true
+/model.8/m.0/cv1/act/Sigmoid_output_0,"[1,64,10,10]",float32,activation,25600,6400,83,83,85,1,[85],within-half,within-half,true,model.8,"[""model.8""]",true
+/model.8/m.0/cv1/conv/Conv_output_0,"[1,64,10,10]",float32,activation,25600,6400,81,81,85,2,"[83,85]",within-half,within-half,true,model.8,"[""model.8""]",true
+/model.8/m.0/cv2/act/Mul_output_0,"[1,64,10,10]",float32,activation,25600,6400,86,86,101,1,[101],within-half,within-half,true,model.8,"[""model.8""]",true
+/model.8/m.0/cv2/act/Sigmoid_output_0,"[1,64,10,10]",float32,activation,25600,6400,84,84,86,1,[86],within-half,within-half,true,model.8,"[""model.8""]",true
+/model.8/m.0/cv2/conv/Conv_output_0,"[1,64,10,10]",float32,activation,25600,6400,82,82,86,2,"[84,86]",within-half,within-half,true,model.8,"[""model.8""]",true
+/model.8/m.0/cv3/act/Mul_output_0,"[1,128,10,10]",float32,activation,51200,12800,104,104,105,1,[105],within-half,within-half,false,model.8,"[""model.8""]",false
+/model.8/m.0/cv3/act/Sigmoid_output_0,"[1,128,10,10]",float32,activation,51200,12800,103,103,104,1,[104],within-half,within-half,false,model.8,"[""model.8""]",false
+/model.8/m.0/cv3/conv/Conv_output_0,"[1,128,10,10]",float32,activation,51200,12800,102,102,104,2,"[103,104]",within-half,within-half,true,model.8,"[""model.8""]",true
+/model.8/m.0/m/m.0/Add_output_0,"[1,64,10,10]",float32,activation,25600,6400,93,93,100,2,"[94,100]",within-half,within-half,true,model.8,"[""model.8""]",true
+/model.8/m.0/m/m.0/cv1/act/Mul_output_0,"[1,64,10,10]",float32,activation,25600,6400,89,89,90,1,[90],within-half,within-half,false,model.8,"[""model.8""]",false
+/model.8/m.0/m/m.0/cv1/act/Sigmoid_output_0,"[1,64,10,10]",float32,activation,25600,6400,88,88,89,1,[89],within-half,within-half,false,model.8,"[""model.8""]",false
+/model.8/m.0/m/m.0/cv1/conv/Conv_output_0,"[1,64,10,10]",float32,activation,25600,6400,87,87,89,2,"[88,89]",within-half,within-half,true,model.8,"[""model.8""]",true
+/model.8/m.0/m/m.0/cv2/act/Mul_output_0,"[1,64,10,10]",float32,activation,25600,6400,92,92,93,1,[93],within-half,within-half,false,model.8,"[""model.8""]",false
+/model.8/m.0/m/m.0/cv2/act/Sigmoid_output_0,"[1,64,10,10]",float32,activation,25600,6400,91,91,92,1,[92],within-half,within-half,false,model.8,"[""model.8""]",false
+/model.8/m.0/m/m.0/cv2/conv/Conv_output_0,"[1,64,10,10]",float32,activation,25600,6400,90,90,92,2,"[91,92]",within-half,within-half,true,model.8,"[""model.8""]",true
+/model.8/m.0/m/m.1/Add_output_0,"[1,64,10,10]",float32,activation,25600,6400,100,100,101,1,[101],within-half,within-half,false,model.8,"[""model.8""]",false
+/model.8/m.0/m/m.1/cv1/act/Mul_output_0,"[1,64,10,10]",float32,activation,25600,6400,96,96,97,1,[97],within-half,within-half,false,model.8,"[""model.8""]",false
+/model.8/m.0/m/m.1/cv1/act/Sigmoid_output_0,"[1,64,10,10]",float32,activation,25600,6400,95,95,96,1,[96],within-half,within-half,false,model.8,"[""model.8""]",false
+/model.8/m.0/m/m.1/cv1/conv/Conv_output_0,"[1,64,10,10]",float32,activation,25600,6400,94,94,96,2,"[95,96]",within-half,within-half,true,model.8,"[""model.8""]",true
+/model.8/m.0/m/m.1/cv2/act/Mul_output_0,"[1,64,10,10]",float32,activation,25600,6400,99,99,100,1,[100],within-half,within-half,false,model.8,"[""model.8""]",false
+/model.8/m.0/m/m.1/cv2/act/Sigmoid_output_0,"[1,64,10,10]",float32,activation,25600,6400,98,98,99,1,[99],within-half,within-half,false,model.8,"[""model.8""]",false
+/model.8/m.0/m/m.1/cv2/conv/Conv_output_0,"[1,64,10,10]",float32,activation,25600,6400,97,97,99,2,"[98,99]",within-half,within-half,true,model.8,"[""model.8""]",true
+/model.9/Add_output_0,"[1,256,10,10]",float32,activation,102400,25600,117,117,118,1,[118],within-half,within-half,false,model.9,"[""model.10""]",false
+/model.9/Concat_output_0,"[1,512,10,10]",float32,activation,204800,51200,113,113,114,1,[114],within-half,within-half,false,model.9,"[""model.9""]",false
+/model.9/cv1/conv/Conv_output_0,"[1,128,10,10]",float32,activation,51200,12800,109,109,113,2,"[110,113]",within-half,within-half,true,model.9,"[""model.9""]",true
+/model.9/cv2/act/Mul_output_0,"[1,256,10,10]",float32,activation,102400,25600,116,116,117,1,[117],within-half,within-half,false,model.9,"[""model.9""]",false
+/model.9/cv2/act/Sigmoid_output_0,"[1,256,10,10]",float32,activation,102400,25600,115,115,116,1,[116],within-half,within-half,false,model.9,"[""model.9""]",false
+/model.9/cv2/conv/Conv_output_0,"[1,256,10,10]",float32,activation,102400,25600,114,114,116,2,"[115,116]",within-half,within-half,true,model.9,"[""model.9""]",true
+/model.9/m/MaxPool_output_0,"[1,128,10,10]",float32,activation,51200,12800,110,110,113,2,"[111,113]",within-half,within-half,true,model.9,"[""model.9""]",true
+/model.9/m_1/MaxPool_output_0,"[1,128,10,10]",float32,activation,51200,12800,111,111,113,2,"[112,113]",within-half,within-half,true,model.9,"[""model.9""]",true
+/model.9/m_2/MaxPool_output_0,"[1,128,10,10]",float32,activation,51200,12800,112,112,113,1,[113],within-half,within-half,false,model.9,"[""model.9""]",false
+images,"[1,3,320,320]",float32,activation,1228800,307200,-1,-1,0,1,[0],exceeds-half,within-half,false,(graph input or initializer),"[""model.0""]",false
+model.0.conv.bias,[16],float32,constant,64,16,-1,-1,0,1,[0],within-half,within-half,false,(graph input or initializer),"[""model.0""]",false
+model.0.conv.weight,"[16,3,3,3]",float32,constant,1728,432,-1,-1,0,1,[0],within-half,within-half,false,(graph input or initializer),"[""model.0""]",false
+model.1.conv.bias,[32],float32,constant,128,32,-1,-1,3,1,[3],within-half,within-half,false,(graph input or initializer),"[""model.1""]",false
+model.1.conv.weight,"[32,16,3,3]",float32,constant,18432,4608,-1,-1,3,1,[3],within-half,within-half,false,(graph input or initializer),"[""model.1""]",false
+model.10.cv1.conv.bias,[256],float32,constant,1024,256,-1,-1,118,1,[118],within-half,within-half,false,(graph input or initializer),"[""model.10""]",false
+model.10.cv1.conv.weight,"[256,256,1,1]",float32,constant,262144,65536,-1,-1,118,1,[118],within-half,within-half,false,(graph input or initializer),"[""model.10""]",false
+model.10.cv2.conv.bias,[256],float32,constant,1024,256,-1,-1,143,1,[143],within-half,within-half,false,(graph input or initializer),"[""model.10""]",false
+model.10.cv2.conv.weight,"[256,256,1,1]",float32,constant,262144,65536,-1,-1,143,1,[143],within-half,within-half,false,(graph input or initializer),"[""model.10""]",false
+model.10.m.0.attn.pe.conv.bias,[128],float32,constant,512,128,-1,-1,128,1,[128],within-half,within-half,false,(graph input or initializer),"[""model.10""]",false
+model.10.m.0.attn.pe.conv.weight,"[128,1,3,3]",float32,constant,4608,1152,-1,-1,128,1,[128],within-half,within-half,false,(graph input or initializer),"[""model.10""]",false
+model.10.m.0.attn.proj.conv.bias,[128],float32,constant,512,128,-1,-1,135,1,[135],within-half,within-half,false,(graph input or initializer),"[""model.10""]",false
+model.10.m.0.attn.proj.conv.weight,"[128,128,1,1]",float32,constant,65536,16384,-1,-1,135,1,[135],within-half,within-half,false,(graph input or initializer),"[""model.10""]",false
+model.10.m.0.attn.qkv.conv.bias,[256],float32,constant,1024,256,-1,-1,122,1,[122],within-half,within-half,false,(graph input or initializer),"[""model.10""]",false
+model.10.m.0.attn.qkv.conv.weight,"[256,128,1,1]",float32,constant,131072,32768,-1,-1,122,1,[122],within-half,within-half,false,(graph input or initializer),"[""model.10""]",false
+model.10.m.0.ffn.0.conv.bias,[256],float32,constant,1024,256,-1,-1,137,1,[137],within-half,within-half,false,(graph input or initializer),"[""model.10""]",false
+model.10.m.0.ffn.0.conv.weight,"[256,128,1,1]",float32,constant,131072,32768,-1,-1,137,1,[137],within-half,within-half,false,(graph input or initializer),"[""model.10""]",false
+model.10.m.0.ffn.1.conv.bias,[128],float32,constant,512,128,-1,-1,140,1,[140],within-half,within-half,false,(graph input or initializer),"[""model.10""]",false
+model.10.m.0.ffn.1.conv.weight,"[128,256,1,1]",float32,constant,131072,32768,-1,-1,140,1,[140],within-half,within-half,false,(graph input or initializer),"[""model.10""]",false
+model.13.cv1.conv.bias,[128],float32,constant,512,128,-1,-1,148,1,[148],within-half,within-half,false,(graph input or initializer),"[""model.13""]",false
+model.13.cv1.conv.weight,"[128,384,1,1]",float32,constant,196608,49152,-1,-1,148,1,[148],within-half,within-half,false,(graph input or initializer),"[""model.13""]",false
+model.13.cv2.conv.bias,[128],float32,constant,512,128,-1,-1,177,1,[177],within-half,within-half,false,(graph input or initializer),"[""model.13""]",false
+model.13.cv2.conv.weight,"[128,192,1,1]",float32,constant,98304,24576,-1,-1,177,1,[177],within-half,within-half,false,(graph input or initializer),"[""model.13""]",false
+model.13.m.0.cv1.conv.bias,[32],float32,constant,128,32,-1,-1,152,1,[152],within-half,within-half,false,(graph input or initializer),"[""model.13""]",false
+model.13.m.0.cv1.conv.weight,"[32,64,1,1]",float32,constant,8192,2048,-1,-1,152,1,[152],within-half,within-half,false,(graph input or initializer),"[""model.13""]",false
+model.13.m.0.cv2.conv.bias,[32],float32,constant,128,32,-1,-1,153,1,[153],within-half,within-half,false,(graph input or initializer),"[""model.13""]",false
+model.13.m.0.cv2.conv.weight,"[32,64,1,1]",float32,constant,8192,2048,-1,-1,153,1,[153],within-half,within-half,false,(graph input or initializer),"[""model.13""]",false
+model.13.m.0.cv3.conv.bias,[64],float32,constant,256,64,-1,-1,173,1,[173],within-half,within-half,false,(graph input or initializer),"[""model.13""]",false
+model.13.m.0.cv3.conv.weight,"[64,64,1,1]",float32,constant,16384,4096,-1,-1,173,1,[173],within-half,within-half,false,(graph input or initializer),"[""model.13""]",false
+model.13.m.0.m.0.cv1.conv.bias,[32],float32,constant,128,32,-1,-1,158,1,[158],within-half,within-half,false,(graph input or initializer),"[""model.13""]",false
+model.13.m.0.m.0.cv1.conv.weight,"[32,32,3,3]",float32,constant,36864,9216,-1,-1,158,1,[158],within-half,within-half,false,(graph input or initializer),"[""model.13""]",false
+model.13.m.0.m.0.cv2.conv.bias,[32],float32,constant,128,32,-1,-1,161,1,[161],within-half,within-half,false,(graph input or initializer),"[""model.13""]",false
+model.13.m.0.m.0.cv2.conv.weight,"[32,32,3,3]",float32,constant,36864,9216,-1,-1,161,1,[161],within-half,within-half,false,(graph input or initializer),"[""model.13""]",false
+model.13.m.0.m.1.cv1.conv.bias,[32],float32,constant,128,32,-1,-1,165,1,[165],within-half,within-half,false,(graph input or initializer),"[""model.13""]",false
+model.13.m.0.m.1.cv1.conv.weight,"[32,32,3,3]",float32,constant,36864,9216,-1,-1,165,1,[165],within-half,within-half,false,(graph input or initializer),"[""model.13""]",false
+model.13.m.0.m.1.cv2.conv.bias,[32],float32,constant,128,32,-1,-1,168,1,[168],within-half,within-half,false,(graph input or initializer),"[""model.13""]",false
+model.13.m.0.m.1.cv2.conv.weight,"[32,32,3,3]",float32,constant,36864,9216,-1,-1,168,1,[168],within-half,within-half,false,(graph input or initializer),"[""model.13""]",false
+model.16.cv1.conv.bias,[64],float32,constant,256,64,-1,-1,182,1,[182],within-half,within-half,false,(graph input or initializer),"[""model.16""]",false
+model.16.cv1.conv.weight,"[64,256,1,1]",float32,constant,65536,16384,-1,-1,182,1,[182],within-half,within-half,false,(graph input or initializer),"[""model.16""]",false
+model.16.cv2.conv.bias,[64],float32,constant,256,64,-1,-1,211,1,[211],within-half,within-half,false,(graph input or initializer),"[""model.16""]",false
+model.16.cv2.conv.weight,"[64,96,1,1]",float32,constant,24576,6144,-1,-1,211,1,[211],within-half,within-half,false,(graph input or initializer),"[""model.16""]",false
+model.16.m.0.cv1.conv.bias,[16],float32,constant,64,16,-1,-1,186,1,[186],within-half,within-half,false,(graph input or initializer),"[""model.16""]",false
+model.16.m.0.cv1.conv.weight,"[16,32,1,1]",float32,constant,2048,512,-1,-1,186,1,[186],within-half,within-half,false,(graph input or initializer),"[""model.16""]",false
+model.16.m.0.cv2.conv.bias,[16],float32,constant,64,16,-1,-1,187,1,[187],within-half,within-half,false,(graph input or initializer),"[""model.16""]",false
+model.16.m.0.cv2.conv.weight,"[16,32,1,1]",float32,constant,2048,512,-1,-1,187,1,[187],within-half,within-half,false,(graph input or initializer),"[""model.16""]",false
+model.16.m.0.cv3.conv.bias,[32],float32,constant,128,32,-1,-1,207,1,[207],within-half,within-half,false,(graph input or initializer),"[""model.16""]",false
+model.16.m.0.cv3.conv.weight,"[32,32,1,1]",float32,constant,4096,1024,-1,-1,207,1,[207],within-half,within-half,false,(graph input or initializer),"[""model.16""]",false
+model.16.m.0.m.0.cv1.conv.bias,[16],float32,constant,64,16,-1,-1,192,1,[192],within-half,within-half,false,(graph input or initializer),"[""model.16""]",false
+model.16.m.0.m.0.cv1.conv.weight,"[16,16,3,3]",float32,constant,9216,2304,-1,-1,192,1,[192],within-half,within-half,false,(graph input or initializer),"[""model.16""]",false
+model.16.m.0.m.0.cv2.conv.bias,[16],float32,constant,64,16,-1,-1,195,1,[195],within-half,within-half,false,(graph input or initializer),"[""model.16""]",false
+model.16.m.0.m.0.cv2.conv.weight,"[16,16,3,3]",float32,constant,9216,2304,-1,-1,195,1,[195],within-half,within-half,false,(graph input or initializer),"[""model.16""]",false
+model.16.m.0.m.1.cv1.conv.bias,[16],float32,constant,64,16,-1,-1,199,1,[199],within-half,within-half,false,(graph input or initializer),"[""model.16""]",false
+model.16.m.0.m.1.cv1.conv.weight,"[16,16,3,3]",float32,constant,9216,2304,-1,-1,199,1,[199],within-half,within-half,false,(graph input or initializer),"[""model.16""]",false
+model.16.m.0.m.1.cv2.conv.bias,[16],float32,constant,64,16,-1,-1,202,1,[202],within-half,within-half,false,(graph input or initializer),"[""model.16""]",false
+model.16.m.0.m.1.cv2.conv.weight,"[16,16,3,3]",float32,constant,9216,2304,-1,-1,202,1,[202],within-half,within-half,false,(graph input or initializer),"[""model.16""]",false
+model.17.conv.bias,[64],float32,constant,256,64,-1,-1,214,1,[214],within-half,within-half,false,(graph input or initializer),"[""model.17""]",false
+model.17.conv.weight,"[64,64,3,3]",float32,constant,147456,36864,-1,-1,214,1,[214],within-half,within-half,false,(graph input or initializer),"[""model.17""]",false
+model.19.cv1.conv.bias,[128],float32,constant,512,128,-1,-1,226,1,[226],within-half,within-half,false,(graph input or initializer),"[""model.19""]",false
+model.19.cv1.conv.weight,"[128,192,1,1]",float32,constant,98304,24576,-1,-1,226,1,[226],within-half,within-half,false,(graph input or initializer),"[""model.19""]",false
+model.19.cv2.conv.bias,[128],float32,constant,512,128,-1,-1,269,1,[269],within-half,within-half,false,(graph input or initializer),"[""model.19""]",false
+model.19.cv2.conv.weight,"[128,192,1,1]",float32,constant,98304,24576,-1,-1,269,1,[269],within-half,within-half,false,(graph input or initializer),"[""model.19""]",false
+model.19.m.0.cv1.conv.bias,[32],float32,constant,128,32,-1,-1,238,1,[238],within-half,within-half,false,(graph input or initializer),"[""model.19""]",false
+model.19.m.0.cv1.conv.weight,"[32,64,1,1]",float32,constant,8192,2048,-1,-1,238,1,[238],within-half,within-half,false,(graph input or initializer),"[""model.19""]",false
+model.19.m.0.cv2.conv.bias,[32],float32,constant,128,32,-1,-1,239,1,[239],within-half,within-half,false,(graph input or initializer),"[""model.19""]",false
+model.19.m.0.cv2.conv.weight,"[32,64,1,1]",float32,constant,8192,2048,-1,-1,239,1,[239],within-half,within-half,false,(graph input or initializer),"[""model.19""]",false
+model.19.m.0.cv3.conv.bias,[64],float32,constant,256,64,-1,-1,265,1,[265],within-half,within-half,false,(graph input or initializer),"[""model.19""]",false
+model.19.m.0.cv3.conv.weight,"[64,64,1,1]",float32,constant,16384,4096,-1,-1,265,1,[265],within-half,within-half,false,(graph input or initializer),"[""model.19""]",false
+model.19.m.0.m.0.cv1.conv.bias,[32],float32,constant,128,32,-1,-1,247,1,[247],within-half,within-half,false,(graph input or initializer),"[""model.19""]",false
+model.19.m.0.m.0.cv1.conv.weight,"[32,32,3,3]",float32,constant,36864,9216,-1,-1,247,1,[247],within-half,within-half,false,(graph input or initializer),"[""model.19""]",false
+model.19.m.0.m.0.cv2.conv.bias,[32],float32,constant,128,32,-1,-1,253,1,[253],within-half,within-half,false,(graph input or initializer),"[""model.19""]",false
+model.19.m.0.m.0.cv2.conv.weight,"[32,32,3,3]",float32,constant,36864,9216,-1,-1,253,1,[253],within-half,within-half,false,(graph input or initializer),"[""model.19""]",false
+model.19.m.0.m.1.cv1.conv.bias,[32],float32,constant,128,32,-1,-1,257,1,[257],within-half,within-half,false,(graph input or initializer),"[""model.19""]",false
+model.19.m.0.m.1.cv1.conv.weight,"[32,32,3,3]",float32,constant,36864,9216,-1,-1,257,1,[257],within-half,within-half,false,(graph input or initializer),"[""model.19""]",false
+model.19.m.0.m.1.cv2.conv.bias,[32],float32,constant,128,32,-1,-1,260,1,[260],within-half,within-half,false,(graph input or initializer),"[""model.19""]",false
+model.19.m.0.m.1.cv2.conv.weight,"[32,32,3,3]",float32,constant,36864,9216,-1,-1,260,1,[260],within-half,within-half,false,(graph input or initializer),"[""model.19""]",false
+model.2.cv1.conv.bias,[32],float32,constant,128,32,-1,-1,6,1,[6],within-half,within-half,false,(graph input or initializer),"[""model.2""]",false
+model.2.cv1.conv.weight,"[32,32,1,1]",float32,constant,4096,1024,-1,-1,6,1,[6],within-half,within-half,false,(graph input or initializer),"[""model.2""]",false
+model.2.cv2.conv.bias,[64],float32,constant,256,64,-1,-1,18,1,[18],within-half,within-half,false,(graph input or initializer),"[""model.2""]",false
+model.2.cv2.conv.weight,"[64,48,1,1]",float32,constant,12288,3072,-1,-1,18,1,[18],within-half,within-half,false,(graph input or initializer),"[""model.2""]",false
+model.2.m.0.cv1.conv.bias,[8],float32,constant,32,8,-1,-1,10,1,[10],within-half,within-half,false,(graph input or initializer),"[""model.2""]",false
+model.2.m.0.cv1.conv.weight,"[8,16,3,3]",float32,constant,4608,1152,-1,-1,10,1,[10],within-half,within-half,false,(graph input or initializer),"[""model.2""]",false
+model.2.m.0.cv2.conv.bias,[16],float32,constant,64,16,-1,-1,13,1,[13],within-half,within-half,false,(graph input or initializer),"[""model.2""]",false
+model.2.m.0.cv2.conv.weight,"[16,8,3,3]",float32,constant,4608,1152,-1,-1,13,1,[13],within-half,within-half,false,(graph input or initializer),"[""model.2""]",false
+model.20.conv.bias,[128],float32,constant,512,128,-1,-1,272,1,[272],within-half,within-half,false,(graph input or initializer),"[""model.20""]",false
+model.20.conv.weight,"[128,128,3,3]",float32,constant,589824,147456,-1,-1,272,1,[272],within-half,within-half,false,(graph input or initializer),"[""model.20""]",false
+model.22.cv1.conv.bias,[256],float32,constant,1024,256,-1,-1,284,1,[284],within-half,within-half,false,(graph input or initializer),"[""model.22""]",false
+model.22.cv1.conv.weight,"[256,384,1,1]",float32,constant,393216,98304,-1,-1,284,1,[284],within-half,within-half,false,(graph input or initializer),"[""model.22""]",false
+model.22.cv2.conv.bias,[256],float32,constant,1024,256,-1,-1,330,1,[330],within-half,within-half,false,(graph input or initializer),"[""model.22""]",false
+model.22.cv2.conv.weight,"[256,384,1,1]",float32,constant,393216,98304,-1,-1,330,1,[330],within-half,within-half,false,(graph input or initializer),"[""model.22""]",false
+model.22.m.0.0.cv1.conv.bias,[64],float32,constant,256,64,-1,-1,296,1,[296],within-half,within-half,false,(graph input or initializer),"[""model.22""]",false
+model.22.m.0.0.cv1.conv.weight,"[64,128,3,3]",float32,constant,294912,73728,-1,-1,296,1,[296],within-half,within-half,false,(graph input or initializer),"[""model.22""]",false
+model.22.m.0.0.cv2.conv.bias,[128],float32,constant,512,128,-1,-1,302,1,[302],within-half,within-half,false,(graph input or initializer),"[""model.22""]",false
+model.22.m.0.0.cv2.conv.weight,"[128,64,3,3]",float32,constant,294912,73728,-1,-1,302,1,[302],within-half,within-half,false,(graph input or initializer),"[""model.22""]",false
+model.22.m.0.1.attn.pe.conv.bias,[128],float32,constant,512,128,-1,-1,315,1,[315],within-half,within-half,false,(graph input or initializer),"[""model.22""]",false
+model.22.m.0.1.attn.pe.conv.weight,"[128,1,3,3]",float32,constant,4608,1152,-1,-1,315,1,[315],within-half,within-half,false,(graph input or initializer),"[""model.22""]",false
+model.22.m.0.1.attn.proj.conv.bias,[128],float32,constant,512,128,-1,-1,322,1,[322],within-half,within-half,false,(graph input or initializer),"[""model.22""]",false
+model.22.m.0.1.attn.proj.conv.weight,"[128,128,1,1]",float32,constant,65536,16384,-1,-1,322,1,[322],within-half,within-half,false,(graph input or initializer),"[""model.22""]",false
+model.22.m.0.1.attn.qkv.conv.bias,[256],float32,constant,1024,256,-1,-1,309,1,[309],within-half,within-half,false,(graph input or initializer),"[""model.22""]",false
+model.22.m.0.1.attn.qkv.conv.weight,"[256,128,1,1]",float32,constant,131072,32768,-1,-1,309,1,[309],within-half,within-half,false,(graph input or initializer),"[""model.22""]",false
+model.22.m.0.1.ffn.0.conv.bias,[256],float32,constant,1024,256,-1,-1,324,1,[324],within-half,within-half,false,(graph input or initializer),"[""model.22""]",false
+model.22.m.0.1.ffn.0.conv.weight,"[256,128,1,1]",float32,constant,131072,32768,-1,-1,324,1,[324],within-half,within-half,false,(graph input or initializer),"[""model.22""]",false
+model.22.m.0.1.ffn.1.conv.bias,[128],float32,constant,512,128,-1,-1,327,1,[327],within-half,within-half,false,(graph input or initializer),"[""model.22""]",false
+model.22.m.0.1.ffn.1.conv.weight,"[128,256,1,1]",float32,constant,131072,32768,-1,-1,327,1,[327],within-half,within-half,false,(graph input or initializer),"[""model.22""]",false
+model.23.one2one_cv2.0.0.conv.bias,[16],float32,constant,64,16,-1,-1,215,1,[215],within-half,within-half,false,(graph input or initializer),"[""model.23""]",false
+model.23.one2one_cv2.0.0.conv.weight,"[16,64,3,3]",float32,constant,36864,9216,-1,-1,215,1,[215],within-half,within-half,false,(graph input or initializer),"[""model.23""]",false
+model.23.one2one_cv2.0.1.conv.bias,[16],float32,constant,64,16,-1,-1,224,1,[224],within-half,within-half,false,(graph input or initializer),"[""model.23""]",false
+model.23.one2one_cv2.0.1.conv.weight,"[16,16,3,3]",float32,constant,9216,2304,-1,-1,224,1,[224],within-half,within-half,false,(graph input or initializer),"[""model.23""]",false
+model.23.one2one_cv2.0.2.bias,[4],float32,constant,16,4,-1,-1,233,1,[233],within-half,within-half,false,(graph input or initializer),"[""model.23""]",false
+model.23.one2one_cv2.0.2.weight,"[4,16,1,1]",float32,constant,256,64,-1,-1,233,1,[233],within-half,within-half,false,(graph input or initializer),"[""model.23""]",false
+model.23.one2one_cv2.1.0.conv.bias,[16],float32,constant,64,16,-1,-1,273,1,[273],within-half,within-half,false,(graph input or initializer),"[""model.23""]",false
+model.23.one2one_cv2.1.0.conv.weight,"[16,128,3,3]",float32,constant,73728,18432,-1,-1,273,1,[273],within-half,within-half,false,(graph input or initializer),"[""model.23""]",false
+model.23.one2one_cv2.1.1.conv.bias,[16],float32,constant,64,16,-1,-1,282,1,[282],within-half,within-half,false,(graph input or initializer),"[""model.23""]",false
+model.23.one2one_cv2.1.1.conv.weight,"[16,16,3,3]",float32,constant,9216,2304,-1,-1,282,1,[282],within-half,within-half,false,(graph input or initializer),"[""model.23""]",false
+model.23.one2one_cv2.1.2.bias,[4],float32,constant,16,4,-1,-1,291,1,[291],within-half,within-half,false,(graph input or initializer),"[""model.23""]",false
+model.23.one2one_cv2.1.2.weight,"[4,16,1,1]",float32,constant,256,64,-1,-1,291,1,[291],within-half,within-half,false,(graph input or initializer),"[""model.23""]",false
+model.23.one2one_cv2.2.0.conv.bias,[16],float32,constant,64,16,-1,-1,333,1,[333],within-half,within-half,false,(graph input or initializer),"[""model.23""]",false
+model.23.one2one_cv2.2.0.conv.weight,"[16,256,3,3]",float32,constant,147456,36864,-1,-1,333,1,[333],within-half,within-half,false,(graph input or initializer),"[""model.23""]",false
+model.23.one2one_cv2.2.1.conv.bias,[16],float32,constant,64,16,-1,-1,339,1,[339],within-half,within-half,false,(graph input or initializer),"[""model.23""]",false
+model.23.one2one_cv2.2.1.conv.weight,"[16,16,3,3]",float32,constant,9216,2304,-1,-1,339,1,[339],within-half,within-half,false,(graph input or initializer),"[""model.23""]",false
+model.23.one2one_cv2.2.2.bias,[4],float32,constant,16,4,-1,-1,345,1,[345],within-half,within-half,false,(graph input or initializer),"[""model.23""]",false
+model.23.one2one_cv2.2.2.weight,"[4,16,1,1]",float32,constant,256,64,-1,-1,345,1,[345],within-half,within-half,false,(graph input or initializer),"[""model.23""]",false
+model.23.one2one_cv3.0.0.0.conv.bias,[64],float32,constant,256,64,-1,-1,216,1,[216],within-half,within-half,false,(graph input or initializer),"[""model.23""]",false
+model.23.one2one_cv3.0.0.0.conv.weight,"[64,1,3,3]",float32,constant,2304,576,-1,-1,216,1,[216],within-half,within-half,false,(graph input or initializer),"[""model.23""]",false
+model.23.one2one_cv3.0.0.1.conv.bias,[80],float32,constant,320,80,-1,-1,225,1,[225],within-half,within-half,false,(graph input or initializer),"[""model.23""]",false
+model.23.one2one_cv3.0.0.1.conv.weight,"[80,64,1,1]",float32,constant,20480,5120,-1,-1,225,1,[225],within-half,within-half,false,(graph input or initializer),"[""model.23""]",false
+model.23.one2one_cv3.0.1.0.conv.bias,[80],float32,constant,320,80,-1,-1,234,1,[234],within-half,within-half,false,(graph input or initializer),"[""model.23""]",false
+model.23.one2one_cv3.0.1.0.conv.weight,"[80,1,3,3]",float32,constant,2880,720,-1,-1,234,1,[234],within-half,within-half,false,(graph input or initializer),"[""model.23""]",false
+model.23.one2one_cv3.0.1.1.conv.bias,[80],float32,constant,320,80,-1,-1,243,1,[243],within-half,within-half,false,(graph input or initializer),"[""model.23""]",false
+model.23.one2one_cv3.0.1.1.conv.weight,"[80,80,1,1]",float32,constant,25600,6400,-1,-1,243,1,[243],within-half,within-half,false,(graph input or initializer),"[""model.23""]",false
+model.23.one2one_cv3.0.2.bias,[80],float32,constant,320,80,-1,-1,250,1,[250],within-half,within-half,false,(graph input or initializer),"[""model.23""]",false
+model.23.one2one_cv3.0.2.weight,"[80,80,1,1]",float32,constant,25600,6400,-1,-1,250,1,[250],within-half,within-half,false,(graph input or initializer),"[""model.23""]",false
+model.23.one2one_cv3.1.0.0.conv.bias,[128],float32,constant,512,128,-1,-1,274,1,[274],within-half,within-half,false,(graph input or initializer),"[""model.23""]",false
+model.23.one2one_cv3.1.0.0.conv.weight,"[128,1,3,3]",float32,constant,4608,1152,-1,-1,274,1,[274],within-half,within-half,false,(graph input or initializer),"[""model.23""]",false
+model.23.one2one_cv3.1.0.1.conv.bias,[80],float32,constant,320,80,-1,-1,283,1,[283],within-half,within-half,false,(graph input or initializer),"[""model.23""]",false
+model.23.one2one_cv3.1.0.1.conv.weight,"[80,128,1,1]",float32,constant,40960,10240,-1,-1,283,1,[283],within-half,within-half,false,(graph input or initializer),"[""model.23""]",false
+model.23.one2one_cv3.1.1.0.conv.bias,[80],float32,constant,320,80,-1,-1,292,1,[292],within-half,within-half,false,(graph input or initializer),"[""model.23""]",false
+model.23.one2one_cv3.1.1.0.conv.weight,"[80,1,3,3]",float32,constant,2880,720,-1,-1,292,1,[292],within-half,within-half,false,(graph input or initializer),"[""model.23""]",false
+model.23.one2one_cv3.1.1.1.conv.bias,[80],float32,constant,320,80,-1,-1,299,1,[299],within-half,within-half,false,(graph input or initializer),"[""model.23""]",false
+model.23.one2one_cv3.1.1.1.conv.weight,"[80,80,1,1]",float32,constant,25600,6400,-1,-1,299,1,[299],within-half,within-half,false,(graph input or initializer),"[""model.23""]",false
+model.23.one2one_cv3.1.2.bias,[80],float32,constant,320,80,-1,-1,305,1,[305],within-half,within-half,false,(graph input or initializer),"[""model.23""]",false
+model.23.one2one_cv3.1.2.weight,"[80,80,1,1]",float32,constant,25600,6400,-1,-1,305,1,[305],within-half,within-half,false,(graph input or initializer),"[""model.23""]",false
+model.23.one2one_cv3.2.0.0.conv.bias,[256],float32,constant,1024,256,-1,-1,334,1,[334],within-half,within-half,false,(graph input or initializer),"[""model.23""]",false
+model.23.one2one_cv3.2.0.0.conv.weight,"[256,1,3,3]",float32,constant,9216,2304,-1,-1,334,1,[334],within-half,within-half,false,(graph input or initializer),"[""model.23""]",false
+model.23.one2one_cv3.2.0.1.conv.bias,[80],float32,constant,320,80,-1,-1,340,1,[340],within-half,within-half,false,(graph input or initializer),"[""model.23""]",false
+model.23.one2one_cv3.2.0.1.conv.weight,"[80,256,1,1]",float32,constant,81920,20480,-1,-1,340,1,[340],within-half,within-half,false,(graph input or initializer),"[""model.23""]",false
+model.23.one2one_cv3.2.1.0.conv.bias,[80],float32,constant,320,80,-1,-1,346,1,[346],within-half,within-half,false,(graph input or initializer),"[""model.23""]",false
+model.23.one2one_cv3.2.1.0.conv.weight,"[80,1,3,3]",float32,constant,2880,720,-1,-1,346,1,[346],within-half,within-half,false,(graph input or initializer),"[""model.23""]",false
+model.23.one2one_cv3.2.1.1.conv.bias,[80],float32,constant,320,80,-1,-1,351,1,[351],within-half,within-half,false,(graph input or initializer),"[""model.23""]",false
+model.23.one2one_cv3.2.1.1.conv.weight,"[80,80,1,1]",float32,constant,25600,6400,-1,-1,351,1,[351],within-half,within-half,false,(graph input or initializer),"[""model.23""]",false
+model.23.one2one_cv3.2.2.bias,[80],float32,constant,320,80,-1,-1,359,1,[359],within-half,within-half,false,(graph input or initializer),"[""model.23""]",false
+model.23.one2one_cv3.2.2.weight,"[80,80,1,1]",float32,constant,25600,6400,-1,-1,359,1,[359],within-half,within-half,false,(graph input or initializer),"[""model.23""]",false
+model.3.conv.bias,[64],float32,constant,256,64,-1,-1,21,1,[21],within-half,within-half,false,(graph input or initializer),"[""model.3""]",false
+model.3.conv.weight,"[64,64,3,3]",float32,constant,147456,36864,-1,-1,21,1,[21],within-half,within-half,false,(graph input or initializer),"[""model.3""]",false
+model.4.cv1.conv.bias,[64],float32,constant,256,64,-1,-1,24,1,[24],within-half,within-half,false,(graph input or initializer),"[""model.4""]",false
+model.4.cv1.conv.weight,"[64,64,1,1]",float32,constant,16384,4096,-1,-1,24,1,[24],within-half,within-half,false,(graph input or initializer),"[""model.4""]",false
+model.4.cv2.conv.bias,[128],float32,constant,512,128,-1,-1,36,1,[36],within-half,within-half,false,(graph input or initializer),"[""model.4""]",false
+model.4.cv2.conv.weight,"[128,96,1,1]",float32,constant,49152,12288,-1,-1,36,1,[36],within-half,within-half,false,(graph input or initializer),"[""model.4""]",false
+model.4.m.0.cv1.conv.bias,[16],float32,constant,64,16,-1,-1,28,1,[28],within-half,within-half,false,(graph input or initializer),"[""model.4""]",false
+model.4.m.0.cv1.conv.weight,"[16,32,3,3]",float32,constant,18432,4608,-1,-1,28,1,[28],within-half,within-half,false,(graph input or initializer),"[""model.4""]",false
+model.4.m.0.cv2.conv.bias,[32],float32,constant,128,32,-1,-1,31,1,[31],within-half,within-half,false,(graph input or initializer),"[""model.4""]",false
+model.4.m.0.cv2.conv.weight,"[32,16,3,3]",float32,constant,18432,4608,-1,-1,31,1,[31],within-half,within-half,false,(graph input or initializer),"[""model.4""]",false
+model.5.conv.bias,[128],float32,constant,512,128,-1,-1,39,1,[39],within-half,within-half,false,(graph input or initializer),"[""model.5""]",false
+model.5.conv.weight,"[128,128,3,3]",float32,constant,589824,147456,-1,-1,39,1,[39],within-half,within-half,false,(graph input or initializer),"[""model.5""]",false
+model.6.cv1.conv.bias,[128],float32,constant,512,128,-1,-1,42,1,[42],within-half,within-half,false,(graph input or initializer),"[""model.6""]",false
+model.6.cv1.conv.weight,"[128,128,1,1]",float32,constant,65536,16384,-1,-1,42,1,[42],within-half,within-half,false,(graph input or initializer),"[""model.6""]",false
+model.6.cv2.conv.bias,[128],float32,constant,512,128,-1,-1,71,1,[71],within-half,within-half,false,(graph input or initializer),"[""model.6""]",false
+model.6.cv2.conv.weight,"[128,192,1,1]",float32,constant,98304,24576,-1,-1,71,1,[71],within-half,within-half,false,(graph input or initializer),"[""model.6""]",false
+model.6.m.0.cv1.conv.bias,[32],float32,constant,128,32,-1,-1,46,1,[46],within-half,within-half,false,(graph input or initializer),"[""model.6""]",false
+model.6.m.0.cv1.conv.weight,"[32,64,1,1]",float32,constant,8192,2048,-1,-1,46,1,[46],within-half,within-half,false,(graph input or initializer),"[""model.6""]",false
+model.6.m.0.cv2.conv.bias,[32],float32,constant,128,32,-1,-1,47,1,[47],within-half,within-half,false,(graph input or initializer),"[""model.6""]",false
+model.6.m.0.cv2.conv.weight,"[32,64,1,1]",float32,constant,8192,2048,-1,-1,47,1,[47],within-half,within-half,false,(graph input or initializer),"[""model.6""]",false
+model.6.m.0.cv3.conv.bias,[64],float32,constant,256,64,-1,-1,67,1,[67],within-half,within-half,false,(graph input or initializer),"[""model.6""]",false
+model.6.m.0.cv3.conv.weight,"[64,64,1,1]",float32,constant,16384,4096,-1,-1,67,1,[67],within-half,within-half,false,(graph input or initializer),"[""model.6""]",false
+model.6.m.0.m.0.cv1.conv.bias,[32],float32,constant,128,32,-1,-1,52,1,[52],within-half,within-half,false,(graph input or initializer),"[""model.6""]",false
+model.6.m.0.m.0.cv1.conv.weight,"[32,32,3,3]",float32,constant,36864,9216,-1,-1,52,1,[52],within-half,within-half,false,(graph input or initializer),"[""model.6""]",false
+model.6.m.0.m.0.cv2.conv.bias,[32],float32,constant,128,32,-1,-1,55,1,[55],within-half,within-half,false,(graph input or initializer),"[""model.6""]",false
+model.6.m.0.m.0.cv2.conv.weight,"[32,32,3,3]",float32,constant,36864,9216,-1,-1,55,1,[55],within-half,within-half,false,(graph input or initializer),"[""model.6""]",false
+model.6.m.0.m.1.cv1.conv.bias,[32],float32,constant,128,32,-1,-1,59,1,[59],within-half,within-half,false,(graph input or initializer),"[""model.6""]",false
+model.6.m.0.m.1.cv1.conv.weight,"[32,32,3,3]",float32,constant,36864,9216,-1,-1,59,1,[59],within-half,within-half,false,(graph input or initializer),"[""model.6""]",false
+model.6.m.0.m.1.cv2.conv.bias,[32],float32,constant,128,32,-1,-1,62,1,[62],within-half,within-half,false,(graph input or initializer),"[""model.6""]",false
+model.6.m.0.m.1.cv2.conv.weight,"[32,32,3,3]",float32,constant,36864,9216,-1,-1,62,1,[62],within-half,within-half,false,(graph input or initializer),"[""model.6""]",false
+model.7.conv.bias,[256],float32,constant,1024,256,-1,-1,74,1,[74],within-half,within-half,false,(graph input or initializer),"[""model.7""]",false
+model.7.conv.weight,"[256,128,3,3]",float32,constant,1179648,294912,-1,-1,74,1,[74],exceeds-half,within-half,false,(graph input or initializer),"[""model.7""]",false
+model.8.cv1.conv.bias,[256],float32,constant,1024,256,-1,-1,77,1,[77],within-half,within-half,false,(graph input or initializer),"[""model.8""]",false
+model.8.cv1.conv.weight,"[256,256,1,1]",float32,constant,262144,65536,-1,-1,77,1,[77],within-half,within-half,false,(graph input or initializer),"[""model.8""]",false
+model.8.cv2.conv.bias,[256],float32,constant,1024,256,-1,-1,106,1,[106],within-half,within-half,false,(graph input or initializer),"[""model.8""]",false
+model.8.cv2.conv.weight,"[256,384,1,1]",float32,constant,393216,98304,-1,-1,106,1,[106],within-half,within-half,false,(graph input or initializer),"[""model.8""]",false
+model.8.m.0.cv1.conv.bias,[64],float32,constant,256,64,-1,-1,81,1,[81],within-half,within-half,false,(graph input or initializer),"[""model.8""]",false
+model.8.m.0.cv1.conv.weight,"[64,128,1,1]",float32,constant,32768,8192,-1,-1,81,1,[81],within-half,within-half,false,(graph input or initializer),"[""model.8""]",false
+model.8.m.0.cv2.conv.bias,[64],float32,constant,256,64,-1,-1,82,1,[82],within-half,within-half,false,(graph input or initializer),"[""model.8""]",false
+model.8.m.0.cv2.conv.weight,"[64,128,1,1]",float32,constant,32768,8192,-1,-1,82,1,[82],within-half,within-half,false,(graph input or initializer),"[""model.8""]",false
+model.8.m.0.cv3.conv.bias,[128],float32,constant,512,128,-1,-1,102,1,[102],within-half,within-half,false,(graph input or initializer),"[""model.8""]",false
+model.8.m.0.cv3.conv.weight,"[128,128,1,1]",float32,constant,65536,16384,-1,-1,102,1,[102],within-half,within-half,false,(graph input or initializer),"[""model.8""]",false
+model.8.m.0.m.0.cv1.conv.bias,[64],float32,constant,256,64,-1,-1,87,1,[87],within-half,within-half,false,(graph input or initializer),"[""model.8""]",false
+model.8.m.0.m.0.cv1.conv.weight,"[64,64,3,3]",float32,constant,147456,36864,-1,-1,87,1,[87],within-half,within-half,false,(graph input or initializer),"[""model.8""]",false
+model.8.m.0.m.0.cv2.conv.bias,[64],float32,constant,256,64,-1,-1,90,1,[90],within-half,within-half,false,(graph input or initializer),"[""model.8""]",false
+model.8.m.0.m.0.cv2.conv.weight,"[64,64,3,3]",float32,constant,147456,36864,-1,-1,90,1,[90],within-half,within-half,false,(graph input or initializer),"[""model.8""]",false
+model.8.m.0.m.1.cv1.conv.bias,[64],float32,constant,256,64,-1,-1,94,1,[94],within-half,within-half,false,(graph input or initializer),"[""model.8""]",false
+model.8.m.0.m.1.cv1.conv.weight,"[64,64,3,3]",float32,constant,147456,36864,-1,-1,94,1,[94],within-half,within-half,false,(graph input or initializer),"[""model.8""]",false
+model.8.m.0.m.1.cv2.conv.bias,[64],float32,constant,256,64,-1,-1,97,1,[97],within-half,within-half,false,(graph input or initializer),"[""model.8""]",false
+model.8.m.0.m.1.cv2.conv.weight,"[64,64,3,3]",float32,constant,147456,36864,-1,-1,97,1,[97],within-half,within-half,false,(graph input or initializer),"[""model.8""]",false
+model.9.cv1.conv.bias,[128],float32,constant,512,128,-1,-1,109,1,[109],within-half,within-half,false,(graph input or initializer),"[""model.9""]",false
+model.9.cv1.conv.weight,"[128,256,1,1]",float32,constant,131072,32768,-1,-1,109,1,[109],within-half,within-half,false,(graph input or initializer),"[""model.9""]",false
+model.9.cv2.conv.bias,[256],float32,constant,1024,256,-1,-1,114,1,[114],within-half,within-half,false,(graph input or initializer),"[""model.9""]",false
+model.9.cv2.conv.weight,"[256,512,1,1]",float32,constant,524288,131072,-1,-1,114,1,[114],within-half,within-half,false,(graph input or initializer),"[""model.9""]",false
+onnx::Split_214,[2],int64,constant,16,16,-1,-1,9,1,[9],within-half,within-half,false,(graph input or initializer),"[""model.2""]",false
+onnx::Split_234,[2],int64,constant,16,16,-1,-1,185,2,"[27,185]",within-half,within-half,false,(graph input or initializer),"[""model.4"",""model.16""]",false
+onnx::Split_254,[2],int64,constant,16,16,-1,-1,235,3,"[45,151,235]",within-half,within-half,false,(graph input or initializer),"[""model.6"",""model.13"",""model.19""]",false
+onnx::Split_291,[2],int64,constant,16,16,-1,-1,293,3,"[80,121,293]",within-half,within-half,false,(graph input or initializer),"[""model.8"",""model.10"",""model.22""]",false
+onnx::Split_354,[3],int64,constant,24,24,-1,-1,311,2,"[124,311]",within-half,within-half,false,(graph input or initializer),"[""model.10"",""model.22""]",false
+onnx::Split_726,[2],int64,constant,16,16,-1,-1,366,1,[366],within-half,within-half,false,(graph input or initializer),"[""model.23""]",false
+output0,"[1,300,6]",float32,activation,7200,1800,383,383,384,0,[],within-half,within-half,false,model.23,[],false

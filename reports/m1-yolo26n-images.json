@@ -1,0 +1,227 @@
+{
+  "eval": {
+    "bus.jpg": {
+      "source": "https://raw.githubusercontent.com/ultralytics/ultralytics/main/ultralytics/assets/bus.jpg",
+      "bytes": 137419,
+      "sha256": "c02019c4979c191eb739ddd944445ef408dad5679acab6fd520ef9d434bfbc63"
+    },
+    "zidane.jpg": {
+      "source": "https://raw.githubusercontent.com/ultralytics/ultralytics/main/ultralytics/assets/zidane.jpg",
+      "bytes": 50427,
+      "sha256": "16d73869e3267a7d4ed00de8e860833bd1657c1b252e94c0c348277adc7b6edb"
+    },
+    "coco000000000241.jpg": {
+      "source": "https://github.com/ultralytics/assets/releases/download/v0.0.0/coco128.zip",
+      "member": "coco128/images/train2017/000000000241.jpg",
+      "sha256": "14007b87745069ed85c6412dffc8ad11a22de98d5f5c9ae896523e12622961c5",
+      "bytes": 48024
+    },
+    "coco000000000384.jpg": {
+      "source": "https://github.com/ultralytics/assets/releases/download/v0.0.0/coco128.zip",
+      "member": "coco128/images/train2017/000000000384.jpg",
+      "sha256": "dfbae064fadcaa79bd319410903bc92052349472115e2d515e0ecf3c944d1048",
+      "bytes": 27793
+    }
+  },
+  "calibration": {
+    "coco000000000127.jpg": {
+      "source": "https://github.com/ultralytics/assets/releases/download/v0.0.0/coco128.zip",
+      "member": "coco128/images/train2017/000000000127.jpg",
+      "sha256": "0ce2f02f39d5d49260d91762bc9a659f8f9d516d8e416c8120306330bfd58023",
+      "bytes": 64488
+    },
+    "coco000000000164.jpg": {
+      "source": "https://github.com/ultralytics/assets/releases/download/v0.0.0/coco128.zip",
+      "member": "coco128/images/train2017/000000000164.jpg",
+      "sha256": "186a1427f32ce7e5cf17052f66d5ee7cd57d7f83762001891e16195a6bda586d",
+      "bytes": 40901
+    },
+    "coco000000000540.jpg": {
+      "source": "https://github.com/ultralytics/assets/releases/download/v0.0.0/coco128.zip",
+      "member": "coco128/images/train2017/000000000540.jpg",
+      "sha256": "32099f009fcb436bad1bd59b5d48b3e5620fa667a83db5a09879e158dd346103",
+      "bytes": 73559
+    },
+    "coco000000000138.jpg": {
+      "source": "https://github.com/ultralytics/assets/releases/download/v0.0.0/coco128.zip",
+      "member": "coco128/images/train2017/000000000138.jpg",
+      "sha256": "0255bce78addf8d82e9f5d434ad2a98fccd5542cbb041980ce7ad00054a3227e",
+      "bytes": 73743
+    },
+    "coco000000000328.jpg": {
+      "source": "https://github.com/ultralytics/assets/releases/download/v0.0.0/coco128.zip",
+      "member": "coco128/images/train2017/000000000328.jpg",
+      "sha256": "8ba0ed80d34589221b1243e0764471d91716b3a267827cb37ecfc3cfae52cc90",
+      "bytes": 66986
+    },
+    "coco000000000196.jpg": {
+      "source": "https://github.com/ultralytics/assets/releases/download/v0.0.0/coco128.zip",
+      "member": "coco128/images/train2017/000000000196.jpg",
+      "sha256": "1e1d801e63ed90d34ee666845ebcc17b56edef1f864d048ff588ce7073bc94a2",
+      "bytes": 70172
+    },
+    "coco000000000643.jpg": {
+      "source": "https://github.com/ultralytics/assets/releases/download/v0.0.0/coco128.zip",
+      "member": "coco128/images/train2017/000000000643.jpg",
+      "sha256": "53d61e69ccf08b42a1cefa414c69a1c03d72aba2852e1fde35c4da3df8753b3f",
+      "bytes": 31400
+    },
+    "coco000000000443.jpg": {
+      "source": "https://github.com/ultralytics/assets/releases/download/v0.0.0/coco128.zip",
+      "member": "coco128/images/train2017/000000000443.jpg",
+      "sha256": "f6483d57885c348a27dcdc272e4bd5296c75596d7c64fe638b24dbb503209902",
+      "bytes": 37330
+    },
+    "coco000000000488.jpg": {
+      "source": "https://github.com/ultralytics/assets/releases/download/v0.0.0/coco128.zip",
+      "member": "coco128/images/train2017/000000000488.jpg",
+      "sha256": "9e1c9d4c88d38e6a2cd2f775bea82c137c14dc3b13f8430bcdadcb89ab0b7022",
+      "bytes": 48780
+    },
+    "coco000000000531.jpg": {
+      "source": "https://github.com/ultralytics/assets/releases/download/v0.0.0/coco128.zip",
+      "member": "coco128/images/train2017/000000000531.jpg",
+      "sha256": "111bb407e512f23fcc14bbc51ad4b312b0797332aab86ecd9373808286ed30b1",
+      "bytes": 33369
+    },
+    "coco000000000142.jpg": {
+      "source": "https://github.com/ultralytics/assets/releases/download/v0.0.0/coco128.zip",
+      "member": "coco128/images/train2017/000000000142.jpg",
+      "sha256": "3c852dc71abcf6cf06ed58202d1b2c850bb783553f05c63cd6ca511936b431aa",
+      "bytes": 43512
+    },
+    "coco000000000307.jpg": {
+      "source": "https://github.com/ultralytics/assets/releases/download/v0.0.0/coco128.zip",
+      "member": "coco128/images/train2017/000000000307.jpg",
+      "sha256": "c839076b4fa14020f97c8a5909c84a1e85c912ca262a91c8c4648ebe27caf61f",
+      "bytes": 96160
+    },
+    "coco000000000151.jpg": {
+      "source": "https://github.com/ultralytics/assets/releases/download/v0.0.0/coco128.zip",
+      "member": "coco128/images/train2017/000000000151.jpg",
+      "sha256": "b92d7d249e574fbd4ad8ba2fbc2c1879ca281b779f1276ac3daa0304b80039e4",
+      "bytes": 107259
+    },
+    "coco000000000110.jpg": {
+      "source": "https://github.com/ultralytics/assets/releases/download/v0.0.0/coco128.zip",
+      "member": "coco128/images/train2017/000000000110.jpg",
+      "sha256": "39d967c7856965853e90b9283db4a6895a034eb17fe0c84581d17af4a59edcf2",
+      "bytes": 56509
+    },
+    "coco000000000560.jpg": {
+      "source": "https://github.com/ultralytics/assets/releases/download/v0.0.0/coco128.zip",
+      "member": "coco128/images/train2017/000000000560.jpg",
+      "sha256": "96801af258ded041845af111c4535dcb12a512cf22f6fd9854e5723920532d60",
+      "bytes": 42878
+    },
+    "coco000000000260.jpg": {
+      "source": "https://github.com/ultralytics/assets/releases/download/v0.0.0/coco128.zip",
+      "member": "coco128/images/train2017/000000000260.jpg",
+      "sha256": "f70992bbd14794773e27801c4cf4ba34ca4f453eb2efded62c2a558c40e3885b",
+      "bytes": 26982
+    },
+    "coco000000000009.jpg": {
+      "source": "https://github.com/ultralytics/assets/releases/download/v0.0.0/coco128.zip",
+      "member": "coco128/images/train2017/000000000009.jpg",
+      "sha256": "3b0bb6bebad60a3329f1e3484434872e86998aeb7750d779b308e4a064868c2c",
+      "bytes": 62835
+    },
+    "coco000000000086.jpg": {
+      "source": "https://github.com/ultralytics/assets/releases/download/v0.0.0/coco128.zip",
+      "member": "coco128/images/train2017/000000000086.jpg",
+      "sha256": "f58a99916783cdf4a7619286dc46adedd4ea1143bcc2cd773c6504aa5280915a",
+      "bytes": 87717
+    },
+    "coco000000000165.jpg": {
+      "source": "https://github.com/ultralytics/assets/releases/download/v0.0.0/coco128.zip",
+      "member": "coco128/images/train2017/000000000165.jpg",
+      "sha256": "2d3d9e0b4b165c0f783b97cd963097b13effa1af851c9576617fb7c910d63cd8",
+      "bytes": 64301
+    },
+    "coco000000000382.jpg": {
+      "source": "https://github.com/ultralytics/assets/releases/download/v0.0.0/coco128.zip",
+      "member": "coco128/images/train2017/000000000382.jpg",
+      "sha256": "9455b8af106ef7a2a3b6c4c7ceeda5f4e81b5e364a2aef8e6cf68abc1396f8bd",
+      "bytes": 33310
+    },
+    "coco000000000133.jpg": {
+      "source": "https://github.com/ultralytics/assets/releases/download/v0.0.0/coco128.zip",
+      "member": "coco128/images/train2017/000000000133.jpg",
+      "sha256": "d8d2ea5e94c83ba74bef9dc52d58e0526e08d03355381683fb953db71ec529e6",
+      "bytes": 40373
+    },
+    "coco000000000321.jpg": {
+      "source": "https://github.com/ultralytics/assets/releases/download/v0.0.0/coco128.zip",
+      "member": "coco128/images/train2017/000000000321.jpg",
+      "sha256": "60f0acad099ad5cf55f44968cea66e125e0beb7eb20a1d78888ee9db34e28cd8",
+      "bytes": 45914
+    },
+    "coco000000000400.jpg": {
+      "source": "https://github.com/ultralytics/assets/releases/download/v0.0.0/coco128.zip",
+      "member": "coco128/images/train2017/000000000400.jpg",
+      "sha256": "7b78338d4c7a30f7c38eb3bf11a7623a195e10926359adfd7281d6ce99e42dcb",
+      "bytes": 63846
+    },
+    "coco000000000208.jpg": {
+      "source": "https://github.com/ultralytics/assets/releases/download/v0.0.0/coco128.zip",
+      "member": "coco128/images/train2017/000000000208.jpg",
+      "sha256": "5ef004c8572c1d3a5e7c92ed16edc47529892a5306c7f70216e332a6cd65ad2d",
+      "bytes": 41630
+    },
+    "coco000000000387.jpg": {
+      "source": "https://github.com/ultralytics/assets/releases/download/v0.0.0/coco128.zip",
+      "member": "coco128/images/train2017/000000000387.jpg",
+      "sha256": "079af237aafcdddfe5a528ef5e40f38ca449fce9ad5a49fbdaaeef068fac7c76",
+      "bytes": 53134
+    },
+    "coco000000000490.jpg": {
+      "source": "https://github.com/ultralytics/assets/releases/download/v0.0.0/coco128.zip",
+      "member": "coco128/images/train2017/000000000490.jpg",
+      "sha256": "1274c3c4010d45ddd84faf1c56f7c997c0c2533e4f25c6ccea25e8233e5684e5",
+      "bytes": 26278
+    },
+    "coco000000000049.jpg": {
+      "source": "https://github.com/ultralytics/assets/releases/download/v0.0.0/coco128.zip",
+      "member": "coco128/images/train2017/000000000049.jpg",
+      "sha256": "bc1482d2cba6e4db671c8eedbc7c8d86e0a31c927587a24297647f530349fe7b",
+      "bytes": 40899
+    },
+    "coco000000000149.jpg": {
+      "source": "https://github.com/ultralytics/assets/releases/download/v0.0.0/coco128.zip",
+      "member": "coco128/images/train2017/000000000149.jpg",
+      "sha256": "73a20e38429ba6c78f62a90df787360c4a9ae3d331b002b509a8ee15179788a4",
+      "bytes": 29226
+    },
+    "coco000000000061.jpg": {
+      "source": "https://github.com/ultralytics/assets/releases/download/v0.0.0/coco128.zip",
+      "member": "coco128/images/train2017/000000000061.jpg",
+      "sha256": "a1a9ac88e4c5cfbdd1cd425a6d262b1e78bf32676a9c17a2861ca6a23a731955",
+      "bytes": 135566
+    },
+    "coco000000000136.jpg": {
+      "source": "https://github.com/ultralytics/assets/releases/download/v0.0.0/coco128.zip",
+      "member": "coco128/images/train2017/000000000136.jpg",
+      "sha256": "e20c569a1e6174fd845a434a3fe3d50fb4f8a0e275fb348cc2c9b42a11600ccc",
+      "bytes": 31511
+    },
+    "coco000000000201.jpg": {
+      "source": "https://github.com/ultralytics/assets/releases/download/v0.0.0/coco128.zip",
+      "member": "coco128/images/train2017/000000000201.jpg",
+      "sha256": "4efc7ce561df432c2d3d9a60040f62b1b8389b36b401269bfc6802065dfcb9d8",
+      "bytes": 52369
+    },
+    "coco000000000436.jpg": {
+      "source": "https://github.com/ultralytics/assets/releases/download/v0.0.0/coco128.zip",
+      "member": "coco128/images/train2017/000000000436.jpg",
+      "sha256": "84b778ac377b3fb394edee6f6c3e688c600a3ac440247b64942b1e6e116ff9a3",
+      "bytes": 32998
+    }
+  },
+  "calibration_source": {
+    "suite": "Ultralytics COCO128 subset of COCO train2017",
+    "source": "https://github.com/ultralytics/assets/releases/download/v0.0.0/coco128.zip",
+    "separate_image_ids": true,
+    "model_training_overlap": "COCO train2017; do not treat these four scenes as a held-out COCO benchmark",
+    "represented_label_count": 68
+  }
+}
