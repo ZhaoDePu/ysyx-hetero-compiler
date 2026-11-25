@@ -1,0 +1,21 @@
+size,scene,confidence,fp32_count,int8_count,spatial_matches,classes_equal,class_agreement,mean_iou,unmatched_fp32,unmatched_int8,fp32_classes,int8_classes
+320,bus.jpg,0.25,5,6,5,5,1.0,0.9489357783387682,0,1,person×4 / bus×1,person×4 / bus×2
+320,coco000000000241.jpg,0.25,8,10,8,8,1.0,0.9546464823766239,0,2,person×3 / bottle×1 / cup×2 / couch×1 / remote×1,person×4 / bottle×1 / cup×2 / couch×1 / potted plant×1 / remote×1
+320,coco000000000384.jpg,0.25,2,3,2,1,0.5,0.9737090448431226,0,1,suitcase×1 / couch×1,suitcase×1 / bed×1 / couch×1
+320,zidane.jpg,0.25,2,3,2,2,1.0,0.9532806748676229,0,1,person×2,person×3
+320,ALL,0.25,17,22,17,16,0.9411764705882353,0.9550488347134307,0,5,,
+320,bus.jpg,0.4,4,5,4,4,1.0,0.9568077806968186,0,1,person×3 / bus×1,person×4 / bus×1
+320,coco000000000241.jpg,0.4,6,8,6,6,1.0,0.9643255777889513,0,2,person×3 / bottle×1 / cup×1 / couch×1,person×4 / bottle×1 / cup×2 / couch×1
+320,coco000000000384.jpg,0.4,2,1,1,1,0.5,0.9617576649066036,1,0,suitcase×1 / couch×1,suitcase×1
+320,zidane.jpg,0.4,2,2,2,2,1.0,0.9532806748676229,0,0,person×2,person×2
+320,ALL,0.4,14,16,13,13,0.9285714285714286,0.9601156618586794,1,3,,
+128,bus.jpg,0.25,4,5,4,4,1.0,0.950938705539484,0,1,person×4,person×4 / bus×1
+128,coco000000000241.jpg,0.25,2,2,2,2,1.0,0.9302156199148508,0,0,person×2,person×2
+128,coco000000000384.jpg,0.25,0,0,0,0,,,0,0,,
+128,zidane.jpg,0.25,2,2,2,2,1.0,0.9512770180383727,0,0,person×2,person×2
+128,ALL,0.25,8,9,8,8,1.0,0.9458425122580479,0,1,,
+128,bus.jpg,0.4,2,3,2,2,1.0,0.9517993328634484,0,1,person×2,person×3
+128,coco000000000241.jpg,0.4,2,2,2,2,1.0,0.9302156199148508,0,0,person×2,person×2
+128,coco000000000384.jpg,0.4,0,0,0,0,,,0,0,,
+128,zidane.jpg,0.4,1,2,1,1,1.0,0.9481834193436703,0,1,person×1,person×2
+128,ALL,0.4,5,7,5,5,1.0,0.9424426649800537,0,2,,
