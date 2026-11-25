@@ -54,6 +54,7 @@ typedef struct {
 } ysyx_stats_t;
 
 typedef struct ysyx_program ysyx_program_t;
+typedef struct ysyx_kv_session ysyx_kv_session_t;
 
 /* The caller owns and retains the immutable byte image through program close. */
 int ysyx_program_open(const void *, size_t, ysyx_program_t **, const char **error);
@@ -66,6 +67,18 @@ int ysyx_find_symbol(const ysyx_program_t *, const char *, uint32_t required_fla
 int ysyx_execute(const ysyx_program_t *, const ysyx_hal_t *, const ysyx_input_t *, size_t,
                  ysyx_stats_t *, FILE *trace, const char **error);
 int ysyx_read_output(const ysyx_program_t *, const ysyx_hal_t *, const char *, void *, size_t);
+
+/* The program, its byte image and the exclusive HAL all outlive the session. */
+uint32_t ysyx_kv_step_count(const ysyx_program_t *);
+int ysyx_kv_begin(const ysyx_program_t *, const ysyx_hal_t *, const ysyx_input_t *, size_t,
+                  ysyx_kv_session_t **, const char **error);
+int ysyx_kv_step(ysyx_kv_session_t *, uint32_t step, ysyx_stats_t *, FILE *trace,
+                 const char **error);
+int ysyx_kv_write_input(ysyx_kv_session_t *, const ysyx_input_t *, const char **error);
+int ysyx_kv_read_output(const ysyx_kv_session_t *, const char *, void *, size_t);
+int ysyx_kv_feedback(ysyx_kv_session_t *, const char *output, const char *input,
+                     const char **error);
+void ysyx_kv_close(ysyx_kv_session_t *);
 
 int ysyx_hal_linux_open(ysyx_hal_t *, const char *control_uio, const char *dma_uio, const char **error);
 int ysyx_hal_verilator_open(ysyx_hal_t *, const char **error);

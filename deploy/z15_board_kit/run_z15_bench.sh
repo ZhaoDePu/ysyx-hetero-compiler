@@ -16,6 +16,7 @@ for name do
     mkdir "$work/$name"
     (
         set -- "$case_dir/program.yhb" --backend "$backend" --host-timing --dump-stats
+        if [ -f "$case_dir/kv.tsv" ]; then set -- "$@" --kv-script "$case_dir/kv.tsv"; fi
         if [ -n "${YSYX_CONTROL_UIO:-}" ]; then set -- "$@" --uio-control "$YSYX_CONTROL_UIO"; fi
         if [ -n "${YSYX_DMA_UIO:-}" ]; then set -- "$@" --uio-dma "$YSYX_DMA_UIO"; fi
         tab=$(printf '\t')

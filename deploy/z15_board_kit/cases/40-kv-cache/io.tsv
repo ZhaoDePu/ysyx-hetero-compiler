@@ -1,0 +1,13 @@
+input	prompt	input-0.bin
+output	prefill_logits	output-0.bin
+output	prefill_tokens	output-1.bin
+output	decode_1_logits	output-2.bin
+output	decode_1_token	output-3.bin
+output	decode_2_logits	output-4.bin
+output	decode_2_token	output-5.bin
+output	decode_3_logits	output-6.bin
+output	decode_3_token	output-7.bin
+output	decode_4_logits	output-8.bin
+output	decode_4_token	output-9.bin
+output	k_cache	output-10.bin
+output	v_cache	output-11.bin

@@ -92,6 +92,48 @@ and tensor operand base ownership, and submission order before execution.
 Frozen RTL validates native operand extents. Execution also drains
 the final outstanding operations before exposing results.
 
+## Optional KV checkpoints
+
+Target 1 programs can additionally encode `KV_YIELD=5` in COMMANDS.
+The operand is the zero-based step number. A checkpoint follows each drained
+step, including prefill and the final decode. It requires explicit compute
+and DMA fences. The loader checks increasing step IDs and rejects empty or
+undrained checkpoints. The original seven sections, CRC32 coverage and
+record strides are unchanged. A C3-only loader rejects the new opcode.
+The current runtime still reads and executes existing C3 streams.
+
+One-shot execution advances across checkpoints. A session loads the initial
+DDR image once and owns one exclusive HAL for the entire invocation.
+Each step consumes its preplanned commands and leaves SRAM and DDR intact.
+The compiler allocates persistent K/V and weights separately from transient
+scratch. The runtime writes only designated input symbols. An input update
+becomes visible to scratch through the next slice's scheduled DMA.
+Output reads refer to symbols already materialized by a drained step.
+DDR alias bindings can pass generated tokens to the next slice without
+opening or reinitializing either backend.
+
+`ysyx_kv_begin`, `ysyx_kv_step`, `ysyx_kv_write_input`, `ysyx_kv_read_output`,
+`ysyx_kv_feedback` and `ysyx_kv_close` expose the session API. The caller keeps
+the program image and exclusive HAL alive until close. The step count is
+fixed in the program. A HAL failure while dispatching or modifying the
+session invalidates it.
+
+The CLI accepts a tab-separated `--kv-script` with the following rows.
+`step N` runs the next step. `input SYMBOL PATH` writes a file-sized input,
+`output SYMBOL PATH` reads an already produced output, and
+`feedback OUT_SYMBOL IN_SYMBOL` copies an actual output of the same dtype
+and byte size to an input. Step IDs start at zero. Explicitly run each step
+in order; initial required inputs may be supplied with normal `--input`.
+Zero host override commands are needed for autonomous feedback.
+
+To reproduce a two-step hardware fixture with one-time resident weight
+loading, device feedback, host feedback and a host override:
+
+```sh
+nice -n 10 python3 -B -m tools.verify_c4a_session \
+  --out /dev/shm/ysyx_compiler_c4a/runtime/session-proof
+```
+
 ## Build and execute
 
 From the repository root, build the native Linux executable with

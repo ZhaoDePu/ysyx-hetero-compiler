@@ -1,5 +1,6 @@
 """Lower a bounded static causal decoder to persistent KV storage and YHB commands."""
 
+import argparse
 import json
 import math
 from pathlib import Path
@@ -379,3 +380,21 @@ def compile_kv_bundle(model, destination, *, mode="cached", checkpoints=True):
         result=_Schedule(model,mode,checkpoints).bundle(staging)
         staging.rename(dest)
     return result
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--graph", required=True, type=Path, help="Static causal KV model JSON")
+    parser.add_argument("--out", required=True, type=Path, help="New bundle directory")
+    parser.add_argument("--mode", choices=("cached", "recompute"), default="cached")
+    args = parser.parse_args()
+    try:
+        model = json.loads(args.graph.read_text(encoding="utf-8"))
+        result = compile_kv_bundle(model, args.out, mode=args.mode)
+    except (ValueError, OSError) as exc:
+        parser.exit(2, f"compiler error: {exc}\n")
+    print(f"{result['profile']['name']}: {1 + result['estimates']['decode_steps']} checkpoints, bundle {args.out}")
+
+
+if __name__ == "__main__":
+    main()

@@ -3,6 +3,7 @@
 #include "ysyx_rt.h"
 #include "z15_regs.h"
 
+#include <errno.h>
 #include <inttypes.h>
 #include <stdlib.h>
 #include <string.h>
@@ -65,12 +66,15 @@ static void usage(FILE *f)
 {
     fputs("usage: ysyx_run PROGRAM.yhb [--backend linux|verilator]\n"
           "       [--input tensor=file.bin] [--output tensor=file.bin] [--dump-stats] [--host-timing]\n"
-          "       [--uio-control /dev/uioN|name] [--uio-dma /dev/uioN|name] [--inspect]\n", f);
+          "       [--uio-control /dev/uioN|name] [--uio-dma /dev/uioN|name] [--inspect]\n"
+          "       [--kv-script TSV_FILE]\n", f);
 }
 
 static void inspect(const ysyx_program_t *program, size_t size)
 {
     printf("YHB1 target=%" PRIu32 " bytes=%zu\n", ysyx_program_target(program), size);
+    if (ysyx_kv_step_count(program))
+        printf("KV_STEPS count=%" PRIu32 "\n", ysyx_kv_step_count(program));
     for (size_t i = 0; i < ysyx_program_symbol_count(program); ++i) {
         ysyx_symbol_t s;
         if (ysyx_program_symbol(program, i, &s))
@@ -92,6 +96,125 @@ static int monotonic_ns(uint64_t *result)
     return 0;
 }
 
+static void add_stats(ysyx_stats_t *total, const ysyx_stats_t *step)
+{
+    total->wall_ticks += step->wall_ticks;
+    total->npu_ticks += step->npu_ticks;
+    total->gpu_ticks += step->gpu_ticks;
+    total->npu_gpu_overlap_ticks += step->npu_gpu_overlap_ticks;
+    total->dma_operations += step->dma_operations;
+    total->dma_bytes += step->dma_bytes;
+    total->has_observations = step->has_observations;
+    total->observed.axi_transactions += step->observed.axi_transactions;
+    total->observed.dma_busy_ticks += step->observed.dma_busy_ticks;
+    total->observed.dma_compute_overlap_ticks += step->observed.dma_compute_overlap_ticks;
+    total->observed.triple_overlap_ticks += step->observed.triple_overlap_ticks;
+    total->observed.gpu_clock_busy_ticks += step->observed.gpu_clock_busy_ticks;
+    total->observed.dma_gpu_overlap_ticks += step->observed.dma_gpu_overlap_ticks;
+    total->observed.dma_tensor_overlap_ticks += step->observed.dma_tensor_overlap_ticks;
+}
+
+static int scripted_tensor(ysyx_kv_session_t *session, const ysyx_program_t *p, const char *name,
+                           const char *file, int input, const char **error)
+{
+    ysyx_symbol_t symbol;
+    *error = "KV script tensor symbol or file is invalid";
+    if (ysyx_find_symbol(p, name, input ? YSYX_INPUT : YSYX_OUTPUT, &symbol))
+        return -1;
+    if (input) {
+        size_t size;
+        uint8_t *data = read_file(file, symbol.bytes, &size);
+        if (!data)
+            return -1;
+        const ysyx_input_t binding = {name, data, size};
+        int rc = ysyx_kv_write_input(session, &binding, error);
+        free(data);
+        return rc;
+    }
+    uint8_t *data = malloc(symbol.bytes);
+    if (!data)
+        return -1;
+    int rc = ysyx_kv_read_output(session, name, data, symbol.bytes) ||
+             write_file(file, data, symbol.bytes);
+    free(data);
+    return rc ? -1 : 0;
+}
+
+static int run_kv_script(const char *path, const ysyx_program_t *p, const ysyx_hal_t *hal,
+                         const ysyx_input_t *inputs, size_t count, ysyx_stats_t *stats,
+                         FILE *trace, const char **error)
+{
+    FILE *script = fopen(path, "r");
+    *error = "cannot open KV script";
+    if (!script)
+        return -1;
+    ysyx_kv_session_t *session = NULL;
+    char *line = NULL;
+    size_t capacity = 0, line_index = 0;
+    uint32_t next = 0;
+    int rc = -1;
+    if (ysyx_kv_begin(p, hal, inputs, count, &session, error))
+        goto done;
+    memset(stats, 0, sizeof(*stats));
+    ssize_t length;
+    while ((length = getline(&line, &capacity, script)) >= 0) {
+        ++line_index;
+        *error = "malformed KV script line (expected tab-separated fields)";
+        if (memchr(line, 0, (size_t)length))
+            goto done;
+        while (length > 0 && (line[length - 1] == '\n' || line[length - 1] == '\r'))
+            line[--length] = 0;
+        if (!length || line[0] == '#')
+            continue;
+        char *arg = strchr(line, '\t');
+        if (!arg)
+            goto done;
+        *arg++ = 0;
+        char *value = strchr(arg, '\t');
+        if (value)
+            *value++ = 0;
+        if (!*arg || (value && (!*value || strchr(value, '\t'))))
+            goto done;
+
+        if (!strcmp(line, "step") && !value) {
+            if (strspn(arg, "0123456789") != strlen(arg))
+                goto done;
+            errno = 0;
+            unsigned long index = strtoul(arg, NULL, 10);
+            if (errno || index != next || next >= ysyx_kv_step_count(p))
+                goto done;
+            ysyx_stats_t part;
+            if (ysyx_kv_step(session, next++, &part, trace, error))
+                goto done;
+            add_stats(stats, &part);
+            if (trace)
+                fprintf(trace, "KV_STEP step=%lu npu_domain_wall_ticks=%" PRIu64
+                        " dma_bytes=%" PRIu64 "\n", index, part.wall_ticks, part.dma_bytes);
+        } else if (value && !strcmp(line, "feedback")) {
+            if (ysyx_kv_feedback(session, arg, value, error))
+                goto done;
+        } else if (value && (!strcmp(line, "input") || !strcmp(line, "output"))) {
+            if (scripted_tensor(session, p, arg, value, !strcmp(line, "input"), error))
+                goto done;
+        } else {
+            goto done;
+        }
+    }
+    *error = "KV script must execute all steps in order";
+    if (!ferror(script) && next == ysyx_kv_step_count(p))
+        rc = 0;
+done:
+    if (rc && line_index)
+        fprintf(stderr, "KV script %s line %zu\n", path, line_index);
+    free(line);
+    ysyx_kv_close(session);
+    if (fclose(script) && !rc) {
+        *error = "could not close KV script";
+        rc = -1;
+    }
+    return rc;
+}
+
 int ysyx_run_cli(int argc, char **argv, int simulation_available)
 {
     if (argc == 2 && !strcmp(argv[1], "--help")) {
@@ -104,7 +227,7 @@ int ysyx_run_cli(int argc, char **argv, int simulation_available)
     }
     const char *error = "invalid argument list";
     int status = 2, dump = 0, show = 0, timing = 0;
-    const char *control = NULL, *dma = NULL;
+    const char *control = NULL, *dma = NULL, *kv_script = NULL;
     const char *backend = simulation_available ? "verilator" : "linux";
     uint8_t *data = NULL;
     ysyx_program_t *program = NULL;
@@ -143,6 +266,8 @@ int ysyx_run_cli(int argc, char **argv, int simulation_available)
                 control = value;
             } else if (!strcmp(opt, "--uio-dma")) {
                 dma = value;
+            } else if (!strcmp(opt, "--kv-script")) {
+                kv_script = value;
             } else {
                 goto done;
             }
@@ -205,7 +330,9 @@ int ysyx_run_cli(int argc, char **argv, int simulation_available)
         error = "cannot read monotonic clock before execution";
         goto done;
     }
-    if (ysyx_execute(program, &hal, values, ninputs, &stats, dump ? stdout : NULL, &error))
+    FILE *trace = dump ? stdout : NULL;
+    if ((kv_script ? run_kv_script(kv_script, program, &hal, values, ninputs, &stats, trace, &error) :
+                     ysyx_execute(program, &hal, values, ninputs, &stats, trace, &error)))
         goto done;
     for (size_t i = 0; i < noutputs; ++i) {
         ysyx_symbol_t symbol;

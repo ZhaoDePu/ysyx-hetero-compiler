@@ -43,3 +43,26 @@ values are printed separately. The source build uses
 The same script accepts `YSYX_BACKEND=verilator` with the compiler repository's
 C99/Verilator executable. Reports identify the backend. Verilator host
 throughput and simulated NPU ticks describe the simulation.
+
+## C4-A KV sessions and streaming
+
+`40-kv-cache` contains a 32-token prefill split into four tiles and four
+autoregressive decode steps. Its `kv.tsv` has five ordered checkpoint
+commands. The runner keeps the same HAL and SRAM allocation through each
+command and installs the initial weight image once. Existing C3 cases
+use the same one-shot path as before.
+
+```sh
+YSYX_RUN=./build-aarch64/ysyx_run ./run_z15_bench.sh 40-kv-cache
+```
+
+For integration code, use the `ysyx_kv_begin`, `ysyx_kv_step`,
+`ysyx_kv_read_output` and `ysyx_kv_close` API, or run `ysyx_run --kv-script`
+with explicit `input`, `output` and `feedback` checkpoint commands.
+The included fixture feeds back actual generated tokens automatically.
+
+`41-stream-vision` runs 16 Conv/residual tiles and their GPU tails.
+`42-stream-llm` runs 24 causal attention tiles with quantized GPU Softmax.
+Both replay the compiled bank-aware YHB through the regular C99 dispatch
+path. The optional instruction preload used by the MMIO ablation runner is
+specific to that replay tool.

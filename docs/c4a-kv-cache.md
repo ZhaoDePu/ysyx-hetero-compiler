@@ -37,6 +37,15 @@ share page 0 and wait on the frozen Half-0 ownership fence. The transient bank
 alternation in this workload is for lifetime reuse; the streaming benchmark
 measures concurrent physical half use.
 
+Compile a checkpointed YHB without running the simulator:
+
+```sh
+python3 -m hetero_compiler.kv_schedule --graph examples/c4a_kv/causal_kv32.json --out kv-bundle
+```
+
+The frozen lowering supports width four, prefill lengths 32 and 64, tiles of
+four or eight positions, and four through eight decode steps.
+
 Reproduce the byte-exact MMIO comparison with:
 
 ```sh

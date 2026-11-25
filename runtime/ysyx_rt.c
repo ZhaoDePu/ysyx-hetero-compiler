@@ -8,7 +8,7 @@
 enum { HEADER = 32, NSECTION = 7, DIRECTORY = 16, POLL_LIMIT = 1000000 };
 enum { STRINGS, SYMBOLS, DATA, INITIAL, STAGES, MOVES, COMMANDS };
 enum { GPU = 1, NPU = 2, VPU = 3 };
-enum { LAUNCH = 1, WAIT_STAGE = 2, DMA = 3, WAIT_DMA = 4 };
+enum { LAUNCH = 1, WAIT_STAGE = 2, DMA = 3, WAIT_DMA = 4, KV_YIELD = 5 };
 enum { DMA_LOAD = 1, DMA_STORE = 2 };
 
 typedef struct {
@@ -17,7 +17,7 @@ typedef struct {
 } section_t;
 
 struct ysyx_program {
-    uint32_t target, capacity;
+    uint32_t target, capacity, kv_steps;
     section_t sections[NSECTION];
 };
 
@@ -316,7 +316,7 @@ static int valid_stage(const ysyx_program_t *p, const uint8_t *s)
     return 1;
 }
 
-static int validate_schedule(const ysyx_program_t *p, const char **error)
+static int validate_schedule(ysyx_program_t *p, const char **error)
 {
     uint32_t active[2] = {UINT32_MAX, UINT32_MAX}, active_dma = UINT32_MAX;
     uint32_t nstage = p->sections[STAGES].count;
@@ -324,16 +324,29 @@ static int validate_schedule(const ysyx_program_t *p, const char **error)
     if (!launched)
         return fail(error, "out of memory while validating schedule");
     const char *wrong = NULL;
+    int work_since_yield = 0;
+    uint32_t last_op = 0;
     for (uint32_t i = 0; i < p->sections[COMMANDS].count; ++i) {
         const uint8_t *c = record(p, COMMANDS, i);
         uint32_t op = get(c, 0), index = get(c, 1);
-        if (get(c, 2) || get(c, 3) || op < LAUNCH || op > WAIT_DMA ||
+        if (get(c, 2) || get(c, 3) || op < LAUNCH || op > KV_YIELD ||
             ((op == LAUNCH || op == WAIT_STAGE) && index >= nstage) ||
             (op == DMA && index >= p->sections[MOVES].count) || (op == WAIT_DMA && index)) {
             wrong = "malformed YHB scheduling instruction";
             break;
         }
-        if (op == WAIT_DMA) {
+        last_op = op;
+        if (op == LAUNCH || op == DMA)
+            work_since_yield = 1;
+        if (op == KV_YIELD) {
+            if (p->target != YSYX_TARGET_Z15_BALANCED || index != p->kv_steps || !work_since_yield ||
+                active[0] != UINT32_MAX || active[1] != UINT32_MAX || active_dma != UINT32_MAX) {
+                wrong = "invalid or undrained YHB KV checkpoint";
+                break;
+            }
+            ++p->kv_steps;
+            work_since_yield = 0;
+        } else if (op == WAIT_DMA) {
             active_dma = UINT32_MAX;
         } else if (op == DMA) {
             const uint8_t *move = record(p, MOVES, index);
@@ -370,6 +383,8 @@ static int validate_schedule(const ysyx_program_t *p, const char **error)
         if (wrong)
             break;
     }
+    if (!wrong && p->kv_steps && last_op != KV_YIELD)
+        wrong = "YHB KV schedule must end at a checkpoint";
     for (uint32_t i = 0; !wrong && i < nstage; ++i)
         if (!launched[i])
             wrong = "YHB stage has no launch";
@@ -678,18 +693,17 @@ static int sample_telemetry(const run_t *run, ysyx_stats_t *stats)
            read_counter(run, Z15_OVERLAP_CYCLES, &stats->npu_gpu_overlap_ticks);
 }
 
-int ysyx_execute(const ysyx_program_t *p, const ysyx_hal_t *hal, const ysyx_input_t *inputs, size_t count,
-                 ysyx_stats_t *stats, FILE *trace, const char **error)
+static int attach(const ysyx_program_t *p, const ysyx_hal_t *hal, const ysyx_input_t *inputs,
+                  size_t count, const char **error)
 {
     if (!p || p->target != YSYX_TARGET_Z15_BALANCED || p->capacity != Z15_SCRATCH_SIZE)
         return fail(error, "this runtime executes only the frozen Z15 Balanced target");
     if (!hal || !hal->mmio_read32 || !hal->mmio_write32 || !hal->ddr_write || !hal->ddr_read ||
-        !hal->cache_sync || (!inputs && count) || !stats)
+        !hal->cache_sync || (!inputs && count))
         return fail(error, "incomplete runtime HAL");
     if (validate_inputs(p, inputs, count, error))
         return -1;
-    memset(stats, 0, sizeof(*stats));
-    run_t run = {p, hal, trace, {UINT32_MAX, UINT32_MAX}, UINT32_MAX, {0, 0}, 0, stats};
+    const run_t run = {.program = p, .hal = hal};
     uint32_t magic, version;
     if (read32(&run, Z15_MAGIC, &magic) || magic != Z15_MAGIC_VALUE ||
         read32(&run, Z15_VERSION, &version) || version != Z15_VERSION_VALUE ||
@@ -697,13 +711,21 @@ int ysyx_execute(const ysyx_program_t *p, const ysyx_hal_t *hal, const ysyx_inpu
         return fail(error, "Z15 Balanced ABI absent, busy or reporting a sticky fault");
     if (write_initial(p, hal, inputs, count))
         return fail(error, "DDR initial image or runtime input write failed");
+    return 0;
+}
+
+static int execute_range(const ysyx_program_t *p, const ysyx_hal_t *hal, uint32_t first,
+                         uint32_t end, ysyx_stats_t *stats, FILE *trace, const char **error)
+{
+    memset(stats, 0, sizeof(*stats));
+    run_t run = {p, hal, trace, {UINT32_MAX, UINT32_MAX}, UINT32_MAX, {0, 0}, 0, stats};
     ysyx_stats_t begin = {0};
     if (sample_telemetry(&run, &begin))
         return fail(error, "hardware counter read failed");
     if (hal->observe)
         hal->observe(hal->ctx, &begin.observed);
 
-    for (uint32_t i = 0; i < p->sections[COMMANDS].count; ++i) {
+    for (uint32_t i = first; i < end; ++i) {
         const uint8_t *command = record(p, COMMANDS, i);
         uint32_t index = get(command, 1);
         switch (get(command, 0)) {
@@ -722,6 +744,9 @@ int ysyx_execute(const ysyx_program_t *p, const ysyx_hal_t *hal, const ysyx_inpu
         case WAIT_DMA:
             if (finish_dma(&run))
                 return fail(error, "DMA fence timed out or hardware reported a fault");
+            break;
+        case KV_YIELD:
+            /* The loader requires explicit fences before every checkpoint. */
             break;
         default:
             return fail(error, "invalid YHB opcode");
@@ -750,6 +775,16 @@ int ysyx_execute(const ysyx_program_t *p, const ysyx_hal_t *hal, const ysyx_inpu
     return 0;
 }
 
+int ysyx_execute(const ysyx_program_t *p, const ysyx_hal_t *hal, const ysyx_input_t *inputs, size_t count,
+                 ysyx_stats_t *stats, FILE *trace, const char **error)
+{
+    if (!stats)
+        return fail(error, "missing runtime statistics");
+    if (attach(p, hal, inputs, count, error))
+        return -1;
+    return execute_range(p, hal, 0, p->sections[COMMANDS].count, stats, trace, error);
+}
+
 int ysyx_read_output(const ysyx_program_t *p, const ysyx_hal_t *hal, const char *name, void *data, size_t size)
 {
     ysyx_symbol_t symbol;
@@ -757,4 +792,130 @@ int ysyx_read_output(const ysyx_program_t *p, const ysyx_hal_t *hal, const char 
         return -1;
     return hal->cache_sync(hal->ctx, symbol.ddr_offset, size, YSYX_SYNC_FOR_HOST) ||
            hal->ddr_read(hal->ctx, symbol.ddr_offset, data, size);
+}
+
+struct ysyx_kv_session {
+    const ysyx_program_t *program;
+    const ysyx_hal_t *hal;
+    uint32_t cursor, next_step;
+    int failed;
+};
+
+uint32_t ysyx_kv_step_count(const ysyx_program_t *p)
+{
+    return p ? p->kv_steps : 0;
+}
+
+int ysyx_kv_begin(const ysyx_program_t *p, const ysyx_hal_t *hal, const ysyx_input_t *inputs,
+                  size_t count, ysyx_kv_session_t **out, const char **error)
+{
+    if (!out)
+        return fail(error, "missing KV session handle");
+    *out = NULL;
+    if (!ysyx_kv_step_count(p))
+        return fail(error, "program has no KV checkpoints");
+    ysyx_kv_session_t *session = calloc(1, sizeof(*session));
+    if (!session)
+        return fail(error, "out of memory opening KV session");
+    if (attach(p, hal, inputs, count, error)) {
+        free(session);
+        return -1;
+    }
+    session->program = p;
+    session->hal = hal;
+    *out = session;
+    return 0;
+}
+
+static int kv_appendable(const ysyx_kv_session_t *session)
+{
+    return session && !session->failed && session->next_step < session->program->kv_steps;
+}
+
+int ysyx_kv_step(ysyx_kv_session_t *s, uint32_t step, ysyx_stats_t *stats, FILE *trace,
+                 const char **error)
+{
+    if (!stats || !kv_appendable(s) || s->next_step != step)
+        return fail(error, "unexpected KV step or closed/failed KV session");
+    const ysyx_program_t *p = s->program;
+    uint32_t end = s->cursor;
+    while (end < p->sections[COMMANDS].count && get(record(p, COMMANDS, end), 0) != KV_YIELD)
+        ++end;
+    if (end == p->sections[COMMANDS].count || execute_range(p, s->hal, s->cursor, end, stats, trace, error)) {
+        s->failed = 1;
+        return end == p->sections[COMMANDS].count ? fail(error, "missing KV checkpoint") : -1;
+    }
+    s->cursor = end + 1u;
+    ++s->next_step;
+    return 0;
+}
+
+int ysyx_kv_write_input(ysyx_kv_session_t *s, const ysyx_input_t *input, const char **error)
+{
+    ysyx_symbol_t symbol;
+    if (!kv_appendable(s) || !input || !input->name || !input->data ||
+        ysyx_find_symbol(s->program, input->name, YSYX_INPUT, &symbol) || symbol.bytes != input->size)
+        return fail(error, "unknown KV input or invalid input size/session");
+    if (s->hal->ddr_write(s->hal->ctx, symbol.ddr_offset, input->data, input->size)) {
+        s->failed = 1;
+        return fail(error, "KV runtime input write failed");
+    }
+    return 0;
+}
+
+int ysyx_kv_read_output(const ysyx_kv_session_t *s, const char *name, void *data, size_t size)
+{
+    ysyx_symbol_t symbol;
+    if (!s || s->failed || !s->next_step || !name || !data ||
+        ysyx_find_symbol(s->program, name, YSYX_OUTPUT, &symbol) || size != symbol.bytes)
+        return -1;
+
+    /* Commands before the cursor have drained. A tensor can span several stores. */
+    uint64_t covered = symbol.ddr_offset;
+    uint64_t end = covered + symbol.bytes;
+    while (covered < end) {
+        uint64_t next = covered;
+        for (uint32_t i = 0; i < s->cursor; ++i) {
+            const uint8_t *command = record(s->program, COMMANDS, i);
+            if (get(command, 0) != DMA)
+                continue;
+            const uint8_t *move = record(s->program, MOVES, get(command, 1));
+            uint64_t start = get(move, 1);
+            uint64_t finish = start + get(move, 3);
+            if (get(move, 0) == DMA_STORE && start <= covered && finish > next)
+                next = finish;
+        }
+        if (next == covered)
+            return -1;
+        covered = next;
+    }
+    return s->hal->cache_sync(s->hal->ctx, symbol.ddr_offset, size, YSYX_SYNC_FOR_HOST) ||
+           s->hal->ddr_read(s->hal->ctx, symbol.ddr_offset, data, size);
+}
+
+int ysyx_kv_feedback(ysyx_kv_session_t *s, const char *output, const char *input, const char **error)
+{
+    ysyx_symbol_t src, dst;
+    if (!kv_appendable(s) || !s->next_step || !output || !input ||
+        ysyx_find_symbol(s->program, output, YSYX_OUTPUT, &src) ||
+        ysyx_find_symbol(s->program, input, YSYX_INPUT, &dst) ||
+        src.bytes != dst.bytes || src.dtype != dst.dtype)
+        return fail(error, "KV feedback requires matching output and input dtype and size");
+    uint8_t *data = malloc(src.bytes);
+    if (!data)
+        return fail(error, "out of memory copying KV feedback");
+    int rc;
+    if (ysyx_kv_read_output(s, output, data, src.bytes))
+        rc = fail(error, "KV feedback read failed");
+    else {
+        const ysyx_input_t binding = {input, data, src.bytes};
+        rc = ysyx_kv_write_input(s, &binding, error);
+    }
+    free(data);
+    return rc;
+}
+
+void ysyx_kv_close(ysyx_kv_session_t *s)
+{
+    free(s);
 }
