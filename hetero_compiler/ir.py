@@ -2,14 +2,15 @@
 
 import heapq
 import math
-from collections import Counter
+from . import layout
 
 DTYPES = {"int8": (1, -128, 127), "uint8": (1, 0, 255),
-          "int32": (4, -(1 << 31), (1 << 31) - 1)}
+          "int32": (4, -(1 << 31), (1 << 31) - 1),
+          "int64": (8, -(1 << 63), (1 << 63) - 1)}
 ARITIES = {"Gemm": (2, 3), "Conv": (2, 3), "Add": (2,), "Mul": (2,),
            "Relu": (1,), "Requant": (1,), "SiLU": (1,), "GELU": (1,),
            "Attention": (3,), "GatedBranch": (1,), "RMSNorm": (1,), "RowSoftmax": (1,),
-           "C2f": (2,), "SPPF": (1,), "YoloDetectHead": (2,), "YoloNMS": (1,)}
+           "C2f": (2,), "SPPF": (1,), "YoloDetectHead": (2,), "YoloNMS": (1,), **layout.ARITIES}
 ALIASES = {"MatMul": "Gemm", "BiasAdd": "Add", "ReLU": "Relu",
            "Silu": "SiLU", "Gelu": "GELU", "MatMulS32": "Gemm",
            "BiasAddS32": "Add", "RequantizeS8": "Requant", "ResidualAdd": "Add",
@@ -48,8 +49,10 @@ def _check_tensor(name, tensor):
 def _attributes(op, a, node):
     attrs = dict(a)
     allowed = {"narrowing", "dtype"} | {
-        "Gemm": {"transpose_b"}, "Conv": {"strides", "pads", "shift"}, "Add": {"broadcast"},
-        "Mul": set(), "Relu": set(), "Requant": {"multiplier", "shift", "zero_point"},
+        **layout.ATTRIBUTES,
+        "Gemm": {"transpose_b", "a_zero_point", "b_zero_point"},
+        "Conv": {"strides", "pads", "shift", "a_zero_point", "b_zero_point"}, "Add": {"broadcast"},
+        "Mul": set(), "Relu": set(), "Requant": {"multiplier", "shift", "zero_point", "input_zero_point", "divisor", "rounding"},
         "SiLU": {"mode"}, "GELU": set(), "Attention": {"causal", "exp_shift", "position"},
         "GatedBranch": {"threshold", "rounds"}, "RMSNorm": set(),
         "RowSoftmax": {"causal_mask"}, "C2f": set(), "SPPF": {"kernel"},
@@ -78,10 +81,22 @@ def _attributes(op, a, node):
     if op == "Requant":
         for k, val, lo, hi in (("multiplier", 1, -(1 << 31), (1 << 31) - 1),
                                ("shift", 0, 0, 31),
-                               ("zero_point", 0, -(1 << 31), (1 << 31) - 1)):
+                               ("zero_point", 0, -(1 << 31), (1 << 31) - 1),
+                               ("input_zero_point", 0, -(1 << 31), (1 << 31) - 1)):
             v = attrs.setdefault(k, val)
             if type(v) is not int or not lo <= v <= hi:
                 raise GraphError(f"{node}: invalid requant {k}")
+    if op == "Requant":
+        rounding = attrs.get("rounding", "floor")
+        if rounding not in ("floor", "nearest_even"):
+            raise GraphError(f"{node}: unknown requant rounding mode")
+        if "divisor" in attrs and (rounding != "nearest_even" or
+                not _ints([attrs["divisor"]], 1, 1, 1 << 31)):
+            raise GraphError(f"{node}: nearest-even requires a valid positive integer divisor")
+    if op in ("Gemm", "Conv"):
+        for k in ("a_zero_point", "b_zero_point"):
+            if k in attrs and not _ints([attrs[k]], 1, -128, 255):
+                raise GraphError(f"{node}: invalid {k}")
     if op == "Add" and attrs.get("broadcast", "none") not in ("none", "last"):
         raise GraphError(f"{node}: invalid broadcast mode")
     if op == "Conv":
@@ -103,10 +118,22 @@ def _attributes(op, a, node):
 
 def _infer(op, inputs, attrs, legacy, output_dtype):
     shape, dtype = inputs[0]["shape"], inputs[0]["dtype"]
+    if op in layout.ARITIES:
+        try:
+            return layout.infer(op, inputs, attrs, output_dtype)
+        except ValueError as exc:
+            raise GraphError(str(exc)) from exc
+    if dtype == "int64" or any(t["dtype"] == "int64" for t in inputs[1:]):
+        raise GraphError(f"{op}: int64 arithmetic is unsupported")
+    if output_dtype == "int64":
+        raise GraphError(f"{op}: int64 arithmetic output is unsupported")
     if op in ("Gemm", "Conv"):
         weight, wtype = inputs[1]["shape"], inputs[1]["dtype"]
         if not (dtype in ("int8", "uint8") and wtype == "int8"):
             raise GraphError(f"{op}: requires byte A and int8 weights")
+        for label, typ in (("a_zero_point", dtype), ("b_zero_point", wtype)):
+            if label in attrs and not DTYPES[typ][1] <= attrs[label] <= DTYPES[typ][2]:
+                raise GraphError(f"{op}: {label} does not fit {typ}")
         if op == "Gemm":
             k_axis = 1 if attrs.get("transpose_b", False) else 0
             if len(shape) != 2 or len(weight) != 2 or shape[1] != weight[k_axis]:
@@ -291,8 +318,11 @@ def normalize(graph, dialect="auto"):
         dtype = node["attrs"].get("dtype", decl.get("dtype"))
         if "data" in decl:
             raise GraphError(f"{out}: produced tensor may not carry initial data")
-        shape, dtype = _infer(node["op"], [tensors[x] for x in node["inputs"]],
-                              node["attrs"], legacy, dtype)
+        try:
+            shape, dtype = _infer(node["op"], [tensors[x] for x in node["inputs"]],
+                                  node["attrs"], legacy, dtype)
+        except GraphError as exc:
+            raise GraphError(f"{node['id']}: {exc}") from exc
         if decl and (decl["shape"] != shape or decl["dtype"] != dtype):
             raise GraphError(f"{out}: inferred shape/dtype differs from declaration")
         tensors[out] = {"shape": shape, "dtype": dtype, "kind": "value"}

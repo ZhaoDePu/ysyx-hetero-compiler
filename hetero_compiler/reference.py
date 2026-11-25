@@ -3,6 +3,8 @@
 import math
 
 from .ir import DTYPES, GraphError
+from .layout import ARITIES as LAYOUT_OPS
+from .layout_reference import evaluate_layout
 
 
 def _wrap(value, bits, signed=True):
@@ -20,10 +22,12 @@ def _narrow(x, typ, mode):
     return max(low, min(high, x))
 
 
-def _gemm(a, b, bias, adims, bdims, transpose):
+def _gemm(a, b, bias, adims, bdims, attrs):
     m, k = adims
+    transpose = attrs.get("transpose_b", False)
+    az, bz = attrs.get("a_zero_point", 0), attrs.get("b_zero_point", 0)
     n = bdims[0 if transpose else 1]
-    return [sum(a[r*k+i] * b[c*k+i if transpose else i*n+c] for i in range(k)) + bias[c]
+    return [sum((a[r*k+i] - az) * (b[c*k+i if transpose else i*n+c] - bz) for i in range(k)) + bias[c]
             for r in range(m) for c in range(n)]
 
 
@@ -33,6 +37,7 @@ def _conv(a, b, bias, adims, bdims, odims, attrs):
     _, oh, ow, _ = odims
     sy, sx = attrs["strides"]
     top, left, _, _ = attrs["pads"]
+    az, bz = attrs.get("a_zero_point", 0), attrs.get("b_zero_point", 0)
     for batch in range(batches):
         for y in range(oh):
             for x in range(ow):
@@ -46,7 +51,7 @@ def _conv(a, b, bias, adims, bdims, odims, attrs):
                                 off = ((batch*h + iy)*w + ix)*ci
                                 wt = ((dy*kw + dx)*ci)*co + ch
                                 for j in range(ci):
-                                    acc += a[off + j] * b[wt + j*co]
+                                    acc += (a[off + j] - az) * (b[wt + j*co] - bz)
                     yield _wrap(acc, 32) >> attrs.get("shift", 0)
 
 
@@ -150,6 +155,17 @@ def _nms(data, score_threshold, iou_threshold):
     return output
 
 
+def _requant(x, attrs):
+    x = (x - attrs.get("input_zero_point", 0)) * attrs["multiplier"]
+    if attrs.get("rounding") == "nearest_even":
+        divisor = attrs.get("divisor", 1 << attrs["shift"])
+        q, r = divmod(x, divisor)
+        q += 2*r > divisor or (2*r == divisor and q & 1)
+    else:
+        q = _wrap(x, 32) >> attrs["shift"]
+    return q + attrs["zero_point"]
+
+
 def evaluate(graph, inputs=None):
     values = {name: spec["data"][:] for name, spec in graph["tensors"].items() if "data" in spec}
     if inputs:
@@ -171,10 +187,12 @@ def evaluate(graph, inputs=None):
         shapes = [tensors[i]["shape"] for i in names]
         dtype, out_shape = tensors[dst]["dtype"], tensors[dst]["shape"]
         a = operands[0]
-        if op in ("Gemm", "Conv"):
+        if op in LAYOUT_OPS:
+            result = evaluate_layout(op, operands, shapes, out_shape, attrs)
+        elif op in ("Gemm", "Conv"):
             bias = operands[2] if len(operands) == 3 else [0] * out_shape[-1]
             if op == "Gemm":
-                result = _gemm(a, operands[1], bias, *shapes[:2], attrs.get("transpose_b", False))
+                result = _gemm(a, operands[1], bias, *shapes[:2], attrs)
             else:
                 result = _conv(a, operands[1], bias, *shapes[:2], out_shape, attrs)
         elif op in ("Add", "Mul"):
@@ -186,8 +204,7 @@ def evaluate(graph, inputs=None):
         elif op == "Relu":
             result = (max(0, x) for x in a)
         elif op == "Requant":
-            result = ((_wrap(x * attrs["multiplier"], 32) >> attrs["shift"]) + attrs["zero_point"]
-                      for x in a)
+            result = (_requant(x, attrs) for x in a)
         elif op == "SiLU":
             if attrs.get("mode") == "legacy_q4_knots":
                 result = (math.trunc(x * _probability(x) / 256) for x in a)
@@ -230,6 +247,7 @@ def evaluate(graph, inputs=None):
             result = _gated(a, attrs["threshold"], attrs["rounds"])
         else:
             raise GraphError(f"no reference for {op}")
-        values[dst] = [_narrow(_wrap(x, 32), dtype, attrs.get("narrowing", "saturate"))
-                       for x in result]
+        mathematical = op in LAYOUT_OPS or (op == "Requant" and attrs.get("rounding") == "nearest_even")
+        values[dst] = [_narrow(x if mathematical else _wrap(x, 32), dtype,
+                               attrs.get("narrowing", "saturate")) for x in result]
     return values
