@@ -1,5 +1,6 @@
 """Encode and structurally inspect a YHB1 program (see docs/yhb-format.md)."""
 
+from bisect import bisect_left, bisect_right
 import struct
 import zlib
 from pathlib import Path
@@ -87,6 +88,55 @@ def _merged_ranges(ranges):
     return merged
 
 
+class _InitializedDDR:
+    """Prove that sparse DDR loads only read bytes initialized this run."""
+
+    def __init__(self, ranges):
+        self.ranges = _merged_ranges(ranges)
+        self.pending = []
+
+    def load(self, lo, hi):
+        index = bisect_right(self.ranges, (lo, POOL_BYTES)) - 1
+        if index < 0 or self.ranges[index][1] < hi:
+            raise ValueError(f"YHB DMA load reads uninitialized DDR [{lo:#x}, {hi:#x})")
+
+    def store(self, lo, hi):
+        self.pending.append((lo, hi))
+
+    def fence(self):
+        for lo, hi in self.pending:
+            first = bisect_left(self.ranges, (lo, 0))
+            if first and self.ranges[first - 1][1] >= lo:
+                first -= 1
+            last = first
+            while last < len(self.ranges) and self.ranges[last][0] <= hi:
+                start, end = self.ranges[last]
+                lo, hi = min(lo, start), max(hi, end)
+                last += 1
+            self.ranges[first:last] = [(lo, hi)]
+        self.pending.clear()
+
+
+def _write_sparse_initial(directory, extents, initial, data):
+    ranges = []
+    for entry in sorted(extents, key=lambda span: span["ddr_offset"]):
+        at, size = entry["ddr_offset"], entry["bytes"]
+        file_offset = entry.get("file_offset", 0)
+        if not 0 <= at < at + size <= POOL_BYTES or file_offset < 0:
+            raise ValueError("invalid sparse YHB initializer bounds")
+        if ranges and at < ranges[-1][1]:
+            raise ValueError("overlapping sparse YHB initializers")
+        with (directory / entry["file"]).open("rb") as stream:
+            stream.seek(file_offset)
+            chunk = stream.read(size)
+        if len(chunk) != size:
+            raise ValueError(f"truncated sparse YHB initializer {entry['file']!r}")
+        offset = _append(data, chunk)
+        initial.extend(_words((at, size, offset, 0)))
+        ranges.append((at, at + size))
+    return ranges
+
+
 def emit_yhb(directory, manifest):
     """Write a compact program.yhb from the emitted compiler bundle."""
     directory = Path(directory)
@@ -109,6 +159,10 @@ def emit_yhb(directory, manifest):
     inputs = manifest["input_bindings"]
     outputs = manifest.get("output_bindings", {})
     initial_ranges = []
+    external_ranges = []
+    sparse = manifest.get("initial_ddr_extents")
+    if sparse is not None and target != TARGET_IDS["fpga_zu15eg_balanced"]:
+        raise ValueError("sparse YHB initializers require Z15 Balanced")
     for name in dict.fromkeys(graph["inputs"] + graph["outputs"]):
         flags = int(name in graph["inputs"]) | (2 * int(name in graph["outputs"]))
         if name in inputs and inputs[name].get("needs_data", "data" not in graph["tensors"][name]):
@@ -123,6 +177,8 @@ def emit_yhb(directory, manifest):
                                *shape, *([0] * (4 - len(shape))), at, nbytes, 0)))
         if flags & 1:
             initial_ranges.append((at, at + nbytes))
+            if flags & 4:
+                external_ranges.append((at, at + nbytes))
 
     programs = {record["id"]: record for record in backends["gpu"]["stages"]}
     tensors = {record["stage"]: record for record in backends["npu"]["commands"]}
@@ -152,6 +208,11 @@ def emit_yhb(directory, manifest):
         stages.extend(_words((*text(stage_id), engine, word_offset, len(words),
                               job_offset, len(jobs) // 4, stage.get("zone", 0))))
 
+    known = None
+    if sparse is not None:
+        ranges = _write_sparse_initial(directory, sparse, initial, data)
+        known = _InitializedDDR(ranges + external_ranges)
+
     move_ids = {}
     step = 0
     for item in _execution(manifest):
@@ -162,6 +223,8 @@ def emit_yhb(directory, manifest):
             opcode, operand = WAIT_STAGE, slots[item["wait_for"]]
         elif kind == "dma-fence":
             opcode, operand = WAIT_DMA, 0
+            if known is not None:
+                known.fence()
         elif kind == "yield":
             if target != 1 or type(item.get("step")) is not int or item["step"] != step:
                 raise ValueError("expected consecutive Balanced KV checkpoint IDs starting at zero")
@@ -178,7 +241,12 @@ def emit_yhb(directory, manifest):
             if key not in move_ids:
                 move_ids[key] = len(move_ids)
                 moves.extend(_words(key))
-            if direction == LOAD:
+            if known is not None:
+                if direction == LOAD:
+                    known.load(ddr, ddr + length)
+                else:
+                    known.store(ddr, ddr + length)
+            elif direction == LOAD:
                 initial_ranges.append((ddr, ddr + length))
             opcode, operand = DMA, move_ids[key]
         else:
@@ -188,26 +256,27 @@ def emit_yhb(directory, manifest):
     if step and opcode != KV_YIELD:
         raise ValueError("KV schedule must end at a checkpoint")
 
-    image = (directory / manifest.get("initial_ddr", manifest["initial_image"])).read_bytes()
-    if len(image) > POOL_BYTES:
-        raise ValueError("YHB initial image exceeds DDR pool")
-    if target == ASIC_IP_V3:
-        if len(image) != 65536 or profile["sram"]["capacity"] != 65536:
-            raise ValueError("ASIC IP v3 initial image must have 65536 bytes")
-        if moves:
-            raise ValueError("ASIC IP v3 does not expose a DMA program")
-        for alloc in plan["allocations"].values():
-            if alloc.get("kind") in ("input", "constant"):
-                initial_ranges.append((alloc["offset"], alloc["offset"] + alloc["size"]))
-        if any(hi > len(image) for _, hi in initial_ranges):
-            raise ValueError("ASIC IP v3 initializer lies outside the arena")
-    elif target >= 3:
-        initial_ranges.append((0, min(len(image), 4096)))
-    for lo, hi in _merged_ranges(initial_ranges):
-        if hi > lo:
-            chunk = image[lo:hi]
-            extent = _append(data, chunk + bytes(hi - lo - len(chunk)))
-            initial.extend(_words((lo, hi - lo, extent, 0)))
+    if sparse is None:
+        image = (directory / manifest.get("initial_ddr", manifest["initial_image"])).read_bytes()
+        if len(image) > POOL_BYTES:
+            raise ValueError("YHB initial image exceeds DDR pool")
+        if target == ASIC_IP_V3:
+            if len(image) != 65536 or profile["sram"]["capacity"] != 65536:
+                raise ValueError("ASIC IP v3 initial image must have 65536 bytes")
+            if moves:
+                raise ValueError("ASIC IP v3 does not expose a DMA program")
+            for alloc in plan["allocations"].values():
+                if alloc.get("kind") in ("input", "constant"):
+                    initial_ranges.append((alloc["offset"], alloc["offset"] + alloc["size"]))
+            if any(hi > len(image) for _, hi in initial_ranges):
+                raise ValueError("ASIC IP v3 initializer lies outside the arena")
+        elif target >= 3:
+            initial_ranges.append((0, min(len(image), 4096)))
+        for lo, hi in _merged_ranges(initial_ranges):
+            if hi > lo:
+                chunk = image[lo:hi]
+                extent = _append(data, chunk + bytes(hi - lo - len(chunk)))
+                initial.extend(_words((lo, hi - lo, extent, 0)))
 
     output = bytearray(HEADER.size + len(SECTIONS) * DIRECTORY.size)
     for index, (section, stride) in enumerate(zip(

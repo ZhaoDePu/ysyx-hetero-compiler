@@ -5,7 +5,7 @@ source "$work/tools/c5_resources.sh"
 compiler_build_slots
 base=/home/zdp/ysyx-migration
 board="$base/artifacts/z15-board-bringup-step2-20261125-212110"
-scratch=/dev/shm/ysyx_compiler_c5/npu
+scratch="$compiler_scratch/npu"
 commit=4d410d72508a5822bc5c8014981e5b55ef8faa56
 [[ "$(realpath -e -- "$scratch")" == "$scratch" && -O "$scratch" ]]
 mkdir -p -- "$scratch/z15-src"

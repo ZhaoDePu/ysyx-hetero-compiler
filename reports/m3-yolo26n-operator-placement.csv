@@ -1,0 +1,385 @@
+index,node,onnx_op,engines,lowering,lowered_id,physical_launches,logical_macs
+0,/model.0/conv/Conv,Conv,NPU,Conv,/model.0/conv/Conv,54,11059200
+1,/model.0/act/Sigmoid,Sigmoid,NPU,fused into Conv,/model.0/conv/Conv,0,
+2,/model.0/act/Mul,Mul,NPU,fused into Conv,/model.0/conv/Conv,0,
+3,/model.1/conv/Conv,Conv,NPU,Conv,/model.1/conv/Conv,14,29491200
+4,/model.1/act/Sigmoid,Sigmoid,NPU,fused into Conv,/model.1/conv/Conv,0,
+5,/model.1/act/Mul,Mul,NPU,fused into Conv,/model.1/conv/Conv,0,
+6,/model.2/cv1/conv/Conv,Conv,NPU,Conv,/model.2/cv1/conv/Conv,14,6553600
+7,/model.2/cv1/act/Sigmoid,Sigmoid,NPU,fused into Conv,/model.2/cv1/conv/Conv,0,
+8,/model.2/cv1/act/Mul,Mul,NPU,fused into Conv,/model.2/cv1/conv/Conv,0,
+9,/model.2/Split,Split,VPU,Split,/model.2/Split,1,
+10,/model.2/m.0/cv1/conv/Conv,Conv,NPU,Conv,/model.2/m.0/cv1/conv/Conv,14,7372800
+11,/model.2/m.0/cv1/act/Sigmoid,Sigmoid,NPU,fused into Conv,/model.2/m.0/cv1/conv/Conv,0,
+12,/model.2/m.0/cv1/act/Mul,Mul,NPU,fused into Conv,/model.2/m.0/cv1/conv/Conv,0,
+13,/model.2/m.0/cv2/conv/Conv,Conv,NPU,Conv,/model.2/m.0/cv2/conv/Conv,14,7372800
+14,/model.2/m.0/cv2/act/Sigmoid,Sigmoid,NPU,fused into Conv,/model.2/m.0/cv2/conv/Conv,0,
+15,/model.2/m.0/cv2/act/Mul,Mul,NPU,fused into Conv,/model.2/m.0/cv2/conv/Conv,0,
+16,/model.2/m.0/Add,Add,VPU,EWAdd,/model.2/m.0/Add,1,
+17,/model.2/Concat,Concat,VPU,Concat,/model.2/Concat,2,
+18,/model.2/cv2/conv/Conv,Conv,NPU,Conv,/model.2/cv2/conv/Conv,14,19660800
+19,/model.2/cv2/act/Sigmoid,Sigmoid,NPU,fused into Conv,/model.2/cv2/conv/Conv,0,
+20,/model.2/cv2/act/Mul,Mul,NPU,fused into Conv,/model.2/cv2/conv/Conv,0,
+21,/model.3/conv/Conv,Conv,GPU+NPU+VPU,Conv,/model.3/conv/Conv,279,58982400
+22,/model.3/act/Sigmoid,Sigmoid,GPU+NPU+VPU,fused into Conv,/model.3/conv/Conv,0,
+23,/model.3/act/Mul,Mul,GPU+NPU+VPU,fused into Conv,/model.3/conv/Conv,0,
+24,/model.4/cv1/conv/Conv,Conv,NPU,Conv,/model.4/cv1/conv/Conv,4,6553600
+25,/model.4/cv1/act/Sigmoid,Sigmoid,NPU,fused into Conv,/model.4/cv1/conv/Conv,0,
+26,/model.4/cv1/act/Mul,Mul,NPU,fused into Conv,/model.4/cv1/conv/Conv,0,
+27,/model.4/Split,Split,VPU,Split,/model.4/Split,1,
+28,/model.4/m.0/cv1/conv/Conv,Conv,NPU,Conv,/model.4/m.0/cv1/conv/Conv,4,7372800
+29,/model.4/m.0/cv1/act/Sigmoid,Sigmoid,NPU,fused into Conv,/model.4/m.0/cv1/conv/Conv,0,
+30,/model.4/m.0/cv1/act/Mul,Mul,NPU,fused into Conv,/model.4/m.0/cv1/conv/Conv,0,
+31,/model.4/m.0/cv2/conv/Conv,Conv,NPU,Conv,/model.4/m.0/cv2/conv/Conv,4,7372800
+32,/model.4/m.0/cv2/act/Sigmoid,Sigmoid,NPU,fused into Conv,/model.4/m.0/cv2/conv/Conv,0,
+33,/model.4/m.0/cv2/act/Mul,Mul,NPU,fused into Conv,/model.4/m.0/cv2/conv/Conv,0,
+34,/model.4/m.0/Add,Add,VPU,EWAdd,/model.4/m.0/Add,1,
+35,/model.4/Concat,Concat,VPU,Concat,/model.4/Concat,2,
+36,/model.4/cv2/conv/Conv,Conv,NPU,Conv,/model.4/cv2/conv/Conv,4,19660800
+37,/model.4/cv2/act/Sigmoid,Sigmoid,NPU,fused into Conv,/model.4/cv2/conv/Conv,0,
+38,/model.4/cv2/act/Mul,Mul,NPU,fused into Conv,/model.4/cv2/conv/Conv,0,
+39,/model.5/conv/Conv,Conv,GPU+NPU+VPU,Conv,/model.5/conv/Conv,210,58982400
+40,/model.5/act/Sigmoid,Sigmoid,GPU+NPU+VPU,fused into Conv,/model.5/conv/Conv,0,
+41,/model.5/act/Mul,Mul,GPU+NPU+VPU,fused into Conv,/model.5/conv/Conv,0,
+42,/model.6/cv1/conv/Conv,Conv,NPU,Conv,/model.6/cv1/conv/Conv,1,6553600
+43,/model.6/cv1/act/Sigmoid,Sigmoid,NPU,fused into Conv,/model.6/cv1/conv/Conv,0,
+44,/model.6/cv1/act/Mul,Mul,NPU,fused into Conv,/model.6/cv1/conv/Conv,0,
+45,/model.6/Split,Split,VPU,Split,/model.6/Split,1,
+46,/model.6/m.0/cv1/conv/Conv,Conv,NPU,Conv,/model.6/m.0/cv1/conv/Conv,1,819200
+47,/model.6/m.0/cv2/conv/Conv,Conv,NPU,Conv,/model.6/m.0/cv2/conv/Conv,1,819200
+48,/model.6/m.0/cv1/act/Sigmoid,Sigmoid,NPU,fused into Conv,/model.6/m.0/cv1/conv/Conv,0,
+49,/model.6/m.0/cv2/act/Sigmoid,Sigmoid,NPU,fused into Conv,/model.6/m.0/cv2/conv/Conv,0,
+50,/model.6/m.0/cv1/act/Mul,Mul,NPU,fused into Conv,/model.6/m.0/cv1/conv/Conv,0,
+51,/model.6/m.0/cv2/act/Mul,Mul,NPU,fused into Conv,/model.6/m.0/cv2/conv/Conv,0,
+52,/model.6/m.0/m/m.0/cv1/conv/Conv,Conv,NPU,Conv,/model.6/m.0/m/m.0/cv1/conv/Conv,1,3686400
+53,/model.6/m.0/m/m.0/cv1/act/Sigmoid,Sigmoid,NPU,fused into Conv,/model.6/m.0/m/m.0/cv1/conv/Conv,0,
+54,/model.6/m.0/m/m.0/cv1/act/Mul,Mul,NPU,fused into Conv,/model.6/m.0/m/m.0/cv1/conv/Conv,0,
+55,/model.6/m.0/m/m.0/cv2/conv/Conv,Conv,NPU,Conv,/model.6/m.0/m/m.0/cv2/conv/Conv,1,3686400
+56,/model.6/m.0/m/m.0/cv2/act/Sigmoid,Sigmoid,NPU,fused into Conv,/model.6/m.0/m/m.0/cv2/conv/Conv,0,
+57,/model.6/m.0/m/m.0/cv2/act/Mul,Mul,NPU,fused into Conv,/model.6/m.0/m/m.0/cv2/conv/Conv,0,
+58,/model.6/m.0/m/m.0/Add,Add,VPU,EWAdd,/model.6/m.0/m/m.0/Add,1,
+59,/model.6/m.0/m/m.1/cv1/conv/Conv,Conv,NPU,Conv,/model.6/m.0/m/m.1/cv1/conv/Conv,1,3686400
+60,/model.6/m.0/m/m.1/cv1/act/Sigmoid,Sigmoid,NPU,fused into Conv,/model.6/m.0/m/m.1/cv1/conv/Conv,0,
+61,/model.6/m.0/m/m.1/cv1/act/Mul,Mul,NPU,fused into Conv,/model.6/m.0/m/m.1/cv1/conv/Conv,0,
+62,/model.6/m.0/m/m.1/cv2/conv/Conv,Conv,NPU,Conv,/model.6/m.0/m/m.1/cv2/conv/Conv,1,3686400
+63,/model.6/m.0/m/m.1/cv2/act/Sigmoid,Sigmoid,NPU,fused into Conv,/model.6/m.0/m/m.1/cv2/conv/Conv,0,
+64,/model.6/m.0/m/m.1/cv2/act/Mul,Mul,NPU,fused into Conv,/model.6/m.0/m/m.1/cv2/conv/Conv,0,
+65,/model.6/m.0/m/m.1/Add,Add,VPU,EWAdd,/model.6/m.0/m/m.1/Add,1,
+66,/model.6/m.0/Concat,Concat,VPU,Concat,/model.6/m.0/Concat,1,
+67,/model.6/m.0/cv3/conv/Conv,Conv,NPU,Conv,/model.6/m.0/cv3/conv/Conv,1,1638400
+68,/model.6/m.0/cv3/act/Sigmoid,Sigmoid,NPU,fused into Conv,/model.6/m.0/cv3/conv/Conv,0,
+69,/model.6/m.0/cv3/act/Mul,Mul,NPU,fused into Conv,/model.6/m.0/cv3/conv/Conv,0,
+70,/model.6/Concat,Concat,VPU,Concat,/model.6/Concat,2,
+71,/model.6/cv2/conv/Conv,Conv,NPU,Conv,/model.6/cv2/conv/Conv,1,9830400
+72,/model.6/cv2/act/Sigmoid,Sigmoid,NPU,fused into Conv,/model.6/cv2/conv/Conv,0,
+73,/model.6/cv2/act/Mul,Mul,NPU,fused into Conv,/model.6/cv2/conv/Conv,0,
+74,/model.7/conv/Conv,Conv,GPU+NPU+VPU,Conv,/model.7/conv/Conv,139,29491200
+75,/model.7/act/Sigmoid,Sigmoid,GPU+NPU+VPU,fused into Conv,/model.7/conv/Conv,0,
+76,/model.7/act/Mul,Mul,GPU+NPU+VPU,fused into Conv,/model.7/conv/Conv,0,
+77,/model.8/cv1/conv/Conv,Conv,NPU,Conv,/model.8/cv1/conv/Conv,1,6553600
+78,/model.8/cv1/act/Sigmoid,Sigmoid,NPU,fused into Conv,/model.8/cv1/conv/Conv,0,
+79,/model.8/cv1/act/Mul,Mul,NPU,fused into Conv,/model.8/cv1/conv/Conv,0,
+80,/model.8/Split,Split,VPU,Split,/model.8/Split,1,
+81,/model.8/m.0/cv1/conv/Conv,Conv,NPU,Conv,/model.8/m.0/cv1/conv/Conv,1,819200
+82,/model.8/m.0/cv2/conv/Conv,Conv,NPU,Conv,/model.8/m.0/cv2/conv/Conv,1,819200
+83,/model.8/m.0/cv1/act/Sigmoid,Sigmoid,NPU,fused into Conv,/model.8/m.0/cv1/conv/Conv,0,
+84,/model.8/m.0/cv2/act/Sigmoid,Sigmoid,NPU,fused into Conv,/model.8/m.0/cv2/conv/Conv,0,
+85,/model.8/m.0/cv1/act/Mul,Mul,NPU,fused into Conv,/model.8/m.0/cv1/conv/Conv,0,
+86,/model.8/m.0/cv2/act/Mul,Mul,NPU,fused into Conv,/model.8/m.0/cv2/conv/Conv,0,
+87,/model.8/m.0/m/m.0/cv1/conv/Conv,Conv,GPU+NPU+VPU,Conv,/model.8/m.0/m/m.0/cv1/conv/Conv,20,3686400
+88,/model.8/m.0/m/m.0/cv1/act/Sigmoid,Sigmoid,GPU+NPU+VPU,fused into Conv,/model.8/m.0/m/m.0/cv1/conv/Conv,0,
+89,/model.8/m.0/m/m.0/cv1/act/Mul,Mul,GPU+NPU+VPU,fused into Conv,/model.8/m.0/m/m.0/cv1/conv/Conv,0,
+90,/model.8/m.0/m/m.0/cv2/conv/Conv,Conv,GPU+NPU+VPU,Conv,/model.8/m.0/m/m.0/cv2/conv/Conv,20,3686400
+91,/model.8/m.0/m/m.0/cv2/act/Sigmoid,Sigmoid,GPU+NPU+VPU,fused into Conv,/model.8/m.0/m/m.0/cv2/conv/Conv,0,
+92,/model.8/m.0/m/m.0/cv2/act/Mul,Mul,GPU+NPU+VPU,fused into Conv,/model.8/m.0/m/m.0/cv2/conv/Conv,0,
+93,/model.8/m.0/m/m.0/Add,Add,VPU,EWAdd,/model.8/m.0/m/m.0/Add,1,
+94,/model.8/m.0/m/m.1/cv1/conv/Conv,Conv,GPU+NPU+VPU,Conv,/model.8/m.0/m/m.1/cv1/conv/Conv,20,3686400
+95,/model.8/m.0/m/m.1/cv1/act/Sigmoid,Sigmoid,GPU+NPU+VPU,fused into Conv,/model.8/m.0/m/m.1/cv1/conv/Conv,0,
+96,/model.8/m.0/m/m.1/cv1/act/Mul,Mul,GPU+NPU+VPU,fused into Conv,/model.8/m.0/m/m.1/cv1/conv/Conv,0,
+97,/model.8/m.0/m/m.1/cv2/conv/Conv,Conv,GPU+NPU+VPU,Conv,/model.8/m.0/m/m.1/cv2/conv/Conv,20,3686400
+98,/model.8/m.0/m/m.1/cv2/act/Sigmoid,Sigmoid,GPU+NPU+VPU,fused into Conv,/model.8/m.0/m/m.1/cv2/conv/Conv,0,
+99,/model.8/m.0/m/m.1/cv2/act/Mul,Mul,GPU+NPU+VPU,fused into Conv,/model.8/m.0/m/m.1/cv2/conv/Conv,0,
+100,/model.8/m.0/m/m.1/Add,Add,VPU,EWAdd,/model.8/m.0/m/m.1/Add,1,
+101,/model.8/m.0/Concat,Concat,VPU,Concat,/model.8/m.0/Concat,1,
+102,/model.8/m.0/cv3/conv/Conv,Conv,NPU,Conv,/model.8/m.0/cv3/conv/Conv,1,1638400
+103,/model.8/m.0/cv3/act/Sigmoid,Sigmoid,NPU,fused into Conv,/model.8/m.0/cv3/conv/Conv,0,
+104,/model.8/m.0/cv3/act/Mul,Mul,NPU,fused into Conv,/model.8/m.0/cv3/conv/Conv,0,
+105,/model.8/Concat,Concat,VPU,Concat,/model.8/Concat,2,
+106,/model.8/cv2/conv/Conv,Conv,NPU,Conv,/model.8/cv2/conv/Conv,1,9830400
+107,/model.8/cv2/act/Sigmoid,Sigmoid,NPU,fused into Conv,/model.8/cv2/conv/Conv,0,
+108,/model.8/cv2/act/Mul,Mul,NPU,fused into Conv,/model.8/cv2/conv/Conv,0,
+109,/model.9/cv1/conv/Conv,Conv,NPU,Conv,/model.9/cv1/conv/Conv,1,3276800
+110,/model.9/m/MaxPool,MaxPool,VPU,MaxPool,/model.9/m/MaxPool,1,
+111,/model.9/m_1/MaxPool,MaxPool,VPU,MaxPool,/model.9/m_1/MaxPool,1,
+112,/model.9/m_2/MaxPool,MaxPool,VPU,MaxPool,/model.9/m_2/MaxPool,1,
+113,/model.9/Concat,Concat,VPU,Concat,/model.9/Concat,3,
+114,/model.9/cv2/conv/Conv,Conv,GPU+NPU+VPU,Conv,/model.9/cv2/conv/Conv,92,13107200
+115,/model.9/cv2/act/Sigmoid,Sigmoid,GPU+NPU+VPU,fused into Conv,/model.9/cv2/conv/Conv,0,
+116,/model.9/cv2/act/Mul,Mul,GPU+NPU+VPU,fused into Conv,/model.9/cv2/conv/Conv,0,
+117,/model.9/Add,Add,VPU,EWAdd,/model.9/Add,1,
+118,/model.10/cv1/conv/Conv,Conv,NPU,Conv,/model.10/cv1/conv/Conv,1,6553600
+119,/model.10/cv1/act/Sigmoid,Sigmoid,NPU,fused into Conv,/model.10/cv1/conv/Conv,0,
+120,/model.10/cv1/act/Mul,Mul,NPU,fused into Conv,/model.10/cv1/conv/Conv,0,
+121,/model.10/Split,Split,VPU,Split,/model.10/Split,1,
+122,/model.10/m/m.0/attn/qkv/conv/Conv,Conv,NPU,Conv,/model.10/m/m.0/attn/qkv/conv/Conv,1,3276800
+123,/model.10/m/m.0/attn/Reshape,Reshape,VPU,Reshape,/model.10/m/m.0/attn/Reshape,1,
+124,/model.10/m/m.0/attn/Split,Split,VPU,Split,/model.10/m/m.0/attn/Split,6,
+125,/model.10/m/m.0/attn/Mul,Mul,VPU,EWMul,/model.10/m/m.0/attn/Mul,1,
+126,/model.10/m/m.0/attn/Reshape_2,Reshape,VPU,Reshape,/model.10/m/m.0/attn/Reshape_2,1,
+127,/model.10/m/m.0/attn/Transpose,Transpose,VPU,Transpose,/model.10/m/m.0/attn/Transpose,2,
+128,/model.10/m/m.0/attn/pe/conv/Conv,Conv,NPU+VPU,Conv,/model.10/m/m.0/attn/pe/conv/Conv,22,115200
+129,/model.10/m/m.0/attn/MatMul,MatMul,NPU+VPU,MatMul,/model.10/m/m.0/attn/MatMul,4,640000
+130,/model.10/m/m.0/attn/Softmax,Softmax,GPU,Q23Softmax,/model.10/m/m.0/attn/Softmax,25,
+131,/model.10/m/m.0/attn/Transpose_1,Transpose,VPU,Transpose,/model.10/m/m.0/attn/Transpose_1,2,
+132,/model.10/m/m.0/attn/MatMul_1,MatMul,NPU+VPU,MatMul,/model.10/m/m.0/attn/MatMul_1,6,1280000
+133,/model.10/m/m.0/attn/Reshape_1,Reshape,VPU,Reshape,/model.10/m/m.0/attn/Reshape_1,1,
+134,/model.10/m/m.0/attn/Add,Add,VPU,EWAdd,/model.10/m/m.0/attn/Add,1,
+135,/model.10/m/m.0/attn/proj/conv/Conv,Conv,NPU,Conv,/model.10/m/m.0/attn/proj/conv/Conv,1,1638400
+136,/model.10/m/m.0/Add,Add,VPU,EWAdd,/model.10/m/m.0/Add,1,
+137,/model.10/m/m.0/ffn/ffn.0/conv/Conv,Conv,NPU,Conv,/model.10/m/m.0/ffn/ffn.0/conv/Conv,1,3276800
+138,/model.10/m/m.0/ffn/ffn.0/act/Sigmoid,Sigmoid,NPU,fused into Conv,/model.10/m/m.0/ffn/ffn.0/conv/Conv,0,
+139,/model.10/m/m.0/ffn/ffn.0/act/Mul,Mul,NPU,fused into Conv,/model.10/m/m.0/ffn/ffn.0/conv/Conv,0,
+140,/model.10/m/m.0/ffn/ffn.1/conv/Conv,Conv,NPU,Conv,/model.10/m/m.0/ffn/ffn.1/conv/Conv,1,3276800
+141,/model.10/m/m.0/Add_1,Add,VPU,EWAdd,/model.10/m/m.0/Add_1,1,
+142,/model.10/Concat,Concat,VPU,Concat,/model.10/Concat,1,
+143,/model.10/cv2/conv/Conv,Conv,NPU,Conv,/model.10/cv2/conv/Conv,1,6553600
+144,/model.10/cv2/act/Sigmoid,Sigmoid,NPU,fused into Conv,/model.10/cv2/conv/Conv,0,
+145,/model.10/cv2/act/Mul,Mul,NPU,fused into Conv,/model.10/cv2/conv/Conv,0,
+146,/model.11/Resize,Resize,VPU,Resize,/model.11/Resize,1,
+147,/model.12/Concat,Concat,VPU,Concat,/model.12/Concat,1,
+148,/model.13/cv1/conv/Conv,Conv,NPU,Conv,/model.13/cv1/conv/Conv,1,19660800
+149,/model.13/cv1/act/Sigmoid,Sigmoid,NPU,fused into Conv,/model.13/cv1/conv/Conv,0,
+150,/model.13/cv1/act/Mul,Mul,NPU,fused into Conv,/model.13/cv1/conv/Conv,0,
+151,/model.13/Split,Split,VPU,Split,/model.13/Split,1,
+152,/model.13/m.0/cv1/conv/Conv,Conv,NPU,Conv,/model.13/m.0/cv1/conv/Conv,1,819200
+153,/model.13/m.0/cv2/conv/Conv,Conv,NPU,Conv,/model.13/m.0/cv2/conv/Conv,1,819200
+154,/model.13/m.0/cv1/act/Sigmoid,Sigmoid,NPU,fused into Conv,/model.13/m.0/cv1/conv/Conv,0,
+155,/model.13/m.0/cv2/act/Sigmoid,Sigmoid,NPU,fused into Conv,/model.13/m.0/cv2/conv/Conv,0,
+156,/model.13/m.0/cv1/act/Mul,Mul,NPU,fused into Conv,/model.13/m.0/cv1/conv/Conv,0,
+157,/model.13/m.0/cv2/act/Mul,Mul,NPU,fused into Conv,/model.13/m.0/cv2/conv/Conv,0,
+158,/model.13/m.0/m/m.0/cv1/conv/Conv,Conv,NPU,Conv,/model.13/m.0/m/m.0/cv1/conv/Conv,1,3686400
+159,/model.13/m.0/m/m.0/cv1/act/Sigmoid,Sigmoid,NPU,fused into Conv,/model.13/m.0/m/m.0/cv1/conv/Conv,0,
+160,/model.13/m.0/m/m.0/cv1/act/Mul,Mul,NPU,fused into Conv,/model.13/m.0/m/m.0/cv1/conv/Conv,0,
+161,/model.13/m.0/m/m.0/cv2/conv/Conv,Conv,NPU,Conv,/model.13/m.0/m/m.0/cv2/conv/Conv,1,3686400
+162,/model.13/m.0/m/m.0/cv2/act/Sigmoid,Sigmoid,NPU,fused into Conv,/model.13/m.0/m/m.0/cv2/conv/Conv,0,
+163,/model.13/m.0/m/m.0/cv2/act/Mul,Mul,NPU,fused into Conv,/model.13/m.0/m/m.0/cv2/conv/Conv,0,
+164,/model.13/m.0/m/m.0/Add,Add,VPU,EWAdd,/model.13/m.0/m/m.0/Add,1,
+165,/model.13/m.0/m/m.1/cv1/conv/Conv,Conv,NPU,Conv,/model.13/m.0/m/m.1/cv1/conv/Conv,1,3686400
+166,/model.13/m.0/m/m.1/cv1/act/Sigmoid,Sigmoid,NPU,fused into Conv,/model.13/m.0/m/m.1/cv1/conv/Conv,0,
+167,/model.13/m.0/m/m.1/cv1/act/Mul,Mul,NPU,fused into Conv,/model.13/m.0/m/m.1/cv1/conv/Conv,0,
+168,/model.13/m.0/m/m.1/cv2/conv/Conv,Conv,NPU,Conv,/model.13/m.0/m/m.1/cv2/conv/Conv,1,3686400
+169,/model.13/m.0/m/m.1/cv2/act/Sigmoid,Sigmoid,NPU,fused into Conv,/model.13/m.0/m/m.1/cv2/conv/Conv,0,
+170,/model.13/m.0/m/m.1/cv2/act/Mul,Mul,NPU,fused into Conv,/model.13/m.0/m/m.1/cv2/conv/Conv,0,
+171,/model.13/m.0/m/m.1/Add,Add,VPU,EWAdd,/model.13/m.0/m/m.1/Add,1,
+172,/model.13/m.0/Concat,Concat,VPU,Concat,/model.13/m.0/Concat,1,
+173,/model.13/m.0/cv3/conv/Conv,Conv,NPU,Conv,/model.13/m.0/cv3/conv/Conv,1,1638400
+174,/model.13/m.0/cv3/act/Sigmoid,Sigmoid,NPU,fused into Conv,/model.13/m.0/cv3/conv/Conv,0,
+175,/model.13/m.0/cv3/act/Mul,Mul,NPU,fused into Conv,/model.13/m.0/cv3/conv/Conv,0,
+176,/model.13/Concat,Concat,VPU,Concat,/model.13/Concat,2,
+177,/model.13/cv2/conv/Conv,Conv,NPU,Conv,/model.13/cv2/conv/Conv,1,9830400
+178,/model.13/cv2/act/Sigmoid,Sigmoid,NPU,fused into Conv,/model.13/cv2/conv/Conv,0,
+179,/model.13/cv2/act/Mul,Mul,NPU,fused into Conv,/model.13/cv2/conv/Conv,0,
+180,/model.14/Resize,Resize,VPU,Resize,/model.14/Resize,1,
+181,/model.15/Concat,Concat,VPU,Concat,/model.15/Concat,1,
+182,/model.16/cv1/conv/Conv,Conv,NPU,Conv,/model.16/cv1/conv/Conv,4,26214400
+183,/model.16/cv1/act/Sigmoid,Sigmoid,NPU,fused into Conv,/model.16/cv1/conv/Conv,0,
+184,/model.16/cv1/act/Mul,Mul,NPU,fused into Conv,/model.16/cv1/conv/Conv,0,
+185,/model.16/Split,Split,VPU,Split,/model.16/Split,1,
+186,/model.16/m.0/cv1/conv/Conv,Conv,NPU,Conv,/model.16/m.0/cv1/conv/Conv,4,819200
+187,/model.16/m.0/cv2/conv/Conv,Conv,NPU,Conv,/model.16/m.0/cv2/conv/Conv,4,819200
+188,/model.16/m.0/cv1/act/Sigmoid,Sigmoid,NPU,fused into Conv,/model.16/m.0/cv1/conv/Conv,0,
+189,/model.16/m.0/cv2/act/Sigmoid,Sigmoid,NPU,fused into Conv,/model.16/m.0/cv2/conv/Conv,0,
+190,/model.16/m.0/cv1/act/Mul,Mul,NPU,fused into Conv,/model.16/m.0/cv1/conv/Conv,0,
+191,/model.16/m.0/cv2/act/Mul,Mul,NPU,fused into Conv,/model.16/m.0/cv2/conv/Conv,0,
+192,/model.16/m.0/m/m.0/cv1/conv/Conv,Conv,NPU,Conv,/model.16/m.0/m/m.0/cv1/conv/Conv,4,3686400
+193,/model.16/m.0/m/m.0/cv1/act/Sigmoid,Sigmoid,NPU,fused into Conv,/model.16/m.0/m/m.0/cv1/conv/Conv,0,
+194,/model.16/m.0/m/m.0/cv1/act/Mul,Mul,NPU,fused into Conv,/model.16/m.0/m/m.0/cv1/conv/Conv,0,
+195,/model.16/m.0/m/m.0/cv2/conv/Conv,Conv,NPU,Conv,/model.16/m.0/m/m.0/cv2/conv/Conv,4,3686400
+196,/model.16/m.0/m/m.0/cv2/act/Sigmoid,Sigmoid,NPU,fused into Conv,/model.16/m.0/m/m.0/cv2/conv/Conv,0,
+197,/model.16/m.0/m/m.0/cv2/act/Mul,Mul,NPU,fused into Conv,/model.16/m.0/m/m.0/cv2/conv/Conv,0,
+198,/model.16/m.0/m/m.0/Add,Add,VPU,EWAdd,/model.16/m.0/m/m.0/Add,1,
+199,/model.16/m.0/m/m.1/cv1/conv/Conv,Conv,NPU,Conv,/model.16/m.0/m/m.1/cv1/conv/Conv,4,3686400
+200,/model.16/m.0/m/m.1/cv1/act/Sigmoid,Sigmoid,NPU,fused into Conv,/model.16/m.0/m/m.1/cv1/conv/Conv,0,
+201,/model.16/m.0/m/m.1/cv1/act/Mul,Mul,NPU,fused into Conv,/model.16/m.0/m/m.1/cv1/conv/Conv,0,
+202,/model.16/m.0/m/m.1/cv2/conv/Conv,Conv,NPU,Conv,/model.16/m.0/m/m.1/cv2/conv/Conv,4,3686400
+203,/model.16/m.0/m/m.1/cv2/act/Sigmoid,Sigmoid,NPU,fused into Conv,/model.16/m.0/m/m.1/cv2/conv/Conv,0,
+204,/model.16/m.0/m/m.1/cv2/act/Mul,Mul,NPU,fused into Conv,/model.16/m.0/m/m.1/cv2/conv/Conv,0,
+205,/model.16/m.0/m/m.1/Add,Add,VPU,EWAdd,/model.16/m.0/m/m.1/Add,1,
+206,/model.16/m.0/Concat,Concat,VPU,Concat,/model.16/m.0/Concat,1,
+207,/model.16/m.0/cv3/conv/Conv,Conv,NPU,Conv,/model.16/m.0/cv3/conv/Conv,4,1638400
+208,/model.16/m.0/cv3/act/Sigmoid,Sigmoid,NPU,fused into Conv,/model.16/m.0/cv3/conv/Conv,0,
+209,/model.16/m.0/cv3/act/Mul,Mul,NPU,fused into Conv,/model.16/m.0/cv3/conv/Conv,0,
+210,/model.16/Concat,Concat,VPU,Concat,/model.16/Concat,2,
+211,/model.16/cv2/conv/Conv,Conv,NPU,Conv,/model.16/cv2/conv/Conv,4,9830400
+212,/model.16/cv2/act/Sigmoid,Sigmoid,NPU,fused into Conv,/model.16/cv2/conv/Conv,0,
+213,/model.16/cv2/act/Mul,Mul,NPU,fused into Conv,/model.16/cv2/conv/Conv,0,
+214,/model.17/conv/Conv,Conv,GPU+NPU+VPU,Conv,/model.17/conv/Conv,70,14745600
+215,/model.23/one2one_cv2.0/one2one_cv2.0.0/conv/Conv,Conv,GPU+NPU+VPU,Conv,/model.23/one2one_cv2.0/one2one_cv2.0.0/conv/Conv,74,14745600
+216,/model.23/one2one_cv3.0/one2one_cv3.0.0/one2one_cv3.0.0.0/conv/Conv,Conv,NPU+VPU,Conv,/model.23/one2one_cv3.0/one2one_cv3.0.0/one2one_cv3.0.0.0/conv/Conv,40,921600
+217,/model.17/act/Sigmoid,Sigmoid,GPU+NPU+VPU,fused into Conv,/model.17/conv/Conv,0,
+218,/model.23/one2one_cv2.0/one2one_cv2.0.0/act/Sigmoid,Sigmoid,GPU+NPU+VPU,fused into Conv,/model.23/one2one_cv2.0/one2one_cv2.0.0/conv/Conv,0,
+219,/model.23/one2one_cv3.0/one2one_cv3.0.0/one2one_cv3.0.0.0/act/Sigmoid,Sigmoid,NPU+VPU,fused into Conv,/model.23/one2one_cv3.0/one2one_cv3.0.0/one2one_cv3.0.0.0/conv/Conv,0,
+220,/model.17/act/Mul,Mul,GPU+NPU+VPU,fused into Conv,/model.17/conv/Conv,0,
+221,/model.23/one2one_cv2.0/one2one_cv2.0.0/act/Mul,Mul,GPU+NPU+VPU,fused into Conv,/model.23/one2one_cv2.0/one2one_cv2.0.0/conv/Conv,0,
+222,/model.23/one2one_cv3.0/one2one_cv3.0.0/one2one_cv3.0.0.0/act/Mul,Mul,NPU+VPU,fused into Conv,/model.23/one2one_cv3.0/one2one_cv3.0.0/one2one_cv3.0.0.0/conv/Conv,0,
+223,/model.18/Concat,Concat,VPU,Concat,/model.18/Concat,1,
+224,/model.23/one2one_cv2.0/one2one_cv2.0.1/conv/Conv,Conv,NPU,Conv,/model.23/one2one_cv2.0/one2one_cv2.0.1/conv/Conv,4,3686400
+225,/model.23/one2one_cv3.0/one2one_cv3.0.0/one2one_cv3.0.0.1/conv/Conv,Conv,NPU,Conv,/model.23/one2one_cv3.0/one2one_cv3.0.0/one2one_cv3.0.0.1/conv/Conv,4,8192000
+226,/model.19/cv1/conv/Conv,Conv,NPU,Conv,/model.19/cv1/conv/Conv,1,9830400
+227,/model.23/one2one_cv2.0/one2one_cv2.0.1/act/Sigmoid,Sigmoid,NPU,fused into Conv,/model.23/one2one_cv2.0/one2one_cv2.0.1/conv/Conv,0,
+228,/model.23/one2one_cv3.0/one2one_cv3.0.0/one2one_cv3.0.0.1/act/Sigmoid,Sigmoid,NPU,fused into Conv,/model.23/one2one_cv3.0/one2one_cv3.0.0/one2one_cv3.0.0.1/conv/Conv,0,
+229,/model.19/cv1/act/Sigmoid,Sigmoid,NPU,fused into Conv,/model.19/cv1/conv/Conv,0,
+230,/model.23/one2one_cv2.0/one2one_cv2.0.1/act/Mul,Mul,NPU,fused into Conv,/model.23/one2one_cv2.0/one2one_cv2.0.1/conv/Conv,0,
+231,/model.23/one2one_cv3.0/one2one_cv3.0.0/one2one_cv3.0.0.1/act/Mul,Mul,NPU,fused into Conv,/model.23/one2one_cv3.0/one2one_cv3.0.0/one2one_cv3.0.0.1/conv/Conv,0,
+232,/model.19/cv1/act/Mul,Mul,NPU,fused into Conv,/model.19/cv1/conv/Conv,0,
+233,/model.23/one2one_cv2.0/one2one_cv2.0.2/Conv,Conv,NPU,Conv,/model.23/one2one_cv2.0/one2one_cv2.0.2/Conv,4,102400
+234,/model.23/one2one_cv3.0/one2one_cv3.0.1/one2one_cv3.0.1.0/conv/Conv,Conv,NPU+VPU,Conv,/model.23/one2one_cv3.0/one2one_cv3.0.1/one2one_cv3.0.1.0/conv/Conv,52,1152000
+235,/model.19/Split,Split,VPU,Split,/model.19/Split,1,
+236,/model.23/Reshape,Reshape,PS,ONNX detection tail,/model.23/Reshape,0,
+237,/model.23/one2one_cv3.0/one2one_cv3.0.1/one2one_cv3.0.1.0/act/Sigmoid,Sigmoid,NPU+VPU,fused into Conv,/model.23/one2one_cv3.0/one2one_cv3.0.1/one2one_cv3.0.1.0/conv/Conv,0,
+238,/model.19/m.0/cv1/conv/Conv,Conv,NPU,Conv,/model.19/m.0/cv1/conv/Conv,1,819200
+239,/model.19/m.0/cv2/conv/Conv,Conv,NPU,Conv,/model.19/m.0/cv2/conv/Conv,1,819200
+240,/model.23/one2one_cv3.0/one2one_cv3.0.1/one2one_cv3.0.1.0/act/Mul,Mul,NPU+VPU,fused into Conv,/model.23/one2one_cv3.0/one2one_cv3.0.1/one2one_cv3.0.1.0/conv/Conv,0,
+241,/model.19/m.0/cv1/act/Sigmoid,Sigmoid,NPU,fused into Conv,/model.19/m.0/cv1/conv/Conv,0,
+242,/model.19/m.0/cv2/act/Sigmoid,Sigmoid,NPU,fused into Conv,/model.19/m.0/cv2/conv/Conv,0,
+243,/model.23/one2one_cv3.0/one2one_cv3.0.1/one2one_cv3.0.1.1/conv/Conv,Conv,NPU,Conv,/model.23/one2one_cv3.0/one2one_cv3.0.1/one2one_cv3.0.1.1/conv/Conv,4,10240000
+244,/model.19/m.0/cv1/act/Mul,Mul,NPU,fused into Conv,/model.19/m.0/cv1/conv/Conv,0,
+245,/model.19/m.0/cv2/act/Mul,Mul,NPU,fused into Conv,/model.19/m.0/cv2/conv/Conv,0,
+246,/model.23/one2one_cv3.0/one2one_cv3.0.1/one2one_cv3.0.1.1/act/Sigmoid,Sigmoid,NPU,fused into Conv,/model.23/one2one_cv3.0/one2one_cv3.0.1/one2one_cv3.0.1.1/conv/Conv,0,
+247,/model.19/m.0/m/m.0/cv1/conv/Conv,Conv,NPU,Conv,/model.19/m.0/m/m.0/cv1/conv/Conv,1,3686400
+248,/model.23/one2one_cv3.0/one2one_cv3.0.1/one2one_cv3.0.1.1/act/Mul,Mul,NPU,fused into Conv,/model.23/one2one_cv3.0/one2one_cv3.0.1/one2one_cv3.0.1.1/conv/Conv,0,
+249,/model.19/m.0/m/m.0/cv1/act/Sigmoid,Sigmoid,NPU,fused into Conv,/model.19/m.0/m/m.0/cv1/conv/Conv,0,
+250,/model.23/one2one_cv3.0/one2one_cv3.0.2/Conv,Conv,NPU,Conv,/model.23/one2one_cv3.0/one2one_cv3.0.2/Conv,4,10240000
+251,/model.19/m.0/m/m.0/cv1/act/Mul,Mul,NPU,fused into Conv,/model.19/m.0/m/m.0/cv1/conv/Conv,0,
+252,/model.23/Reshape_3,Reshape,PS,ONNX detection tail,/model.23/Reshape_3,0,
+253,/model.19/m.0/m/m.0/cv2/conv/Conv,Conv,NPU,Conv,/model.19/m.0/m/m.0/cv2/conv/Conv,1,3686400
+254,/model.19/m.0/m/m.0/cv2/act/Sigmoid,Sigmoid,NPU,fused into Conv,/model.19/m.0/m/m.0/cv2/conv/Conv,0,
+255,/model.19/m.0/m/m.0/cv2/act/Mul,Mul,NPU,fused into Conv,/model.19/m.0/m/m.0/cv2/conv/Conv,0,
+256,/model.19/m.0/m/m.0/Add,Add,VPU,EWAdd,/model.19/m.0/m/m.0/Add,1,
+257,/model.19/m.0/m/m.1/cv1/conv/Conv,Conv,NPU,Conv,/model.19/m.0/m/m.1/cv1/conv/Conv,1,3686400
+258,/model.19/m.0/m/m.1/cv1/act/Sigmoid,Sigmoid,NPU,fused into Conv,/model.19/m.0/m/m.1/cv1/conv/Conv,0,
+259,/model.19/m.0/m/m.1/cv1/act/Mul,Mul,NPU,fused into Conv,/model.19/m.0/m/m.1/cv1/conv/Conv,0,
+260,/model.19/m.0/m/m.1/cv2/conv/Conv,Conv,NPU,Conv,/model.19/m.0/m/m.1/cv2/conv/Conv,1,3686400
+261,/model.19/m.0/m/m.1/cv2/act/Sigmoid,Sigmoid,NPU,fused into Conv,/model.19/m.0/m/m.1/cv2/conv/Conv,0,
+262,/model.19/m.0/m/m.1/cv2/act/Mul,Mul,NPU,fused into Conv,/model.19/m.0/m/m.1/cv2/conv/Conv,0,
+263,/model.19/m.0/m/m.1/Add,Add,VPU,EWAdd,/model.19/m.0/m/m.1/Add,1,
+264,/model.19/m.0/Concat,Concat,VPU,Concat,/model.19/m.0/Concat,1,
+265,/model.19/m.0/cv3/conv/Conv,Conv,NPU,Conv,/model.19/m.0/cv3/conv/Conv,1,1638400
+266,/model.19/m.0/cv3/act/Sigmoid,Sigmoid,NPU,fused into Conv,/model.19/m.0/cv3/conv/Conv,0,
+267,/model.19/m.0/cv3/act/Mul,Mul,NPU,fused into Conv,/model.19/m.0/cv3/conv/Conv,0,
+268,/model.19/Concat,Concat,VPU,Concat,/model.19/Concat,2,
+269,/model.19/cv2/conv/Conv,Conv,NPU,Conv,/model.19/cv2/conv/Conv,1,9830400
+270,/model.19/cv2/act/Sigmoid,Sigmoid,NPU,fused into Conv,/model.19/cv2/conv/Conv,0,
+271,/model.19/cv2/act/Mul,Mul,NPU,fused into Conv,/model.19/cv2/conv/Conv,0,
+272,/model.20/conv/Conv,Conv,GPU+NPU+VPU,Conv,/model.20/conv/Conv,55,14745600
+273,/model.23/one2one_cv2.1/one2one_cv2.1.0/conv/Conv,Conv,GPU+NPU+VPU,Conv,/model.23/one2one_cv2.1/one2one_cv2.1.0/conv/Conv,28,7372800
+274,/model.23/one2one_cv3.1/one2one_cv3.1.0/one2one_cv3.1.0.0/conv/Conv,Conv,NPU+VPU,Conv,/model.23/one2one_cv3.1/one2one_cv3.1.0/one2one_cv3.1.0.0/conv/Conv,22,460800
+275,/model.20/act/Sigmoid,Sigmoid,GPU+NPU+VPU,fused into Conv,/model.20/conv/Conv,0,
+276,/model.23/one2one_cv2.1/one2one_cv2.1.0/act/Sigmoid,Sigmoid,GPU+NPU+VPU,fused into Conv,/model.23/one2one_cv2.1/one2one_cv2.1.0/conv/Conv,0,
+277,/model.23/one2one_cv3.1/one2one_cv3.1.0/one2one_cv3.1.0.0/act/Sigmoid,Sigmoid,NPU+VPU,fused into Conv,/model.23/one2one_cv3.1/one2one_cv3.1.0/one2one_cv3.1.0.0/conv/Conv,0,
+278,/model.20/act/Mul,Mul,GPU+NPU+VPU,fused into Conv,/model.20/conv/Conv,0,
+279,/model.23/one2one_cv2.1/one2one_cv2.1.0/act/Mul,Mul,GPU+NPU+VPU,fused into Conv,/model.23/one2one_cv2.1/one2one_cv2.1.0/conv/Conv,0,
+280,/model.23/one2one_cv3.1/one2one_cv3.1.0/one2one_cv3.1.0.0/act/Mul,Mul,NPU+VPU,fused into Conv,/model.23/one2one_cv3.1/one2one_cv3.1.0/one2one_cv3.1.0.0/conv/Conv,0,
+281,/model.21/Concat,Concat,VPU,Concat,/model.21/Concat,1,
+282,/model.23/one2one_cv2.1/one2one_cv2.1.1/conv/Conv,Conv,NPU,Conv,/model.23/one2one_cv2.1/one2one_cv2.1.1/conv/Conv,1,921600
+283,/model.23/one2one_cv3.1/one2one_cv3.1.0/one2one_cv3.1.0.1/conv/Conv,Conv,NPU,Conv,/model.23/one2one_cv3.1/one2one_cv3.1.0/one2one_cv3.1.0.1/conv/Conv,1,4096000
+284,/model.22/cv1/conv/Conv,Conv,NPU,Conv,/model.22/cv1/conv/Conv,1,9830400
+285,/model.23/one2one_cv2.1/one2one_cv2.1.1/act/Sigmoid,Sigmoid,NPU,fused into Conv,/model.23/one2one_cv2.1/one2one_cv2.1.1/conv/Conv,0,
+286,/model.23/one2one_cv3.1/one2one_cv3.1.0/one2one_cv3.1.0.1/act/Sigmoid,Sigmoid,NPU,fused into Conv,/model.23/one2one_cv3.1/one2one_cv3.1.0/one2one_cv3.1.0.1/conv/Conv,0,
+287,/model.22/cv1/act/Sigmoid,Sigmoid,NPU,fused into Conv,/model.22/cv1/conv/Conv,0,
+288,/model.23/one2one_cv2.1/one2one_cv2.1.1/act/Mul,Mul,NPU,fused into Conv,/model.23/one2one_cv2.1/one2one_cv2.1.1/conv/Conv,0,
+289,/model.23/one2one_cv3.1/one2one_cv3.1.0/one2one_cv3.1.0.1/act/Mul,Mul,NPU,fused into Conv,/model.23/one2one_cv3.1/one2one_cv3.1.0/one2one_cv3.1.0.1/conv/Conv,0,
+290,/model.22/cv1/act/Mul,Mul,NPU,fused into Conv,/model.22/cv1/conv/Conv,0,
+291,/model.23/one2one_cv2.1/one2one_cv2.1.2/Conv,Conv,NPU,Conv,/model.23/one2one_cv2.1/one2one_cv2.1.2/Conv,1,25600
+292,/model.23/one2one_cv3.1/one2one_cv3.1.1/one2one_cv3.1.1.0/conv/Conv,Conv,NPU+VPU,Conv,/model.23/one2one_cv3.1/one2one_cv3.1.1/one2one_cv3.1.1.0/conv/Conv,13,288000
+293,/model.22/Split,Split,VPU,Split,/model.22/Split,1,
+294,/model.23/Reshape_1,Reshape,PS,ONNX detection tail,/model.23/Reshape_1,0,
+295,/model.23/one2one_cv3.1/one2one_cv3.1.1/one2one_cv3.1.1.0/act/Sigmoid,Sigmoid,NPU+VPU,fused into Conv,/model.23/one2one_cv3.1/one2one_cv3.1.1/one2one_cv3.1.1.0/conv/Conv,0,
+296,/model.22/m.0/m.0.0/cv1/conv/Conv,Conv,GPU+NPU+VPU,Conv,/model.22/m.0/m.0.0/cv1/conv/Conv,30,7372800
+297,/model.23/one2one_cv3.1/one2one_cv3.1.1/one2one_cv3.1.1.0/act/Mul,Mul,NPU+VPU,fused into Conv,/model.23/one2one_cv3.1/one2one_cv3.1.1/one2one_cv3.1.1.0/conv/Conv,0,
+298,/model.22/m.0/m.0.0/cv1/act/Sigmoid,Sigmoid,GPU+NPU+VPU,fused into Conv,/model.22/m.0/m.0.0/cv1/conv/Conv,0,
+299,/model.23/one2one_cv3.1/one2one_cv3.1.1/one2one_cv3.1.1.1/conv/Conv,Conv,NPU,Conv,/model.23/one2one_cv3.1/one2one_cv3.1.1/one2one_cv3.1.1.1/conv/Conv,1,2560000
+300,/model.22/m.0/m.0.0/cv1/act/Mul,Mul,GPU+NPU+VPU,fused into Conv,/model.22/m.0/m.0.0/cv1/conv/Conv,0,
+301,/model.23/one2one_cv3.1/one2one_cv3.1.1/one2one_cv3.1.1.1/act/Sigmoid,Sigmoid,NPU,fused into Conv,/model.23/one2one_cv3.1/one2one_cv3.1.1/one2one_cv3.1.1.1/conv/Conv,0,
+302,/model.22/m.0/m.0.0/cv2/conv/Conv,Conv,GPU+NPU+VPU,Conv,/model.22/m.0/m.0.0/cv2/conv/Conv,40,7372800
+303,/model.23/one2one_cv3.1/one2one_cv3.1.1/one2one_cv3.1.1.1/act/Mul,Mul,NPU,fused into Conv,/model.23/one2one_cv3.1/one2one_cv3.1.1/one2one_cv3.1.1.1/conv/Conv,0,
+304,/model.22/m.0/m.0.0/cv2/act/Sigmoid,Sigmoid,GPU+NPU+VPU,fused into Conv,/model.22/m.0/m.0.0/cv2/conv/Conv,0,
+305,/model.23/one2one_cv3.1/one2one_cv3.1.2/Conv,Conv,NPU,Conv,/model.23/one2one_cv3.1/one2one_cv3.1.2/Conv,1,2560000
+306,/model.22/m.0/m.0.0/cv2/act/Mul,Mul,GPU+NPU+VPU,fused into Conv,/model.22/m.0/m.0.0/cv2/conv/Conv,0,
+307,/model.23/Reshape_4,Reshape,PS,ONNX detection tail,/model.23/Reshape_4,0,
+308,/model.22/m.0/m.0.0/Add,Add,VPU,EWAdd,/model.22/m.0/m.0.0/Add,1,
+309,/model.22/m.0/m.0.1/attn/qkv/conv/Conv,Conv,NPU,Conv,/model.22/m.0/m.0.1/attn/qkv/conv/Conv,1,3276800
+310,/model.22/m.0/m.0.1/attn/Reshape,Reshape,VPU,Reshape,/model.22/m.0/m.0.1/attn/Reshape,1,
+311,/model.22/m.0/m.0.1/attn/Split,Split,VPU,Split,/model.22/m.0/m.0.1/attn/Split,6,
+312,/model.22/m.0/m.0.1/attn/Mul,Mul,VPU,EWMul,/model.22/m.0/m.0.1/attn/Mul,1,
+313,/model.22/m.0/m.0.1/attn/Reshape_2,Reshape,VPU,Reshape,/model.22/m.0/m.0.1/attn/Reshape_2,1,
+314,/model.22/m.0/m.0.1/attn/Transpose,Transpose,VPU,Transpose,/model.22/m.0/m.0.1/attn/Transpose,2,
+315,/model.22/m.0/m.0.1/attn/pe/conv/Conv,Conv,NPU+VPU,Conv,/model.22/m.0/m.0.1/attn/pe/conv/Conv,22,115200
+316,/model.22/m.0/m.0.1/attn/MatMul,MatMul,NPU+VPU,MatMul,/model.22/m.0/m.0.1/attn/MatMul,4,640000
+317,/model.22/m.0/m.0.1/attn/Softmax,Softmax,GPU,Q23Softmax,/model.22/m.0/m.0.1/attn/Softmax,25,
+318,/model.22/m.0/m.0.1/attn/Transpose_1,Transpose,VPU,Transpose,/model.22/m.0/m.0.1/attn/Transpose_1,2,
+319,/model.22/m.0/m.0.1/attn/MatMul_1,MatMul,NPU+VPU,MatMul,/model.22/m.0/m.0.1/attn/MatMul_1,6,1280000
+320,/model.22/m.0/m.0.1/attn/Reshape_1,Reshape,VPU,Reshape,/model.22/m.0/m.0.1/attn/Reshape_1,1,
+321,/model.22/m.0/m.0.1/attn/Add,Add,VPU,EWAdd,/model.22/m.0/m.0.1/attn/Add,1,
+322,/model.22/m.0/m.0.1/attn/proj/conv/Conv,Conv,NPU,Conv,/model.22/m.0/m.0.1/attn/proj/conv/Conv,1,1638400
+323,/model.22/m.0/m.0.1/Add,Add,VPU,EWAdd,/model.22/m.0/m.0.1/Add,1,
+324,/model.22/m.0/m.0.1/ffn/ffn.0/conv/Conv,Conv,NPU,Conv,/model.22/m.0/m.0.1/ffn/ffn.0/conv/Conv,1,3276800
+325,/model.22/m.0/m.0.1/ffn/ffn.0/act/Sigmoid,Sigmoid,NPU,fused into Conv,/model.22/m.0/m.0.1/ffn/ffn.0/conv/Conv,0,
+326,/model.22/m.0/m.0.1/ffn/ffn.0/act/Mul,Mul,NPU,fused into Conv,/model.22/m.0/m.0.1/ffn/ffn.0/conv/Conv,0,
+327,/model.22/m.0/m.0.1/ffn/ffn.1/conv/Conv,Conv,NPU,Conv,/model.22/m.0/m.0.1/ffn/ffn.1/conv/Conv,1,3276800
+328,/model.22/m.0/m.0.1/Add_1,Add,VPU,EWAdd,/model.22/m.0/m.0.1/Add_1,1,
+329,/model.22/Concat,Concat,VPU,Concat,/model.22/Concat,2,
+330,/model.22/cv2/conv/Conv,Conv,NPU,Conv,/model.22/cv2/conv/Conv,1,9830400
+331,/model.22/cv2/act/Sigmoid,Sigmoid,NPU,fused into Conv,/model.22/cv2/conv/Conv,0,
+332,/model.22/cv2/act/Mul,Mul,NPU,fused into Conv,/model.22/cv2/conv/Conv,0,
+333,/model.23/one2one_cv2.2/one2one_cv2.2.0/conv/Conv,Conv,GPU+NPU+VPU,Conv,/model.23/one2one_cv2.2/one2one_cv2.2.0/conv/Conv,19,3686400
+334,/model.23/one2one_cv3.2/one2one_cv3.2.0/one2one_cv3.2.0.0/conv/Conv,Conv,NPU+VPU,Conv,/model.23/one2one_cv3.2/one2one_cv3.2.0/one2one_cv3.2.0.0/conv/Conv,46,230400
+335,/model.23/one2one_cv2.2/one2one_cv2.2.0/act/Sigmoid,Sigmoid,GPU+NPU+VPU,fused into Conv,/model.23/one2one_cv2.2/one2one_cv2.2.0/conv/Conv,0,
+336,/model.23/one2one_cv3.2/one2one_cv3.2.0/one2one_cv3.2.0.0/act/Sigmoid,Sigmoid,NPU+VPU,fused into Conv,/model.23/one2one_cv3.2/one2one_cv3.2.0/one2one_cv3.2.0.0/conv/Conv,0,
+337,/model.23/one2one_cv2.2/one2one_cv2.2.0/act/Mul,Mul,GPU+NPU+VPU,fused into Conv,/model.23/one2one_cv2.2/one2one_cv2.2.0/conv/Conv,0,
+338,/model.23/one2one_cv3.2/one2one_cv3.2.0/one2one_cv3.2.0.0/act/Mul,Mul,NPU+VPU,fused into Conv,/model.23/one2one_cv3.2/one2one_cv3.2.0/one2one_cv3.2.0.0/conv/Conv,0,
+339,/model.23/one2one_cv2.2/one2one_cv2.2.1/conv/Conv,Conv,NPU,Conv,/model.23/one2one_cv2.2/one2one_cv2.2.1/conv/Conv,1,230400
+340,/model.23/one2one_cv3.2/one2one_cv3.2.0/one2one_cv3.2.0.1/conv/Conv,Conv,NPU,Conv,/model.23/one2one_cv3.2/one2one_cv3.2.0/one2one_cv3.2.0.1/conv/Conv,1,2048000
+341,/model.23/one2one_cv2.2/one2one_cv2.2.1/act/Sigmoid,Sigmoid,NPU,fused into Conv,/model.23/one2one_cv2.2/one2one_cv2.2.1/conv/Conv,0,
+342,/model.23/one2one_cv3.2/one2one_cv3.2.0/one2one_cv3.2.0.1/act/Sigmoid,Sigmoid,NPU,fused into Conv,/model.23/one2one_cv3.2/one2one_cv3.2.0/one2one_cv3.2.0.1/conv/Conv,0,
+343,/model.23/one2one_cv2.2/one2one_cv2.2.1/act/Mul,Mul,NPU,fused into Conv,/model.23/one2one_cv2.2/one2one_cv2.2.1/conv/Conv,0,
+344,/model.23/one2one_cv3.2/one2one_cv3.2.0/one2one_cv3.2.0.1/act/Mul,Mul,NPU,fused into Conv,/model.23/one2one_cv3.2/one2one_cv3.2.0/one2one_cv3.2.0.1/conv/Conv,0,
+345,/model.23/one2one_cv2.2/one2one_cv2.2.2/Conv,Conv,NPU,Conv,/model.23/one2one_cv2.2/one2one_cv2.2.2/Conv,1,6400
+346,/model.23/one2one_cv3.2/one2one_cv3.2.1/one2one_cv3.2.1.0/conv/Conv,Conv,NPU+VPU,Conv,/model.23/one2one_cv3.2/one2one_cv3.2.1/one2one_cv3.2.1.0/conv/Conv,13,72000
+347,/model.23/Reshape_2,Reshape,PS,ONNX detection tail,/model.23/Reshape_2,0,
+348,/model.23/one2one_cv3.2/one2one_cv3.2.1/one2one_cv3.2.1.0/act/Sigmoid,Sigmoid,NPU+VPU,fused into Conv,/model.23/one2one_cv3.2/one2one_cv3.2.1/one2one_cv3.2.1.0/conv/Conv,0,
+349,/model.23/Concat,Concat,PS,ONNX detection tail,/model.23/Concat,0,
+350,/model.23/one2one_cv3.2/one2one_cv3.2.1/one2one_cv3.2.1.0/act/Mul,Mul,NPU+VPU,fused into Conv,/model.23/one2one_cv3.2/one2one_cv3.2.1/one2one_cv3.2.1.0/conv/Conv,0,
+351,/model.23/one2one_cv3.2/one2one_cv3.2.1/one2one_cv3.2.1.1/conv/Conv,Conv,NPU,Conv,/model.23/one2one_cv3.2/one2one_cv3.2.1/one2one_cv3.2.1.1/conv/Conv,1,640000
+352,/model.23/Slice,Slice,PS,ONNX detection tail,/model.23/Slice,0,
+353,/model.23/Slice_1,Slice,PS,ONNX detection tail,/model.23/Slice_1,0,
+354,/model.23/one2one_cv3.2/one2one_cv3.2.1/one2one_cv3.2.1.1/act/Sigmoid,Sigmoid,NPU,fused into Conv,/model.23/one2one_cv3.2/one2one_cv3.2.1/one2one_cv3.2.1.1/conv/Conv,0,
+355,/model.23/Sub,Sub,PS,ONNX detection tail,/model.23/Sub,0,
+356,/model.23/Add_1,Add,PS,ONNX detection tail,/model.23/Add_1,0,
+357,/model.23/one2one_cv3.2/one2one_cv3.2.1/one2one_cv3.2.1.1/act/Mul,Mul,NPU,fused into Conv,/model.23/one2one_cv3.2/one2one_cv3.2.1/one2one_cv3.2.1.1/conv/Conv,0,
+358,/model.23/Concat_2,Concat,PS,ONNX detection tail,/model.23/Concat_2,0,
+359,/model.23/one2one_cv3.2/one2one_cv3.2.2/Conv,Conv,NPU,Conv,/model.23/one2one_cv3.2/one2one_cv3.2.2/Conv,1,640000
+360,/model.23/Mul_2,Mul,PS,ONNX detection tail,/model.23/Mul_2,0,
+361,/model.23/Reshape_5,Reshape,PS,ONNX detection tail,/model.23/Reshape_5,0,
+362,/model.23/Concat_1,Concat,PS,ONNX detection tail,/model.23/Concat_1,0,
+363,/model.23/Sigmoid,Sigmoid,PS,ONNX detection tail,/model.23/Sigmoid,0,
+364,/model.23/Concat_3,Concat,PS,ONNX detection tail,/model.23/Concat_3,0,
+365,/model.23/Transpose,Transpose,PS,ONNX detection tail,/model.23/Transpose,0,
+366,/model.23/Split,Split,PS,ONNX detection tail,/model.23/Split,0,
+367,/model.23/ReduceMax,ReduceMax,PS,ONNX detection tail,/model.23/ReduceMax,0,
+368,/model.23/TopK,TopK,PS,ONNX detection tail,/model.23/TopK,0,
+369,/model.23/Unsqueeze,Unsqueeze,PS,ONNX detection tail,/model.23/Unsqueeze,0,
+370,/model.23/Expand,Expand,PS,ONNX detection tail,/model.23/Expand,0,
+371,/model.23/GatherElements,GatherElements,PS,ONNX detection tail,/model.23/GatherElements,0,
+372,/model.23/Flatten,Flatten,PS,ONNX detection tail,/model.23/Flatten,0,
+373,/model.23/TopK_1,TopK,PS,ONNX detection tail,/model.23/TopK_1,0,
+374,/model.23/Unsqueeze_1,Unsqueeze,PS,ONNX detection tail,/model.23/Unsqueeze_1,0,
+375,/model.23/Mod,Mod,PS,ONNX detection tail,/model.23/Mod,0,
+376,/model.23/Div_1,Div,PS,ONNX detection tail,/model.23/Div_1,0,
+377,/model.23/Unsqueeze_2,Unsqueeze,PS,ONNX detection tail,/model.23/Unsqueeze_2,0,
+378,/model.23/GatherElements_1,GatherElements,PS,ONNX detection tail,/model.23/GatherElements_1,0,
+379,/model.23/Cast,Cast,PS,ONNX detection tail,/model.23/Cast,0,
+380,/model.23/Unsqueeze_3,Unsqueeze,PS,ONNX detection tail,/model.23/Unsqueeze_3,0,
+381,/model.23/Expand_1,Expand,PS,ONNX detection tail,/model.23/Expand_1,0,
+382,/model.23/GatherElements_2,GatherElements,PS,ONNX detection tail,/model.23/GatherElements_2,0,
+383,/model.23/Concat_4,Concat,PS,ONNX detection tail,/model.23/Concat_4,0,

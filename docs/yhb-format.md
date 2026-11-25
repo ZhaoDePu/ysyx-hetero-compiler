@@ -206,3 +206,13 @@ the Verilator HAL, AXI transactions, DMA-busy ticks and the simultaneous
 DMA/compute or three-engine busy ticks are observed from the simulated
 interface and frozen busy signals. Native Linux supports the common
 hardware MMIO counters.
+
+## C6 DDR spills
+
+YHB1 retains the original INITIAL records. In the compiler manifest,
+`initial_ddr_extents` can specify file-backed DDR ranges using
+`ddr_offset`, `bytes`, `file`, and an optional `file_offset`. The
+Z15 compiler can omit intermediate activation bytes from the initial
+payload. At encoding time it proves each DMA load reads an initial span,
+a required external input, or a span made available by a preceding
+completed STORE. Legacy manifests keep their existing dense extraction.

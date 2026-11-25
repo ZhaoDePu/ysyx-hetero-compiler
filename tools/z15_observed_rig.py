@@ -1,7 +1,7 @@
 """Attach passive counters to the frozen board testbench at each simulated tick."""
 
+import argparse
 from pathlib import Path
-import sys
 
 
 def substitute(source, old, new):
@@ -10,7 +10,9 @@ def substitute(source, old, new):
     return source.replace(old, new)
 
 
-def observe(source):
+def observe(source, gpu_step=2, gpu_divisor=3):
+    if not 0 < gpu_step < gpu_divisor:
+        raise ValueError("expected GPU/NPU clock ratio between zero and one")
     result = substitute(source, '#include "Vz15_bd_axi_shell.h"',
                         '#include "Vz15_bd_axi_shell.h"\n#include "Vz15_bd_axi_shell___024root.h"')
     result = substitute(result, "    unsigned transactions=0;",
@@ -21,7 +23,9 @@ def observe(source):
     uint64_t c4_occupancy[8]={};
     uint64_t c4_read_overlap_beats=0,c4_write_overlap_beats=0;""")
     result = substitute(result, "        gpu_phase+=2;",
-                        "        const bool was_gpu_high=dut.clk_gpu;\n        gpu_phase+=2;")
+                        f"        const bool was_gpu_high=dut.clk_gpu;\n        gpu_phase+={gpu_step};")
+    result = substitute(result, "if(gpu_phase>=3) { gpu_phase-=3;",
+                        f"if(gpu_phase>={gpu_divisor}) {{ gpu_phase-={gpu_divisor};")
     result = substitute(result, "        context.timeInc(1);\n        dut.eval();",
                         """        context.timeInc(1);
         dut.eval();
@@ -57,5 +61,10 @@ def observe(source):
 
 
 if __name__ == "__main__":
-    src, dst = (Path(arg) for arg in sys.argv[1:])
-    dst.write_text(observe(src.read_text(encoding="utf-8")), encoding="utf-8")
+    cli = argparse.ArgumentParser(description=__doc__)
+    cli.add_argument("src", type=Path)
+    cli.add_argument("dst", type=Path)
+    cli.add_argument("--gpu-clock-ratio", choices=("2:3", "4:5"), default="2:3")
+    args = cli.parse_args()
+    step, divisor = map(int, args.gpu_clock_ratio.split(":"))
+    args.dst.write_text(observe(args.src.read_text(encoding="utf-8"), step, divisor), encoding="utf-8")
