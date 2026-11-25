@@ -2,6 +2,8 @@
 
 import math
 
+from . import z15_vpu
+
 from .ir import DTYPES, GraphError
 from .layout import ARITIES as LAYOUT_OPS
 from .layout_reference import evaluate_layout
@@ -212,6 +214,13 @@ def evaluate(graph, inputs=None):
                 result = (round(x/(1 + math.exp(-x/16))) for x in a)
         elif op == "GELU":
             result = (round(x/2 * (1 + math.erf(x/(16*math.sqrt(2))))) for x in a)
+        elif op in ("QRMSNorm", "Z15RMSNorm"):
+            result = z15_vpu.rmsnorm(a, operands[1], *shapes[0],
+                                     **{k: attrs[k] for k in ("gain", "epsilon", "shift")})
+        elif op == "Z15Softmax":
+            result = z15_vpu.softmax(a, *shapes[0], **attrs)
+        elif op == "Z15Mul":
+            result = z15_vpu.mul(a, operands[1], **attrs)
         elif op == "RMSNorm":
             rows, cols = shapes[0]
             output = []
@@ -242,7 +251,7 @@ def evaluate(graph, inputs=None):
         elif op == "YoloNMS":
             result = _nms(a, attrs["score_threshold"], attrs["iou_threshold"])
         elif op == "Attention":
-            result = _attention(*operands, *shapes, attrs)
+            result = (z15_vpu.attention if attrs.get("packed_v") else _attention)(*operands, *shapes, attrs)
         elif op == "GatedBranch":
             result = _gated(a, attrs["threshold"], attrs["rounds"])
         else:

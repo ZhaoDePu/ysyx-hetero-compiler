@@ -19,6 +19,9 @@ _MAX_PAGE = 4096
 _BEAT = 32
 _WIDTH = 4
 _SCORE_SHIFT = 3
+# Raw dot products represented approximately logit = raw / 64 in C4-A.
+# The native base-two weights use the nearest integral exp shift to that scale.
+_NATIVE_EXP_SHIFT = 5
 
 
 def normalize_model(raw):
@@ -62,8 +65,10 @@ def _nbytes(spec):
 
 
 class _Schedule:
-    def __init__(self, model, mode, checkpoints):
+    def __init__(self, model, mode, checkpoints, vpu_lowering, vpu_attention):
         self.model, self.mode, self.checkpoints = model, mode, checkpoints
+        self.vpu_lowering, self.vpu_attention = vpu_lowering, vpu_attention
+        self.native_attention = vpu_lowering == "on"
         self.profile = load_profile("fpga_zu15eg_balanced")
         self.tensors, self.storage, self.views = {}, {}, {}
         self.stages, self.execution, self.tiles = [], [], []
@@ -110,6 +115,7 @@ class _Schedule:
         self.stages.append(obj)
         self.execution.extend([{"type": "launch", "stage": name, "device": device, "zone": 0},
                                {"type": "fence", "wait_for": name, "zone": 0}])
+        return obj
 
     def project(self, name, inp, projection, out, shift, relu=False):
         mid = self.tensor(name+"-acc", self.tensors[out]["shape"], "int32", "ssa")
@@ -138,6 +144,25 @@ class _Schedule:
         graph = {"tensors": self.tensors}
         self.stage(name, "Add", [a,b], out, device="VPU" if npu.supports(node,graph,self.profile) else "GPU")
 
+    def attend_native(self, name, q, start, rows, end, new_start):
+        # ATTN uses the full fixed pitch. Its causal mask excludes all slots
+        # beyond the current query, so future rows need no initialization.
+        pitch = self.tensors["k-state"]["shape"][0]
+        vp = self.view(name+"-values-append-packed", "value-pack-buffer", new_start,
+                       (end - new_start + (_WIDTH - 1) * pitch,))
+        self.stage(name+"-pack-new-values", "Z15Transpose", [name+"-append-v"], vp,
+                   {"stride":pitch}, device="VPU")
+        kp = self.view(name+"-keys-visible", "k-state", 0, (pitch, _WIDTH))
+        packed = self.view(name+"-values-packed", "value-pack-buffer", 0, (_WIDTH, pitch))
+        pv = self.view(name+"-pv", "native-pv-workspace", 0, (rows, _WIDTH))
+        stage = self.stage(name+"-native-attention", "Attention", [q, kp, packed], pv,
+                           {"causal":True, "position":start, "packed_v":True,
+                            "exp_shift":_NATIVE_EXP_SHIFT, "fast":self.vpu_attention=="fast"},
+                           device="NPU")
+        self.view(npu._scores(stage), "native-scores-workspace", 0, (rows, pitch))
+        self.view(npu._probabilities(stage), "native-prob-workspace", 0, (rows, pitch))
+        return pv
+
     def tile(self, start, rows, index, prefill):
         end, d = start+rows, _WIDTH
         self.bank = index % 2
@@ -154,7 +179,8 @@ class _Schedule:
             emb_prod = self.tensor(name+"-feedback-product", shape, "int32")
             self.stage(name+"-embedding-mul", "Mul", [claimed,"token-gain"], emb_prod)
             self.stage(name+"-embedding-add", "Add", [emb_prod,"token-bias"], x)
-        q = self.tensor(name+"-q", shape, "int8")
+        q = (self.view(name+"-q", "query-stage-buffer", 0, shape) if self.native_attention
+             else self.tensor(name+"-q", shape, "int8"))
         self.project(name+"-query", x, "q", q, 1)
         # The no-reuse baseline differs only in the extent of these two physical stores.
         new_start = 0 if not prefill and self.mode == "recompute" else start
@@ -163,22 +189,25 @@ class _Schedule:
         for key in ("k", "v"):
             wrote = self.view(name+f"-append-{key}", f"{key}-state", new_start*d, (kv_rows,d))
             self.project(name+f"-{key}-projection", source, key, wrote, 1)
-        kp = self.view(name+"-keys-visible", "k-state", 0, (end,d))
-        vp = self.view(name+"-values-visible", "v-state", 0, (end,d))
-        logits_qk = self.tensor(name+"-scores-q", (rows,end), "int8")
-        self.scores(name+"-qk", q, kp, logits_qk)
-        probability = self.tensor(name+"-prob", (rows,end), "uint8")
-        self.stage(name+"-causal-softmax", "QSoftmax", [logits_qk], probability,
-                   {"axis": 1, "algorithm": "q23", "causal_offset": start,
-                    "in_scale": [1,8], "out_scale": [1,128], "zero_point": 0})
-        pv = self.tensor(name+"-pv", shape, "int8")
-        mid = self.tensor(name+"-pv-acc", shape, "int32", "ssa")
-        ins = [probability,vp]
-        self.stage(name+"-weighted-value", "Gemm", ins, pv, fused=[
-            {"id": name+"-pv-dot", "op": "Gemm", "inputs": ins, "output": mid, "attrs": {}},
-            {"id": name+"-pv-scale", "op": "Requant", "inputs": [mid],
-             "output": pv, "attrs": {"shift": 7}},
-        ])
+        if self.native_attention:
+            pv = self.attend_native(name, q, start, rows, end, new_start)
+        else:
+            kp = self.view(name+"-keys-visible", "k-state", 0, (end,d))
+            vp = self.view(name+"-values-visible", "v-state", 0, (end,d))
+            logits_qk = self.tensor(name+"-scores-q", (rows,end), "int8")
+            self.scores(name+"-qk", q, kp, logits_qk)
+            probability = self.tensor(name+"-prob", (rows,end), "uint8")
+            self.stage(name+"-causal-softmax", "QSoftmax", [logits_qk], probability,
+                       {"axis": 1, "algorithm": "q23", "causal_offset": start,
+                        "in_scale": [1,8], "out_scale": [1,128], "zero_point": 0})
+            pv = self.tensor(name+"-pv", shape, "int8")
+            mid = self.tensor(name+"-pv-acc", shape, "int32", "ssa")
+            ins = [probability,vp]
+            self.stage(name+"-weighted-value", "Gemm", ins, pv, fused=[
+                {"id": name+"-pv-dot", "op": "Gemm", "inputs": ins, "output": mid, "attrs": {}},
+                {"id": name+"-pv-scale", "op": "Requant", "inputs": [mid],
+                 "output": pv, "attrs": {"shift": 7}},
+            ])
         attention = self.tensor(name+"-attention-out", shape, "int8")
         self.project(name+"-attention-project", pv, "out", attention, 1)
         residual = self.tensor(name+"-residual", shape, "int8")
@@ -208,7 +237,7 @@ class _Schedule:
         fixed = 0
         alloc = {}
         for name, desc in self.storage.items():
-            if desc["kind"] == "temp":
+            if desc["kind"] in ("temp", "native_attention_workspace"):
                 continue
             used = _align(desc["size"], _BEAT)
             alloc[name] = {"offset": fixed, "size": desc["size"], "stored_size": used,
@@ -246,11 +275,20 @@ class _Schedule:
             cursor += width
         if cursor > _MAX_PAGE:
             raise GraphError("resident KV and temporary banks exceed the selected GPU page")
+        native_workspace = 0
+        for name, desc in self.storage.items():
+            if desc["kind"] != "native_attention_workspace":
+                continue
+            used = _align(desc["size"], _BEAT)
+            alloc[name] = {"offset": cursor, "size": desc["size"], "stored_size": used,
+                           "region": desc["kind"], "zone": 0}
+            cursor += used
+            native_workspace += used
         for name,(parent,offset) in self.views.items():
             backing = alloc[parent]
             alloc[name] = {"offset": backing["offset"] + offset,"size": _nbytes(self.tensors[name]),
                            "region": backing["region"], "view_of": parent,"byte_offset": offset,"zone": 0}
-        peak = max(fixed+sum(rec["stored_size"] for group in live for rec in group.values()
+        peak = max(fixed+native_workspace+sum(rec["stored_size"] for group in live for rec in group.values()
                              if rec["first"] <= i <= rec["last"])
                    for i in range(len(self.execution)))
         return alloc,banks,peak,cursor
@@ -259,8 +297,18 @@ class _Schedule:
         seq, tile, steps, d = (self.model[k] for k in ("prefill_rows","tile_rows","decode_steps","width"))
         total = seq+steps
         self.tensor("x-history",(total,d),"int8","resident_history")
-        self.tensor("k-state",(total,d),"int8","resident_kv" if self.mode=="cached" else "full_prefix_workspace")
-        self.tensor("v-state",(total,d),"int8","resident_kv" if self.mode=="cached" else "full_prefix_workspace")
+        hardware_rows = _align(total, 4) if self.native_attention else total
+        if self.native_attention:
+            self.tensor("query-stage-buffer", (tile, d), "int8", "resident_attention_staging")
+        for key in ("k", "v"):
+            self.tensor(key+"-state", (hardware_rows,d), "int8",
+                        "resident_kv" if self.mode=="cached" else "full_prefix_workspace")
+        if self.native_attention:
+            self.tensor("value-pack-buffer", (d, hardware_rows), "int8",
+                        "resident_kv" if self.mode=="cached" else "full_prefix_workspace")
+            self.tensor("native-scores-workspace", (tile, hardware_rows), "int32", "native_attention_workspace")
+            self.tensor("native-prob-workspace", (tile, hardware_rows), "uint8", "native_attention_workspace")
+            self.tensor("native-pv-workspace", (tile, d), "int8", "native_attention_workspace")
         self.tensor("prefill-logits-buffer",(seq,d),"int8","resident_output")
         self.tensor("prefill-tokens-buffer",(seq,),"int64","resident_output")
         prompt = self.view("prompt-input","x-history",0,(seq,d))
@@ -292,8 +340,11 @@ class _Schedule:
             self.output(ids,f"decode_{step+1}_token")
             self.move("store",ids,"token_feedback")
             if step == steps-1:
-                self.output("k-state","k_cache")
-                self.output("v-state","v_cache")
+                for key in ("k", "v"):
+                    state = key+"-state"
+                    exported = (self.view(key+"-export", state, 0, (total,d))
+                                if hardware_rows != total else state)
+                    self.output(exported, key+"_cache")
             if self.checkpoints:
                 self.execution.append({"type":"yield","step":step+1})
 
@@ -306,6 +357,9 @@ class _Schedule:
                 "streaming":True,
                 "resident_kv":{name:alloc[name] for name in ("k-state","v-state")},
                 "transient_banks":banks,"kv_tiles":self.tiles}
+        if self.native_attention:
+            plan["resident_kv"]["value-pack-buffer"] = alloc["value-pack-buffer"]
+            plan["native_attention_pitch"] = hardware_rows
         devices = {"gpu":gpu.lower(graph,plan,self.profile,directory),
                    "npu":npu.lower(graph,plan,self.profile,directory)}
         constants = {entry["tensor"]:bytes(entry["data"]) for entry in devices["npu"]["constants"]}
@@ -358,6 +412,9 @@ class _Schedule:
                     "backends":devices,"estimates":estimates,
                     "kv":{"model":self.model,"mode":self.mode,"checkpoints":self.checkpoints},
                     "program":"program.yhb"}
+        if self.native_attention:
+            manifest["kv"].update(vpu_lowering=self.vpu_lowering, vpu_attention=self.vpu_attention)
+            estimates["native_attention_commands"] = sum(stage["op"] == "Attention" for stage in self.stages)
         (directory/"bundle.json").write_text(json.dumps(manifest,indent=2)+"\n")
         (directory/"memory_plan.json").write_text(json.dumps(plan,indent=2)+"\n")
         (directory/"analysis.json").write_text(json.dumps(estimates,indent=2)+"\n")
@@ -365,10 +422,13 @@ class _Schedule:
         return manifest
 
 
-def compile_kv_bundle(model, destination, *, mode="cached", checkpoints=True):
+def compile_kv_bundle(model, destination, *, mode="cached", checkpoints=True,
+                      vpu_lowering="off", vpu_attention="exact"):
     """Produce the normal Z15 bundle with a statically tiled, stateful execution plan."""
     if mode not in ("cached","recompute"):
         raise GraphError("KV mode must be cached or recompute")
+    if vpu_lowering not in ("off", "on") or vpu_attention not in ("exact", "fast"):
+        raise GraphError("invalid KV VPU lowering or attention mode")
     dest = Path(destination)
     if dest.exists() or dest.is_symlink():
         raise FileExistsError(dest)
@@ -377,7 +437,7 @@ def compile_kv_bundle(model, destination, *, mode="cached", checkpoints=True):
     with TemporaryDirectory(prefix=".kv-",dir=dest.parent) as name:
         staging=Path(name)/"bundle"
         staging.mkdir()
-        result=_Schedule(model,mode,checkpoints).bundle(staging)
+        result=_Schedule(model,mode,checkpoints,vpu_lowering,vpu_attention).bundle(staging)
         staging.rename(dest)
     return result
 
@@ -387,10 +447,13 @@ def main():
     parser.add_argument("--graph", required=True, type=Path, help="Static causal KV model JSON")
     parser.add_argument("--out", required=True, type=Path, help="New bundle directory")
     parser.add_argument("--mode", choices=("cached", "recompute"), default="cached")
+    parser.add_argument("--vpu-lowering", choices=("off", "on"), default="off")
+    parser.add_argument("--vpu-attention", choices=("exact", "fast"), default="exact")
     args = parser.parse_args()
     try:
         model = json.loads(args.graph.read_text(encoding="utf-8"))
-        result = compile_kv_bundle(model, args.out, mode=args.mode)
+        result = compile_kv_bundle(model, args.out, mode=args.mode,
+                                   vpu_lowering=args.vpu_lowering, vpu_attention=args.vpu_attention)
     except (ValueError, OSError) as exc:
         parser.exit(2, f"compiler error: {exc}\n")
     print(f"{result['profile']['name']}: {1 + result['estimates']['decode_steps']} checkpoints, bundle {args.out}")

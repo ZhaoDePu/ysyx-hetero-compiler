@@ -9,7 +9,7 @@ DTYPES = {"int8": (1, -128, 127), "uint8": (1, 0, 255),
           "int64": (8, -(1 << 63), (1 << 63) - 1)}
 ARITIES = {"Gemm": (2, 3), "Conv": (2, 3), "Add": (2,), "Mul": (2,),
            "Relu": (1,), "Requant": (1,), "SiLU": (1,), "GELU": (1,),
-           "Attention": (3,), "GatedBranch": (1,), "RMSNorm": (1,), "RowSoftmax": (1,),
+           "Attention": (3,), "GatedBranch": (1,), "RMSNorm": (1,), "QRMSNorm": (2,), "RowSoftmax": (1,),
            "C2f": (2,), "SPPF": (1,), "YoloDetectHead": (2,), "YoloNMS": (1,), **layout.ARITIES}
 ALIASES = {"MatMul": "Gemm", "BiasAdd": "Add", "ReLU": "Relu",
            "Silu": "SiLU", "Gelu": "GELU", "MatMulS32": "Gemm",
@@ -55,6 +55,7 @@ def _attributes(op, a, node):
         "Mul": set(), "Relu": set(), "Requant": {"multiplier", "shift", "zero_point", "input_zero_point", "divisor", "rounding"},
         "SiLU": {"mode"}, "GELU": set(), "Attention": {"causal", "exp_shift", "position"},
         "GatedBranch": {"threshold", "rounds"}, "RMSNorm": set(),
+        "QRMSNorm": {"gain", "epsilon", "shift"},
         "RowSoftmax": {"causal_mask"}, "C2f": set(), "SPPF": {"kernel"},
         "YoloDetectHead": {"reg_max", "stride"}, "YoloNMS": {"score_threshold", "iou_threshold"},
     }[op]
@@ -164,6 +165,15 @@ def _infer(op, inputs, attrs, legacy, output_dtype):
         if (not _ints([attrs.setdefault("rounds", 64)], 1, 64, 4096) or
                 not _ints([attrs.setdefault("threshold", 0)], 1, *DTYPES[dtype][1:])):
             raise GraphError("GatedBranch: invalid rounds or threshold")
+    if op == "QRMSNorm":
+        gamma = inputs[1]
+        if (len(shape) != 2 or shape[-1] > 1020 or dtype != "int8" or
+                gamma["dtype"] != "int8" or gamma["shape"] != [shape[-1]] or
+                output_dtype not in (None, "int8") or
+                any(not _ints([attrs.get(k)], 1, lo, hi) for k,lo,hi in (
+                    ("gain", 1, 4095), ("epsilon", 0, (1 << 24) - 1), ("shift", 0, 31)))):
+            raise GraphError("QRMSNorm requires rank-2 signed bytes, row gain and valid fixed-point fields")
+        return shape[:], "int8"
     if op in ("RMSNorm", "RowSoftmax"):
         expected = "int8" if op == "RMSNorm" else "uint8"
         if len(shape) != 2 or dtype != "int8" or output_dtype not in (None, expected):

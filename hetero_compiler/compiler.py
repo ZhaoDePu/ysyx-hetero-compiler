@@ -6,7 +6,7 @@ from pathlib import Path
 import struct
 from tempfile import TemporaryDirectory
 
-from . import asic_ip, gpu, npu
+from . import asic_ip, gpu, npu, vpu_lowering as vpu_pass
 from .ir import GraphError, normalize
 from .planner import make_plan
 from .pipeline import make_pipeline_plan
@@ -104,8 +104,16 @@ def _stream_images(graph, plan, profile, native):
 
 
 def compile_bundle(raw_graph, profile, output, *, dialect="auto", fuse=True, reuse=True,
-                   overlap=True, device_policy="auto", stream_ddr=False, emit_binary=None, pipeline_tiles=False):
+                   overlap=True, device_policy="auto", stream_ddr=False, emit_binary=None, pipeline_tiles=False,
+                   vpu_lowering="on", vpu_attention="exact"):
+    if vpu_lowering not in ("on", "off") or vpu_attention not in ("exact", "fast"):
+        raise GraphError("invalid VPU lowering or attention mode")
     graph = normalize(raw_graph, dialect=dialect)
+    if (vpu_lowering == "on" and fuse and device_policy != "gpu-only" and
+            profile["npu"]["variant"] == "z15" and profile["vpu"]["enabled"]):
+        graph = vpu_pass.lower(graph, fast=vpu_attention == "fast")
+        if any(node["op"] in ("Z15RMSNorm", "Z15Mul") for node in graph["nodes"]):
+            profile = {**profile, "vpu_fused_lowering": True}
     physical, execution = graph, None
     options = {"fuse": fuse, "reuse": reuse, "overlap": overlap, "device_policy": device_policy}
     if pipeline_tiles:

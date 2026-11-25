@@ -184,6 +184,10 @@ def _ewise_spec(stage, graph, target, profile):
     attrs = stage.get("attrs", {})
     if attrs.get("broadcast", "none") != "none" or attrs.get("narrowing", "saturate") != "saturate":
         raise ValueError("native elementwise requires shape equality and saturation")
+    if op in ("Z15RMSNorm", "Z15Softmax", "Z15Mul", "Z15Transpose"):
+        if target != "z15" or not profile.get("vpu", {}).get("enabled"):
+            raise ValueError("target VPU unavailable")
+        return _llm_vector_spec(op, names, out, tensors, attrs)
     expected_dtype = "uint8" if op == "RowSoftmax" else "int8"
     if (tensors[out]["dtype"] != expected_dtype or
             any(tensors[n]["dtype"] != "int8" or tensors[n]["shape"] != tensors[out]["shape"] for n in names)):
@@ -197,12 +201,59 @@ def _ewise_spec(stage, graph, target, profile):
                     rows=shape[0], cols=shape[1], causal=attrs.get("causal_mask", False))
     if not profile.get("vpu", {}).get("enabled"):
         raise ValueError("target VPU unavailable")
+    if op == "Lookup" and profile.get("vpu_fused_lowering") is True:
+        table = attrs.get("table")
+        if not isinstance(table, list) or len(table) != 256 or any(type(x) is not int or not -128 <= x <= 127 for x in table):
+            raise ValueError("Z15 activation table requires 256 signed byte entries")
+        return dict(a=names[0], c=out, num_bytes=_size(tensors[out]), op=11,
+                    activation=None, activation_mode=None, table=table)
     opcode = {"Add": 0, "ResidualAdd": 0, "Mul": 6, "Relu": 11, "SiLU": 11, "GELU": 11}.get(op)
     if opcode is None:
         raise ValueError("unsupported VPU operation")
     return dict(a=names[0], b=names[1] if len(names) > 1 else None, c=out,
                 num_bytes=_size(tensors[out]), op=opcode, activation=op if opcode == 11 else None,
                 activation_mode=attrs.get("mode"))
+
+
+def _llm_vector_spec(op, names, out, tensors, attrs):
+    src, dst = tensors[names[0]], tensors[out]
+    spec = dict(a=names[0], b=names[1] if len(names) > 1 else None, c=out,
+                num_bytes=_size(dst), activation=None, activation_mode=None)
+    if op == "Z15Transpose":
+        rows, cols = src["shape"]
+        stride = attrs["stride"]
+        if (src["dtype"] != "int8" or dst["dtype"] != "int8" or
+                not 1 <= rows <= stride <= 1023 or not 1 <= cols <= 1023 or
+                _size(dst) != rows + (cols - 1) * stride):
+            raise ValueError("invalid native strided transpose extent")
+        return dict(spec, op=9, h=rows, ca=cols, cb=stride)
+    if src["shape"] != dst["shape"]:
+        raise ValueError("VPU input and output shapes must match")
+    if op == "Z15Mul":
+        other = tensors[names[1]]
+        scale, shift = attrs["scale"], attrs["shift"]
+        if (any(t["dtype"] != "int8" for t in (src, other, dst)) or
+                other["shape"] != dst["shape"] or not 0 <= scale <= 65535 or not 0 <= shift <= 31):
+            raise ValueError("invalid native scaled multiply mode")
+        return dict(spec, op=6, scale=scale, shift=shift)
+    rows, cols = src["shape"]
+    if not 1 <= cols <= 1020 or cols % 4:
+        raise ValueError("native vector rows require a word-aligned width")
+    if op == "Z15RMSNorm":
+        gamma = tensors[names[1]]
+        gain, epsilon, shift = attrs["gain"], attrs["epsilon"], attrs["shift"]
+        if (any(t["dtype"] != "int8" for t in (src, gamma, dst)) or gamma["shape"] != [cols] or
+                not 1 <= rows <= 1023 or not 0 <= gain <= 65535 or
+                not 0 <= epsilon < 1 << 24 or not 0 <= shift <= 31):
+            raise ValueError("invalid native RMSNorm tensor or fixed-point mode")
+        return dict(spec, op=7, h=rows, ca=cols, scale=gain, shift=shift, epsilon=epsilon)
+    shift, position = attrs["exp_shift"], attrs.get("position", 0)
+    causal, fast = attrs.get("causal", False), attrs.get("fast", False)
+    if (src["dtype"] != "int32" or dst["dtype"] != "uint8" or not 1 <= rows <= 511 or
+            cols > 128 or not 0 <= shift <= 31 or (causal and not 0 <= position <= cols - rows) or
+            (not causal and position)):
+        raise ValueError("invalid native Softmax tensor or causal query geometry")
+    return dict(spec, op=12, h=rows, w=cols, ca=position, scale=int(causal) | int(fast) << 1, shift=shift)
 
 
 def _attention_spec(stage, graph, target):
@@ -213,18 +264,23 @@ def _attention_spec(stage, graph, target):
     out = tensors[stage["output"]]
     attrs = stage.get("attrs", {})
     rows, dim = q["shape"]
-    length, n = v["shape"]
+    packed_v, fast = attrs.get("packed_v", False), attrs.get("fast", False)
+    n, length = v["shape"] if packed_v else reversed(v["shape"])
     causal, position = attrs.get("causal", False), attrs.get("position", 0)
     exp_shift = attrs.get("exp_shift", 0)
     if (target != "z15" or any(x["dtype"] != "int8" for x in (q, k, v, out)) or
-            not _constant(v) or dim > 511 or n > 511 or length > 128 or
+            (not packed_v and not _constant(v)) or not 1 <= rows <= 511 or
+            not 1 <= dim <= 511 or not 1 <= n <= 511 or not 1 <= length <= 128 or
+            k["shape"] != [length, dim] or out["shape"] != [rows, n] or
             any(x % 4 for x in (dim, n, length)) or not 0 <= exp_shift < 32 or
             attrs.get("narrowing", "saturate") != "saturate" or
             (causal and not 0 <= position <= length - rows) or
             (not causal and (rows != length or position))):
-        raise ValueError("Z15 attention requires signed compact tensors, constant V, aligned row widths and valid query geometry")
+        raise ValueError("Z15 attention requires signed aligned tensors, constant or packed V, and valid query geometry")
+    value = stage["inputs"][2]
     return dict(op="Attention", q=stage["inputs"][0], key=stage["inputs"][1],
-                v=stage["inputs"][2], c=stage["output"], m=rows, n=n, k=dim, length=length,
+                v=value, v_buffer=value if packed_v else _packed_name(value), c=stage["output"],
+                m=rows, n=n, k=dim, length=length, packed_v=packed_v, fast=fast,
                 tile_k=_tile_k(max(dim, length), n, rows), causal=causal, position=position, shift=exp_shift)
 
 
@@ -241,7 +297,7 @@ def ordered_buffers(stage, graph, profile):
     spec = _spec(stage, graph, profile)
     if spec["op"] != "Attention":
         return []
-    return [spec["q"], spec["key"], _packed_name(spec["v"]), _scores(stage), _probabilities(stage), spec["c"]]
+    return [spec["q"], spec["key"], spec["v_buffer"], _scores(stage), _probabilities(stage), spec["c"]]
 
 
 def _p8_detection(stage, graph):
@@ -329,11 +385,14 @@ def requirements(stage, graph, profile):
     spec = _spec(stage, graph, profile)
     if spec["op"] == "Attention":
         rows, length, cols = (spec[x] for x in ("m", "length", "n"))
-        return {
-            _packed_name(spec["v"]): {"size": length * cols, "alignment": 32, "kind": "constant", "replaces": spec["v"]},
+        req = {
             _scores(stage): {"size": rows * length * 4, "alignment": 32, "kind": "temp"},
             _probabilities(stage): {"size": rows * length, "alignment": 32, "kind": "temp"},
         }
+        if not spec["packed_v"]:
+            req[spec["v_buffer"]] = {"size": length * cols, "alignment": 32,
+                                      "kind": "constant", "replaces": spec["v"]}
+        return req
     if _target(profile) != "z15" or spec["op"] not in ("Gemm", "Conv"):
         return {}
     req = {_packed_name(spec["b"]): {"size": spec["k"] * spec["n"], "alignment": 32,
@@ -351,7 +410,7 @@ def buffering(stage, graph, profile):
     if spec["op"] == "Attention":
         return {"kind": "native_attention", "tile_k": spec["tile_k"],
                 "phases": ["QK", "VPU_ROW_SOFTMAX", "PV"],
-                "causal": spec["causal"], "materialized_scores": True,
+                "causal": spec["causal"], "fast_reciprocal": spec["fast"], "materialized_scores": True,
                 "a_buffer_count": 2, "b_buffer_count": 2, "output_buffer_count": 2}
     rows = profile["npu"].get("rows", 16)
     cols = profile["npu"].get("cols", 16)
@@ -412,7 +471,8 @@ def _operand_spans(spec, tensors, plan, limit, *, packed=False):
     for key in ("a", "b", "c", "bias"):
         if name := spec.get(key):
             physical = _packed_name(name) if packed and key == "b" else name
-            spans[key] = _span(plan, physical, _size(tensors[name]), limit)
+            alignment = 1 if spec["op"] == 9 and "cb" in spec else 4
+            spans[key] = _span(plan, physical, _size(tensors[name]), limit, alignment)
     return spans
 
 
@@ -534,10 +594,18 @@ def _z15_tensor(spec, spans, table):
 
 
 def _z15_ewise(spec, spans):
-    return _z15_activation(spec["activation"], spec["activation_mode"]) + [
+    shape = spec.get("h", 0) | spec.get("w", 0) << 16
+    channels = spec.get("ca", 0) | spec.get("cb", 0) << 16
+    flags = spec["op"] | spec.get("scale", 1) << 8 | spec.get("shift", 0) << 24
+    table = spec.get("table")
+    activation = _z15_activation(spec["activation"], spec["activation_mode"])
+    if table is not None:
+        activation = [pair for i, value in enumerate(table)
+                      for pair in ((0xCC, i | (value & 255) << 8), (Z15_CTRL, 1 << 8))]
+    return activation + [
         (0xA0, spans["a"][0]), (0xA4, spans.get("b", (0, 0))[0]), (0xA8, spans["c"][0]),
-        (0xAC, 0), (0xB0, spec["num_bytes"]), (0xB4, 0), (0xB8, 0),
-        (0xBC, spec["op"] | 1 << 8), (0xC0, 0), (Z15_CTRL, Z15_VPU_START)]
+        (0xAC, 0), (0xB0, spec["num_bytes"]), (0xB4, shape), (0xB8, channels),
+        (0xBC, flags), (0xC0, spec.get("epsilon", 0)), (Z15_CTRL, Z15_VPU_START)]
 
 
 def _packed_constant(values, name, rows, cols, address):
@@ -555,9 +623,10 @@ def _z15_attention(stage, spec, graph, profile, plan, limit, constants):
     if (any(spans[i][1] > spans[i + 1][0] for i in range(len(spans) - 1)) or
             q // Z15_HALF != (spans[-1][1] - 1) // Z15_HALF):
         raise ValueError("Z15 attention requires six ordered, disjoint buffers inside one ownership half")
-    vv = spec["v"]
-    constants[_packed_name(vv)] = _packed_constant(tensors[vv]["data"], vv, spec["length"], spec["n"], v)
-    control = 4 | int(spec["causal"]) << 1 | spec["m"] << 8 | spec["shift"] << 20
+    if not spec["packed_v"]:
+        name = spec["v"]
+        constants[spec["v_buffer"]] = _packed_constant(tensors[name]["data"], name, spec["length"], spec["n"], v)
+    control = 4 | int(spec["fast"]) | int(spec["causal"]) << 1 | spec["m"] << 8 | spec["shift"] << 20
     return [
         (0x60, spec["length"] | spec["n"] << 16), (0x64, spec["k"] | spec["tile_k"] << 16),
         (0x68, q), (0x6C, k), (0x70, c), (0x88, control), (0x8C, v),

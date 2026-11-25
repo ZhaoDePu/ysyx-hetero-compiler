@@ -31,6 +31,9 @@ def main():
     parser.add_argument("--pipeline-scheduler", choices=("c3", "bank-aware"),
                         help="Choose dependency scheduling for --pipeline-tiles")
     parser.add_argument("--no-mem-reuse", "--no-reuse", dest="no_reuse", action="store_true")
+    parser.add_argument("--vpu-lowering", choices=("on", "off"), default="on",
+                        help="Use native VPU fusion on optimized Z15 graphs")
+    parser.add_argument("--vpu-attention", choices=("exact", "fast"), default="exact")
     args = parser.parse_args()
     if args.pipeline_scheduler and not args.pipeline_tiles:
         parser.error("--pipeline-scheduler requires --pipeline-tiles")
@@ -48,7 +51,8 @@ def main():
                                 fuse=not args.no_fuse, reuse=not args.no_reuse,
                                 overlap=not args.no_overlap, device_policy=args.device_policy,
                                 stream_ddr=args.stream_ddr, emit_binary=args.emit_binary,
-                                pipeline_tiles=args.pipeline_tiles)
+                                pipeline_tiles=args.pipeline_tiles,
+                                vpu_lowering=args.vpu_lowering, vpu_attention=args.vpu_attention)
     except (ValueError, OSError) as exc:
         parser.exit(2, f"compiler error: {exc}\n")
     plan = result["plan"]

@@ -2,14 +2,15 @@
 set -euo pipefail
 work=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 base=/home/zdp/ysyx-migration
-board="$base/work-z15-bringup"
-scratch=/dev/shm/ysyx_compiler_c4a/npu
+board="$base/artifacts/z15-board-bringup-step2-20261125-212110"
+scratch=/dev/shm/ysyx_compiler_c4vpu/npu
 commit=4d410d72508a5822bc5c8014981e5b55ef8faa56
 [[ "$(realpath -e -- "$scratch")" == "$scratch" && -O "$scratch" ]]
 mkdir -p -- "$scratch/z15-src"
 [[ "$(cat "$board/FROZEN_COMMIT")" == "$commit" ]]
 git -C "$base/repos/ysyx-npu-ext" archive "$commit" tiny-gpu/src fpga/vivado2020 | tar -xf - -C "$scratch/z15-src"
-cp -a -- "$board/rtl" "$board/sim" "$board/app" "$scratch/z15-src/"
+tar -xzf "$board/z15-rebuild-source.tar.gz" -C "$scratch/z15-src" rtl sim app
+cmp "$board/z15_mmio.h" "$scratch/z15-src/app/z15_mmio.h"
 printf 'source_commit=%s\n' "$commit"
 cd "$scratch/z15-src"
 sha256sum rtl/gen/g3_cluster.v rtl/gen/g3_external.v rtl/z15_hetero_pl_wrapper.sv rtl/z15_bd_axi_shell.v sim/closed_loop.cpp

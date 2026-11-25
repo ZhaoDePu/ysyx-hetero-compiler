@@ -119,28 +119,76 @@ class QuantizedIslands:
             elif attrs:
                 raise GraphError(f"unsupported {op} attributes")
             self._define(out, Operation(op, (arg,), {**attrs, **mask}))
-        elif op == "Add":
+        elif op in ("Add", "Mul"):
             if len(inputs) != 2 or attrs:
-                raise GraphError("Q/DQ Add requires two operands and no attributes")
-            values = [self.virtual.get(i) for i in inputs]
-            if all(isinstance(v, Dequantized) for v in values):
-                self._define(out, Operation("Add", tuple(values), {}))
-            elif any(isinstance(v, Dequantized) for v in values) and values.count(None) == 1:
-                mask_index = values.index(None)
-                logits = values[1 - mask_index]
-                offset = self.causal_mask(logits, inputs[mask_index])
-                self._define(out, Operation("CausalMask", (logits,), {"causal_offset": offset}))
+                raise GraphError(f"Q/DQ {op} requires two operands and no attributes")
+            left, right = (self.virtual.get(n) for n in inputs)
+            pair = (left, right)
+            if op == "Add":
+                mean = next((x for x in pair if isinstance(x, Operation) and x.op == "MeanSquare"), None)
+                if mean is not None and None in pair:
+                    epsilon = ir.scalar(inputs[pair.index(None)], {"float32"})
+                    self._define(out, Operation("MeanPlusEpsilon", mean.inputs, {"epsilon": epsilon}))
+                elif all(isinstance(v, Dequantized) for v in pair):
+                    self._define(out, Operation("Add", pair, {}))
+                elif sum(isinstance(v, Dequantized) for v in pair) == 1 and None in pair:
+                    mask_index = pair.index(None)
+                    logits = pair[1 - mask_index]
+                    offset = self.causal_mask(logits, inputs[mask_index])
+                    self._define(out, Operation("CausalMask", (logits,), {"causal_offset": offset}))
+                else:
+                    raise GraphError("unsupported Q/DQ Add or RMSNorm epsilon")
             else:
-                raise GraphError("Q/DQ Add requires two direct dequantized bytes or a static causal mask")
-        elif op == "Mul":
-            if len(inputs) != 2 or attrs or not all(n in self.virtual for n in inputs):
-                raise GraphError("only Sigmoid(x)×x floating Mul is supported")
-            left, right = [self.virtual[n] for n in inputs]
-            plain, sigmoid = (left, right) if isinstance(left, Dequantized) else (right, left)
-            if (not isinstance(plain, Dequantized) or not isinstance(sigmoid, Operation)
-                    or sigmoid.op != "Sigmoid" or sigmoid.inputs[0] != plain):
-                raise GraphError("only Sigmoid(x)×x floating Mul is supported")
-            self._define(out, Operation("SiLU", (plain,), {}))
+                plain, other = (left, right) if isinstance(left, Dequantized) else (right, left)
+                if isinstance(plain, Dequantized) and isinstance(other, Operation):
+                    if other.op == "Sigmoid" and other.inputs[0] == plain:
+                        self._define(out, Operation("SiLU", (plain,), {}))
+                    elif other.op == "RMSNormCore":
+                        self._define(out, Operation("RMSNorm", (other.inputs[0], plain), other.attrs))
+                    else:
+                        raise GraphError("unsupported normalized or activated floating multiply")
+                elif all(isinstance(v, Dequantized) for v in pair):
+                    record = Operation("Square" if left == right else "Mul", pair, {})
+                    self._define(out, record)
+                else:
+                    raise GraphError("unsupported operands for Q/DQ multiply")
+        elif op == "Pow":
+            source = self.virtual.get(inputs[0]) if len(inputs) == 2 else None
+            if (attrs or not isinstance(source, Dequantized) or
+                    ir.scalar(inputs[1], {"float32"}) != 2):
+                raise GraphError("RMSNorm Pow requires a direct dequantized input and static exponent two")
+            self._define(out, Operation("Square", (source,), {}))
+        elif op == "ReduceMean":
+            square = self.virtual.get(inputs[0]) if inputs else None
+            if (not isinstance(square, Operation) or square.op != "Square" or
+                    len(inputs) not in (1, 2) or attrs.keys() - {"axes", "keepdims", "noop_with_empty_axes"} or
+                    attrs.get("keepdims", 1) != 1 or attrs.get("noop_with_empty_axes", 0)):
+                raise GraphError("RMSNorm ReduceMean requires squared values and a retained reduction axis")
+            axes = ir.static(inputs[1], {"int64"}) if len(inputs) == 2 else attrs.get("axes", [])
+            rank = len(ir.spec(square.inputs[0].tensor)["shape"])
+            if [axis(v, rank) for v in axes] != [rank-1]:
+                raise GraphError("RMSNorm requires reduction on the last axis")
+            self._define(out, Operation("MeanSquare", square.inputs[:1], {}))
+        elif op == "Sqrt":
+            mean = self.virtual.get(inputs[0]) if len(inputs) == 1 else None
+            if attrs or not isinstance(mean, Operation) or mean.op != "MeanPlusEpsilon":
+                raise GraphError("RMSNorm Sqrt requires a mean of squares plus epsilon")
+            self._define(out, Operation("RMSDivisor", mean.inputs, mean.attrs))
+        elif op == "Div":
+            numerator, den = [self.virtual.get(i) for i in inputs] if len(inputs) == 2 else (None, None)
+            if (attrs or not isinstance(numerator, Dequantized) or not isinstance(den, Operation) or
+                    den.op != "RMSDivisor" or den.inputs[0] != numerator):
+                raise GraphError("RMSNorm Div requires the input used to compute its RMS")
+            self._define(out, Operation("RMSNormCore", (numerator,), den.attrs))
+        elif op == "RMSNormalization":
+            args = [self.virtual.get(n) for n in inputs]
+            if (len(args) != 2 or not all(isinstance(v, Dequantized) for v in args) or
+                    attrs.keys() - {"axis", "epsilon", "stash_type"} or attrs.get("stash_type", 1) != 1):
+                raise GraphError("RMSNormalization requires a dequantized input and gamma")
+            rank = len(ir.spec(args[0].tensor)["shape"])
+            if axis(attrs.get("axis", -1), rank) != rank-1:
+                raise GraphError("RMSNormalization requires the last axis")
+            self._define(out, Operation("RMSNorm", tuple(args), {"epsilon": attrs.get("epsilon", 1e-5)}))
         elif op == "Conv":
             if (not 2 <= len(inputs) <= 3 or any(not isinstance(self.virtual.get(x), Dequantized)
                                                  for x in inputs[:2])):
@@ -220,6 +268,29 @@ class QuantizedIslands:
                 raise GraphError("Q/DQ Add exceeds exact float32 dyadic mantissa or exponent envelope")
             return ir.qadd([a.tensor, a.scale_name, a.point_name, b.tensor, b.scale_name, b.point_name,
                             scale_name, point_name], out, ident)
+        if value.op in ("Mul", "Square"):
+            a, b = value.inputs if len(value.inputs) == 2 else (source, source)
+            if a.point or b.point or not _power_of_two(b.scale):
+                raise GraphError("Q/DQ multiply requires zero-centered dyadic operands")
+            bound = ir.bound(a.tensor, 0) * ir.bound(b.tensor, 0)
+            lhs, rhs = ir.broadcast(a.tensor, b.tensor)
+            product = ir.temp("Mul", [lhs, rhs], {"dtype": "int32"})
+            return ir.emit("Requant", [product], out,
+                           ir.dq_attrs(a.scale*b.scale/scale, bound, dtype, point), ident)
+        if value.op == "RMSNorm":
+            x, gamma = value.inputs
+            width = ir.spec(x.tensor)["shape"][-1]
+            epsilon = value.attrs["epsilon"]
+            if (x.point or gamma.point or point or dtype != "int8" or
+                    not math.isfinite(epsilon) or epsilon < 0):
+                raise GraphError("RMSNormalization requires zero-centered signed bytes and finite epsilon")
+            shift = 12
+            gain = round(math.sqrt(width) * float(gamma.scale/scale) * (1 << (shift - 7)))
+            epsilon = round(Fraction(epsilon) * width / (x.scale*x.scale))
+            return ir.emit("QRMSNorm", [x.tensor, gamma.tensor], out,
+                           {"gain": gain, "epsilon": epsilon, "shift": shift}, ident)
+        if value.op not in ("Softmax", "Sigmoid", "SiLU", "Gelu", "Conv", "CausalMask"):
+            raise GraphError("incomplete RMSNorm pattern cannot be quantized")
         if value.op == "CausalMask":
             raise GraphError("causal mask must feed a Softmax before QuantizeLinear")
         if value.op == "Conv":

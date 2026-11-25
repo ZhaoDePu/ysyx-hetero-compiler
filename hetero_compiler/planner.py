@@ -45,7 +45,10 @@ def _placement(graph, profile, npu, gpu, fuse, device_policy):
         if idx in contracted:
             continue
         asic_native = profile["npu"]["variant"] == "asic-ip-v3"
-        if asic_native and node["op"] in ("RMSNorm", "RowSoftmax", "QSoftmax"):
+        if node["op"] in ("Z15Softmax", "Z15Mul", "Z15RMSNorm") or (
+                node["op"] == "Attention" and node["attrs"].get("packed_v")):
+            choices = [("VPU", npu)]
+        elif asic_native and node["op"] in ("RMSNorm", "RowSoftmax", "QSoftmax"):
             choices = [("VPU", npu), ("GPU", gpu)]
         elif node["op"] in ("Gemm", "Conv", "Attention", "RMSNorm", "RowSoftmax",
                             "C2f", "SPPF", "YoloDetectHead"):

@@ -250,6 +250,7 @@ class _Import:
         self.initializers = initializers
         self.reserved = reserved
         self.nodes = []
+        self.proven_bounds = {}
         self.tag = 0
 
     def name(self, purpose):
@@ -338,6 +339,8 @@ class _Import:
         tensor = self.spec(name)
         if name in self.initializers and tensor["kind"] == "constant":
             return max((abs(x-zero) for x in tensor["data"]), default=0)
+        if name in self.proven_bounds:
+            return self.proven_bounds[name] + abs(zero)
         _, lo, hi = DTYPES[tensor["dtype"]]
         return max(abs(lo-zero), abs(hi-zero))
 
@@ -402,6 +405,8 @@ class _Import:
         destination = self.name("accumulator") if conv or qlinear else output
         self.emit("Conv" if conv else "Gemm", [a, b] + bias, destination, target_attrs,
                   None if conv or qlinear else ident)
+        if bound < 1 << 31:
+            self.proven_bounds[destination] = bound
         if qlinear:
             yp = self.scalar(zy, BYTES)
             ytype = self.spec(zy)["dtype"]

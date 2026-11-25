@@ -7,7 +7,7 @@ import json
 
 _WIDTH = {"int8": 1, "uint8": 1, "int32": 4, "int64": 8}
 _LAYOUT = {"Transpose", "Reshape", "Slice", "Resize", "Concat", "Expand"}
-_ADVANCED = _LAYOUT | {"Cast", "Conv", "MaxPool", "ArgMax", "RowSoftmax", "RMSNorm", "QSoftmax"}
+_ADVANCED = _LAYOUT | {"Cast", "Conv", "MaxPool", "ArgMax", "RowSoftmax", "RMSNorm", "QRMSNorm", "QSoftmax"}
 _LOAD = {"int8": 0, "uint8": 4, "int32": 2}
 _VARIANTS = {"v6", "g3", "g4"}
 _LEGACY_SILU_KNOTS = (0, 0, 1, 2, 5, 12, 31, 69, 128, 187, 225, 244, 251, 254, 255, 256, 256)
@@ -168,6 +168,9 @@ def _supports_advanced(op, inputs, out, attrs):
         return (len(inputs) == 1 and src == dst and dtypes[0] in {"int8", "uint8"}
                 and dtype in {"int8", "uint8"} and attrs.get("algorithm") == "q23"
                 and type(axis) is int and 0 <= axis < len(src) and src[axis] <= 255)
+    if op == "QRMSNorm":
+        return (len(inputs) == 2 and src == dst and len(src) == 2 and
+                inputs[1]["shape"] == [src[-1]] and dtypes == ["int8", "int8"] and dtype == "int8")
     if op in {"RMSNorm", "RowSoftmax"}:
         return (len(inputs) == 1 and src == dst and len(src) == 2 and dtypes[0] == "int8"
                 and dtype == ("uint8" if op == "RowSoftmax" else "int8") and src[1] <= 4096)
@@ -873,6 +876,69 @@ def _qsoftmax(p, tensor, offset, attrs):
     p.label("qsoft_done")
 
 
+def _quantized_rms(p, source, gamma, width, attrs):
+    # Keep the fixed-point fallback identical to the frozen vector format.
+    _constant_arith(p, 8, 5, width, "divu", 15)
+    _constant_arith(p, 8, 8, width, "mul", 15)
+    p.address(9, 8, source, "int8", temp=15)
+    p.li(10, width)
+    p.arithmetic(10, 9, 10)
+    p.li(11, attrs["epsilon"])
+    p.label("norm_sum")
+    p.load(12, 9, "int8")
+    p.arithmetic(12, 12, 12, f7=1)
+    p.arithmetic(11, 11, 12)
+    p.addi(9, 9, 1)
+    p.branch(1, 9, 10, "norm_sum")
+    p.branch(1, 11, 0, "norm_exponent")
+    p.li(11, 1)
+    p.label("norm_exponent")
+    p.li(13, 0)
+    p.addi(14, 11, 0)
+    p.li(15, 4)
+    p.label("norm_exponent_loop")
+    p.branch(6, 14, 15, "norm_mantissa")
+    p.addi(14, 14, 2, f3=5)
+    p.addi(13, 13, 1)
+    p.jump("norm_exponent_loop")
+    p.label("norm_mantissa")
+    p.li(15, 9)
+    p.addi(14, 13, 1, f3=1)
+    p.arithmetic(15, 15, 14, f7=0x20)
+    p.branch(4, 15, 0, "norm_mantissa_right")
+    p.arithmetic(11, 11, 15, f3=1)
+    p.jump("norm_interpolate")
+    p.label("norm_mantissa_right")
+    p.arithmetic(15, 0, 15, f7=0x20)
+    p.arithmetic(11, 11, 15, f3=5)
+    p.label("norm_interpolate")
+    p.addi(10, 11, 15, f3=7)
+    p.addi(9, 11, 4, f3=5)
+    endpoints = [round(32768 * sqrt(32 / i)) for i in range(32, 129)]
+    p.addi(12, 9, 0)
+    _lookup(p, endpoints[:-1], 32, value_reg=12, compare_reg=15, label="norm_base")
+    p.addi(8, 12, 0)
+    p.addi(12, 9, 0)
+    drops = [a-b for a,b in zip(endpoints, endpoints[1:])]
+    _lookup(p, drops, 32, value_reg=12, compare_reg=15, label="norm_drop")
+    p.arithmetic(12, 12, 10, f7=1)
+    p.addi(12, 12, 8)
+    p.addi(12, 12, 4, f3=5)
+    p.arithmetic(8, 8, 12, f7=0x20)
+    p.li(15, attrs["gain"])
+    p.arithmetic(8, 8, 15, f7=1)
+    p.addi(13, 13, 8)
+    p.arithmetic(8, 8, 13, f3=5)
+    p.address(7, 5, source, "int8", temp=15)
+    p.load(7, 7, "int8")
+    _constant_arith(p, 9, 5, width, "remu", 15)
+    p.address(9, 9, gamma, "int8", temp=15)
+    p.load(9, 9, "int8")
+    p.arithmetic(7, 7, 9, f7=1)
+    p.arithmetic(7, 7, 8, f7=1)
+    p.addi(7, 7, attrs["shift"] | 0x400, f3=5)
+
+
 def _advanced(p, op, inputs, offsets, output, attrs):
     if op in _LAYOUT:
         _layout(p, op, inputs, offsets, output, attrs)
@@ -887,6 +953,8 @@ def _advanced(p, op, inputs, offsets, output, attrs):
         _argmax(p, inputs[0], offsets[0], attrs)
     elif op == "QSoftmax":
         _qsoftmax(p, inputs[0], offsets[0], attrs)
+    elif op == "QRMSNorm":
+        _quantized_rms(p, *offsets, inputs[0]["shape"][-1], attrs)
     else:
         _rows(p, op, inputs[0], offsets[0], attrs)
 
