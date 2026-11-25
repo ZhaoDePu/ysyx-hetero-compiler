@@ -1,0 +1,3 @@
+input	image	input-0.bin
+output	pixel_logits	output-0.bin
+output	classes	output-1.bin

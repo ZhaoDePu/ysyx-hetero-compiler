@@ -44,7 +44,7 @@ done
 [[ $(grep -h -c 'STAGE_PASS' "$root/logs/npu-p8.log") == 8 ]]
 [[ $(grep -h -c 'STAGE_PASS' "$root/logs/npu-z15.log") == 5 ]]
 
-for target in fpga_zu15eg_balanced fpga_zu15eg_full asic_nangate45_p8 asic_nangate45_ip; do
+for target in fpga_zu15eg_balanced fpga_zu15eg_full asic_nangate45_p8 asic_nangate45_ip asic_nangate45_ip_compat4k; do
     compile "$target" "$target" examples/mixed.json
     run "$target.yhb" python3 -B - "$root/bundles/$target/program.yhb" <<'PY'
 from pathlib import Path

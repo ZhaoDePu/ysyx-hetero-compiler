@@ -6,6 +6,7 @@
 #include <inttypes.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 typedef struct {
     char *name;
@@ -63,7 +64,7 @@ static int write_file(const char *path, const void *data, size_t n)
 static void usage(FILE *f)
 {
     fputs("usage: ysyx_run PROGRAM.yhb [--backend linux|verilator]\n"
-          "       [--input tensor=file.bin] [--output tensor=file.bin] [--dump-stats]\n"
+          "       [--input tensor=file.bin] [--output tensor=file.bin] [--dump-stats] [--host-timing]\n"
           "       [--uio-control /dev/uioN|name] [--uio-dma /dev/uioN|name] [--inspect]\n", f);
 }
 
@@ -82,6 +83,15 @@ static void inspect(const ysyx_program_t *program, size_t size)
     }
 }
 
+static int monotonic_ns(uint64_t *result)
+{
+    struct timespec t;
+    if (clock_gettime(CLOCK_MONOTONIC, &t))
+        return -1;
+    *result = (uint64_t)t.tv_sec * UINT64_C(1000000000) + (uint64_t)t.tv_nsec;
+    return 0;
+}
+
 int ysyx_run_cli(int argc, char **argv, int simulation_available)
 {
     if (argc == 2 && !strcmp(argv[1], "--help")) {
@@ -93,7 +103,7 @@ int ysyx_run_cli(int argc, char **argv, int simulation_available)
         return 2;
     }
     const char *error = "invalid argument list";
-    int status = 2, dump = 0, show = 0;
+    int status = 2, dump = 0, show = 0, timing = 0;
     const char *control = NULL, *dma = NULL;
     const char *backend = simulation_available ? "verilator" : "linux";
     uint8_t *data = NULL;
@@ -111,6 +121,8 @@ int ysyx_run_cli(int argc, char **argv, int simulation_available)
         const char *opt = argv[i];
         if (!strcmp(opt, "--dump-stats")) {
             dump = 1;
+        } else if (!strcmp(opt, "--host-timing")) {
+            timing = 1;
         } else if (!strcmp(opt, "--inspect")) {
             show = 1;
         } else {
@@ -188,6 +200,11 @@ int ysyx_run_cli(int argc, char **argv, int simulation_available)
     }
 
     ysyx_stats_t stats;
+    uint64_t start_ns = 0, end_ns;
+    if (timing && monotonic_ns(&start_ns)) {
+        error = "cannot read monotonic clock before execution";
+        goto done;
+    }
     if (ysyx_execute(program, &hal, values, ninputs, &stats, dump ? stdout : NULL, &error))
         goto done;
     for (size_t i = 0; i < noutputs; ++i) {
@@ -203,6 +220,13 @@ int ysyx_run_cli(int argc, char **argv, int simulation_available)
         free(payload);
         if (rc)
             goto done;
+    }
+    if (timing) {
+        if (monotonic_ns(&end_ns)) {
+            error = "cannot read monotonic clock after output";
+            goto done;
+        }
+        printf("HOST_TIMING elapsed_ns=%" PRIu64 "\n", end_ns - start_ns);
     }
     if (dump) {
         printf("STATS backend=%s npu_domain_wall_ticks=%" PRIu64

@@ -166,3 +166,12 @@ It checks all software tests, 42 legacy GPU full-page results, 13 native
 NPU/VPU outputs, all 13 frozen O4 examples, the other C1 complete bundles
 and YHB emission for all four targets. The C2 ablation and C99 runtime
 commands above exercise additional ONNX and hardware paths.
+
+## Phase C3 qualification and deployment
+
+- [Two-half graph tiling and RTL ablation](docs/c3-tiled-pipeline.md)
+- [Offline training and held-out FP32/INT8 accuracy](docs/c3-trained-models.md)
+- [Standard quantized causal Softmax](docs/c3-qsoftmax.md)
+- [Frozen Full tensor comparison](docs/c3-full-qualification.md)
+- [64 KiB ASIC IP software contract and 4 KiB compatibility target](docs/asic_ip_v3_contract.md)
+- [Z15 Balanced C99 board kit with checked programs and IO](deploy/z15_board_kit/README.md)

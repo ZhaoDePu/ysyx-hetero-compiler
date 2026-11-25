@@ -1,1 +1,3 @@
 *.onnx binary
+*.yhb binary
+*.bin binary

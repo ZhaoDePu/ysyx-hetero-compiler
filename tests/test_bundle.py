@@ -27,7 +27,7 @@ GRAPH = {
 
 class BundleTests(unittest.TestCase):
     def test_bundle_real_formats_and_resident_dependency(self):
-        with TemporaryDirectory(dir=Path.cwd()) as tmp:
+        with TemporaryDirectory() as tmp:
             output = Path(tmp) / "program"
             p = load_profile("fpga_zu15eg_balanced")
             manifest = compile_bundle(GRAPH, p, output)
