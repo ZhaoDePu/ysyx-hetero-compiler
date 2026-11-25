@@ -194,6 +194,67 @@ static int valid_tensor_bases(const uint32_t cfg[52], uint64_t present,
     return 1;
 }
 
+/* The software-only ASIC v3 target shares the YHB section format, but
+ * uses explicit 64 KiB byte addresses rather than Phase 8 triplets. */
+enum { ASIC_IP_V3_TARGET = 5, ASIC_IP_V3_BYTES = 65536, ASIC_IP_V3_WORDS = 32 };
+
+static int valid_ip_span(const uint8_t *r, unsigned rank, unsigned type,
+                         unsigned shape, uint32_t address, uint32_t *size)
+{
+    static const unsigned width[] = {0, 1, 1, 4};
+    if (!rank || rank > 4 || !type || type > 3 || (address & 7u))
+        return 0;
+    uint32_t bytes = width[type];
+    for (unsigned i = 0; i < 4; ++i) {
+        const uint32_t dim = get(r, shape + i);
+        if ((i >= rank && dim) || (i < rank && (!dim || bytes > ASIC_IP_V3_BYTES / dim)))
+            return 0;
+        if (i < rank)
+            bytes *= dim;
+    }
+    *size = bytes;
+    return region(address, bytes, ASIC_IP_V3_BYTES);
+}
+
+static int ip_overlap(uint32_t a, uint32_t n, uint32_t b, uint32_t m)
+{
+    return a < b + m && b < a + n;
+}
+
+static int valid_ip_stage(const uint8_t *r, uint32_t words, uint32_t engine)
+{
+    if (words != ASIC_IP_V3_WORDS || get(r, 0) != UINT32_C(0x33565049))
+        return 0;
+    const uint32_t op = get(r, 1);
+    if (op < 1 || op > 10 || engine != (op <= 2 ? NPU : VPU))
+        return 0;
+    static const unsigned allowed_flags[] = {0, 3, 1, 17, 1, 9, 1, 5, 1, 3, 1};
+    if (get(r, 2) & ~allowed_flags[op])
+        return 0;
+    const uint32_t a = get(r, 6), b = get(r, 7), c = get(r, 8), bias = get(r, 9);
+    uint32_t alen = 0, blen = 0, clen = 0;
+    if (!valid_ip_span(r, get(r, 3), get(r, 10), 13, a, &alen) ||
+        !valid_ip_span(r, get(r, 5), get(r, 12), 21, c, &clen) ||
+        ip_overlap(a, alen, c, clen))
+        return 0;
+    if (op <= 2 || op >= 9) {
+        if (!valid_ip_span(r, get(r, 4), get(r, 11), 17, b, &blen) ||
+            ip_overlap(b, blen, c, clen))
+            return 0;
+    } else if (b != UINT32_MAX || get(r, 4) || get(r, 11) ||
+               get(r, 17) || get(r, 18) || get(r, 19) || get(r, 20)) {
+        return 0;
+    }
+    if (bias != UINT32_MAX) {
+        const uint32_t channels = get(r, 20 + get(r, 5));
+        if (op > 2 || (bias & 7u) || channels > ASIC_IP_V3_BYTES / 4u ||
+            !region(bias, channels * 4u, ASIC_IP_V3_BYTES) ||
+            ip_overlap(bias, channels * 4u, c, clen))
+            return 0;
+    }
+    return 1;
+}
+
 static int valid_stage(const ysyx_program_t *p, const uint8_t *s)
 {
     uint32_t engine = get(s, 2), data = get(s, 3), words = get(s, 4);
@@ -203,8 +264,11 @@ static int valid_stage(const ysyx_program_t *p, const uint8_t *s)
         (data | aux) & 7u || !region(data, (uint64_t)words * 4u, payload->length) ||
         !region(aux, (uint64_t)jobs * 16u, payload->length))
         return 0;
+    if (p->target == ASIC_IP_V3_TARGET && get(s, 7))
+        return 0;
     if (engine == GPU) {
-        if (!jobs || (p->target <= 2u && words > Z15_PROGRAM_BYTES / 4u))
+        if (!jobs || ((p->target <= 2u || p->target == ASIC_IP_V3_TARGET) &&
+                      words > Z15_PROGRAM_BYTES / 4u))
             return 0;
         uint32_t page = get(payload->bytes + aux, 1) & 511u;
         for (uint32_t i = 0; i < jobs; ++i) {
@@ -212,16 +276,20 @@ static int valid_stage(const ysyx_program_t *p, const uint8_t *s)
             uint32_t entry = get(j, 0), config = get(j, 1), threads = get(j, 2), warp = get(j, 3);
             if ((entry & 3u) || entry / 4u >= words || !threads)
                 return 0;
-            if (p->target == YSYX_TARGET_Z15_BALANCED &&
-                (threads > 16 || warp > 3 || config & UINT32_C(0xfc00fe00) ||
+            if ((p->target == YSYX_TARGET_Z15_BALANCED || p->target == 2u) &&
+                (threads > (p->target == 2u ? 8u : 16u) || warp > 3 || config & UINT32_C(0xfc00fe00) ||
                  ((config >> 16) & 255u) != threads || (config >> 24) != warp ||
                  (config & 511u) != page || page / 256u != get(s, 7)))
+                return 0;
+            if (p->target == ASIC_IP_V3_TARGET && (threads > 255 || warp || config))
                 return 0;
         }
         return 1;
     }
     if ((engine != NPU && engine != VPU) || jobs)
         return 0;
+    if (p->target == ASIC_IP_V3_TARGET)
+        return valid_ip_stage(payload->bytes + data, words, engine);
     if (p->target > 2)
         return words == 3;
     if (words & 1u)
@@ -318,8 +386,9 @@ int ysyx_program_open(const void *raw, size_t size, ysyx_program_t **out, const 
     *out = NULL;
     if (!raw || size < HEADER + NSECTION * DIRECTORY || size > Z15_POOL_SIZE ||
         memcmp(bytes, "YHB1", 4) || get(bytes, 1) != (HEADER << 16 | 1) || get(bytes, 3) != size ||
-        get(bytes, 5) != NSECTION || get(bytes, 7) || !get(bytes, 2) || get(bytes, 2) > 4 ||
-        !get(bytes, 6) || get(bytes, 6) > Z15_SCRATCH_SIZE)
+        get(bytes, 5) != NSECTION || get(bytes, 7) || !get(bytes, 2) || get(bytes, 2) > ASIC_IP_V3_TARGET ||
+        !get(bytes, 6) || get(bytes, 6) > Z15_SCRATCH_SIZE ||
+        (get(bytes, 2) == ASIC_IP_V3_TARGET && get(bytes, 6) != ASIC_IP_V3_BYTES))
         return fail(error, "invalid YHB1 header");
     if (crc32(bytes, size) != get(bytes, 4))
         return fail(error, "YHB CRC32 mismatch");
@@ -339,12 +408,22 @@ int ysyx_program_open(const void *raw, size_t size, ysyx_program_t **out, const 
     }
     if (end != size || !valid_symbols(&p))
         return fail(error, "invalid YHB symbols or trailing bytes");
+    if (p.target == ASIC_IP_V3_TARGET) {
+        if (p.sections[MOVES].count)
+            return fail(error, "ASIC IP v3 does not expose DMA transfers");
+        for (uint32_t i = 0; i < p.sections[SYMBOLS].count; ++i) {
+            const uint8_t *r = record(&p, SYMBOLS, i);
+            if (!region(get(r, 9), get(r, 10), p.capacity))
+                return fail(error, "ASIC IP v3 symbol exceeds scratchpad");
+        }
+    }
 
     uint32_t last = 0;
     for (uint32_t i = 0; i < p.sections[INITIAL].count; ++i) {
         const uint8_t *r = record(&p, INITIAL, i);
         uint32_t at = get(r, 0), n = get(r, 1), data = get(r, 2);
-        if (!n || at < last || !region(at, n, Z15_POOL_SIZE) || data & 7u ||
+        if (!n || at < last ||
+            !region(at, n, p.target == ASIC_IP_V3_TARGET ? p.capacity : Z15_POOL_SIZE) || data & 7u ||
             !region(data, n, p.sections[DATA].length) || get(r, 3))
             return fail(error, "invalid YHB initial span");
         last = at + n;

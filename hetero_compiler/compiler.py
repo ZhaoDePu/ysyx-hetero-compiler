@@ -6,7 +6,7 @@ from pathlib import Path
 import struct
 from tempfile import TemporaryDirectory
 
-from . import gpu, npu
+from . import asic_ip, gpu, npu
 from .ir import GraphError, normalize
 from .planner import make_plan
 from .pipeline import make_pipeline_plan
@@ -131,7 +131,8 @@ def compile_bundle(raw_graph, profile, output, *, dialect="auto", fuse=True, reu
         staging = Path(tmp) / "bundle"
         staging.mkdir()
         gpu_products = gpu.lower(physical, plan, profile, staging)
-        npu_products = npu.lower(physical, plan, profile, staging)
+        tensor_backend = asic_ip if profile["npu"]["variant"] == "asic-ip-v3" else npu
+        npu_products = tensor_backend.lower(physical, plan, profile, staging)
         if execution is None:
             image, bindings = _initial_image(graph, plan, profile, npu_products, staging)
             transfers = _dma_table(graph, plan, profile)

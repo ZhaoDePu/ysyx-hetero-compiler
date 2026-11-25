@@ -10,7 +10,7 @@ from hetero_compiler.yhb import emit_yhb, inspect_yhb
 class YhbTests(unittest.TestCase):
     def test_four_target_ids_and_crc(self):
         for profile_id, profile in enumerate(("fpga_zu15eg_balanced", "fpga_zu15eg_full",
-                                              "asic_nangate45_p8", "asic_nangate45_ip"), 1):
+                                              "asic_nangate45_p8", "asic_nangate45_ip_compat4k"), 1):
             with self.subTest(profile=profile), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 (root / "initial.bin").write_bytes(bytes(64))

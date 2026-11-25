@@ -64,14 +64,19 @@ entry PC, packed `GPU_JOB` value, thread count and Warp ID. Before uploading
 new code, the host waits for the prior GPU stage to drain. Warp submissions
 can overlap when the slot and pending queue permit it. A page change
 waits for outstanding work because the frozen shell admits only one
-active page. The Full-profile packed job field is a projection.
+active page. The Full Profile limits MMIO dispatch to four Warp slots,
+within the frozen shell's packed job field. It retains the 8T/8W core
+geometry in the Profile separately from that dispatch limit.
 
 A Z15 NPU or VPU stage is an array of `(MMIO register offset, value)` u32
 pairs. Its final pair issues the doorbell, and preceding control writes
 may commit LUT or scale values. Both engines share the tensor sequencer.
-Phase 8 and the current ASIC IP projection encode three native values
-`[a_base, descriptor_address, program_slot_count]` for each tensor stage.
-The 4 KiB descriptor image is included in the initial extents.
+Phase 8 and the explicit ASIC-IP compatibility Profile encode three native
+values `[a_base, descriptor_address, program_slot_count]` for each tensor
+stage. The 4 KiB descriptor image is included in the initial extents.
+The native 64 KiB ASIC-IP projection instead encodes a 32-word command in
+YHB DATA, and its symbol/initial offsets refer to scratch addresses. See
+[the ASIC IP contract](asic_ip_v3_contract.md).
 
 DMA direction 1 reads DDR into scratch and direction 2 writes scratch
 back to DDR. Flags bit 1 allows extended AXI bursts. DDR offset, scratch

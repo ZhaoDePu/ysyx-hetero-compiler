@@ -43,13 +43,21 @@ def validate_profile(p):
                 reserve % align or not 1 <= gpu["lanes"] <= 255 or gpu["warps"] > 8 or
                 gpu["issue_width"] not in (1, 2)):
             raise GraphError("inconsistent target memory or GPU limits")
-        if npu["variant"] not in ("p8", "z15") or gpu["variant"] not in ("v6", "g3", "g4"):
+        if npu["variant"] not in ("p8", "z15", "asic-ip-v3") or gpu["variant"] not in ("v6", "g3", "g4"):
             raise GraphError("unsupported hardware ABI")
         if npu["variant"] == "z15" and (cap, zone, beat, npu["window_bytes"]) != (
                 2 << 20, 1 << 20, 32, 2 << 20):
             raise GraphError("Z15 requires two 1 MiB ownership halves and 32-byte DMA beats")
         if npu["variant"] == "p8" and (npu["window_bytes"] != 4096 or beat or zone != cap or align < 8):
             raise GraphError("Phase 8 requires a 4096-byte native window and 8-byte alignment")
+        slots = gpu.get("launch_warps", gpu["warps"])
+        if type(slots) is not int or not 1 <= slots <= gpu["warps"]:
+            raise GraphError("GPU launch_warps must fit the target geometry")
+        if npu["variant"] == "asic-ip-v3" and (
+                cap != 65536 or zone != cap or npu["window_bytes"] != cap or
+                gpu["window_bytes"] != 4096 or reserve or beat or align < 8 or
+                not vpu["enabled"] or vpu["verified"]):
+            raise GraphError("ASIC IP v3 requires the 64 KiB shared projection arena")
     except (KeyError, TypeError) as exc:
         raise GraphError(f"incomplete target profile: {exc}") from exc
     return p

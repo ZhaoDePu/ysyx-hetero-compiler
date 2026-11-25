@@ -44,8 +44,11 @@ def _placement(graph, profile, npu, gpu, fuse, device_policy):
     for idx, node in enumerate(nodes):
         if idx in contracted:
             continue
-        if node["op"] in ("Gemm", "Conv", "Attention", "RMSNorm", "RowSoftmax",
-                          "C2f", "SPPF", "YoloDetectHead"):
+        asic_native = profile["npu"]["variant"] == "asic-ip-v3"
+        if asic_native and node["op"] in ("RMSNorm", "RowSoftmax", "QSoftmax"):
+            choices = [("VPU", npu), ("GPU", gpu)]
+        elif node["op"] in ("Gemm", "Conv", "Attention", "RMSNorm", "RowSoftmax",
+                            "C2f", "SPPF", "YoloDetectHead"):
             choices = [("NPU", npu), ("GPU", gpu)]
         else:
             choices = [("GPU", gpu)]
@@ -368,7 +371,8 @@ def make_plan(graph, profile, *, fuse=True, reuse=True, overlap=True, device_pol
     validate_profile(profile)
     if device_policy not in ("auto", "gpu-only", "npu-greedy"):
         raise GraphError(f"unknown device policy {device_policy!r}")
-    npu, gpu = _backend("npu"), _backend("gpu")
+    tensor_module = "asic_ip" if profile["npu"]["variant"] == "asic-ip-v3" else "npu"
+    npu, gpu = _backend(tensor_module), _backend("gpu")
     stages = _placement(graph, profile, npu, gpu, fuse, device_policy)
     specs, groups, metadata_end = _resources(graph, profile, stages, npu, gpu)
     _zone_bounds(stages, specs, profile, groups)

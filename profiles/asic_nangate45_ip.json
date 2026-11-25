@@ -1,12 +1,12 @@
 {
   "schema": "ysyx-target-v1",
   "name": "asic_nangate45_ip",
-  "binding": "phase8_compatible_ip_projection",
+  "binding": "asic_ip_v3_software_projection",
   "npu": {
-    "variant": "p8",
+    "variant": "asic-ip-v3",
     "rows": 4,
     "cols": 4,
-    "window_bytes": 4096,
+    "window_bytes": 65536,
     "double_buffer": false
   },
   "gpu": {
@@ -15,18 +15,18 @@
     "warps": 1,
     "issue_width": 2,
     "window_bytes": 4096,
-    "code_bytes": 65536
+    "code_bytes": 16384
   },
   "vpu": {
     "enabled": true,
     "verified": false,
-    "status": "reserved"
+    "status": "projected_asic_ip_v3"
   },
   "sram": {
     "capacity": 65536,
     "alignment": 8,
     "zone_bytes": 65536,
-    "metadata_reserve": 1024
+    "metadata_reserve": 0
   },
   "dma": {
     "beat_bytes": 0,

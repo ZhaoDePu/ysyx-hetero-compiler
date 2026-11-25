@@ -1,7 +1,7 @@
 {
   "schema": "ysyx-target-v1",
   "name": "fpga_zu15eg_full",
-  "binding": "z15_mmio_v1_projected_full",
+  "binding": "z15_mmio_v1_four_slot_full_projection",
   "npu": {
     "variant": "z15",
     "rows": 24,
@@ -15,7 +15,8 @@
     "warps": 8,
     "issue_width": 2,
     "window_bytes": 4096,
-    "code_bytes": 16384
+    "code_bytes": 16384,
+    "launch_warps": 4
   },
   "vpu": {
     "enabled": true,

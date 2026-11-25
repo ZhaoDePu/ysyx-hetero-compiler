@@ -9,7 +9,9 @@ DIRECTORY = struct.Struct("<4I")
 SECTIONS = ("strings", "symbols", "data", "initial", "stages", "dma", "commands")
 RECORD_BYTES = (1, 48, 1, 16, 32, 24, 16)
 TARGET_IDS = {name: target for target, name in enumerate((
-    "fpga_zu15eg_balanced", "fpga_zu15eg_full", "asic_nangate45_p8", "asic_nangate45_ip"), 1)}
+    "fpga_zu15eg_balanced", "fpga_zu15eg_full", "asic_nangate45_p8",
+    "asic_nangate45_ip_compat4k", "asic_nangate45_ip"), 1)}
+ASIC_IP_V3 = TARGET_IDS["asic_nangate45_ip"]
 DTYPES = {"int8": 1, "uint8": 2, "int32": 3, "int64": 4, "uint16": 5, "int16": 6}
 WIDTHS = {1: 1, 2: 1, 3: 4, 4: 8, 5: 2, 6: 2}
 ENGINE = {"GPU": 1, "NPU": 2, "VPU": 3}
@@ -139,7 +141,9 @@ def emit_yhb(directory, manifest):
                 jobs.extend((job["entry"], job.get("gpu_job_reg", 0), job["threads"], job["warp"]))
         else:
             native = tensors[stage_id]
-            if "writes" in native:
+            if target == ASIC_IP_V3:
+                words = native["words"]
+            elif "writes" in native:
                 words = [value for pair in native["writes"] for value in pair]
             else:
                 words = [native["a_base"], native["descriptor"], native["program_slots"]]
@@ -178,7 +182,17 @@ def emit_yhb(directory, manifest):
     image = (directory / manifest.get("initial_ddr", manifest["initial_image"])).read_bytes()
     if len(image) > POOL_BYTES:
         raise ValueError("YHB initial image exceeds DDR pool")
-    if target >= 3:
+    if target == ASIC_IP_V3:
+        if len(image) != 65536 or profile["sram"]["capacity"] != 65536:
+            raise ValueError("ASIC IP v3 initial image must have 65536 bytes")
+        if moves:
+            raise ValueError("ASIC IP v3 does not expose a DMA program")
+        for alloc in plan["allocations"].values():
+            if alloc.get("kind") in ("input", "constant"):
+                initial_ranges.append((alloc["offset"], alloc["offset"] + alloc["size"]))
+        if any(hi > len(image) for _, hi in initial_ranges):
+            raise ValueError("ASIC IP v3 initializer lies outside the arena")
+    elif target >= 3:
         initial_ranges.append((0, min(len(image), 4096)))
     for lo, hi in _merged_ranges(initial_ranges):
         if hi > lo:
@@ -209,7 +223,8 @@ def inspect_yhb(blob):
     magic, version, header, target, total, crc, nsections, capacity, flags = HEADER.unpack_from(blob)
     if ((magic, version, header, nsections, flags) != (b"YHB1", 1, HEADER.size, len(SECTIONS), 0)
             or target not in TARGET_IDS.values() or total != len(blob) or total > MAX_BYTES
-            or not 0 < capacity <= 2 << 20):
+            or not 0 < capacity <= 2 << 20
+            or (target == ASIC_IP_V3 and capacity != 65536)):
         raise ValueError("invalid YHB header")
     if _crc(blob) != crc:
         raise ValueError("YHB CRC32 mismatch")

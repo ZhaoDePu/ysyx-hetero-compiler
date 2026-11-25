@@ -966,11 +966,11 @@ def _stage_program(stage, graph, ranges, config, page):
     job_threads = 255 if variant == "v6" else lanes
     jobs = []
     for start in range(0, count, job_threads):
-        warp = len(jobs) % warps
+        warp = len(jobs) % slots
         threads = min(job_threads, count - start)
         entry = len(p.words) * 4
         jobs.append({"entry": entry, "threads": threads, "warp": warp, "page": page,
-                     "first_element": start, "wave": len(jobs) // warps})
+                     "first_element": start, "wave": len(jobs) // slots})
         if variant != "v6":
             jobs[-1]["gpu_job_reg"] = (warp << 24) | (threads << 16) | page
         p.li(15, start)
@@ -1024,10 +1024,11 @@ def lower(graph, plan, profile, output: Path):
     if variant in {"g3", "g4"} and (lanes, warps) not in {(16, 4), (8, 8)}:
         raise ValueError("G3/G4 requires 16 threads / 4 warps or 8 threads / 8 warps")
     abi = "v6-launch"
+    slots = config.get("launch_warps", warps)
     if variant != "v6":
-        abi = "z15-mmio-v1" if warps == 4 else "z15-mmio-8warp-projected"
+        abi = "z15-mmio-v1" if slots <= 4 else "z15-mmio-8warp-projected"
     bundle = {"variant": variant, "lanes": lanes, "warps": warps,
-              "window_bytes": window, "dispatch_abi": abi, "stages": []}
+              "launch_warps": slots, "window_bytes": window, "dispatch_abi": abi, "stages": []}
     artifacts = []
     for index, stage in enumerate(plan["stages"]):
         if stage["device"] != "GPU":
