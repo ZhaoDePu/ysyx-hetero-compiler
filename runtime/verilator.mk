@@ -7,7 +7,7 @@ OBJECTS := $(addprefix $(OUT)/,ysyx_rt.o hal_linux_uio.o ysyx_run.o hal_verilato
 RTL_OBJECTS := $(addprefix $(RTL_BUILD)/,Vz15_bd_axi_shell__ALL.a verilated.o verilated_dpi.o verilated_threads.o)
 
 .PHONY: all
-all: $(OUT)/ysyx_run
+all: $(OUT)/ysyx_run $(OUT)/ysyx_yolo26n_cli
 
 $(OUT)/%.o: %.c ysyx_rt.h z15_regs.h
 	$(CC) $(CFLAGS) -DYSYX_WITH_VERILATOR -c "$<" -o "$@"
@@ -17,5 +17,12 @@ $(OUT)/hal_verilator_z15.o: hal_verilator_z15.cpp ysyx_rt.h $(OUT)/observed_rig.
 	    -isystem "$(SDK)/include" -isystem "$(SDK)/include/vltstd" -c "$<" -o "$@"
 
 $(OUT)/ysyx_run: $(OBJECTS) $(RTL_OBJECTS)
+	$(CXX) -pthread $^ -o "$@.tmp"
+	mv -f -- "$@.tmp" "$@"
+
+$(OUT)/yolo26n_post.o $(OUT)/ysyx_yolo26n_api.o $(OUT)/ysyx_yolo26n_cli.o: yolo26n_post.h ../include/ysyx_yolo26n_api.h
+$(OUT)/yolo26n_post.o: CFLAGS += -ffp-contract=off
+
+$(OUT)/ysyx_yolo26n_cli: $(addprefix $(OUT)/,ysyx_yolo26n_cli.o ysyx_yolo26n_api.o yolo26n_post.o ysyx_rt.o hal_linux_uio.o hal_verilator_z15.o) $(RTL_OBJECTS)
 	$(CXX) -pthread $^ -o "$@.tmp"
 	mv -f -- "$@.tmp" "$@"

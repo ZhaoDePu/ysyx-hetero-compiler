@@ -201,3 +201,10 @@ Use the dedicated compiler RAM directory `/dev/shm/ysyx_compiler_c5`.
 Frozen RTL builds take one compiler build slot and select two or four
 jobs from the available RAM. The C5 workflows use only offline Python
 dependencies and the frozen Verilator sources.
+
+## Phase C6 official YOLO26n
+
+The C6 compiler reads the calibrated, static COCO 80-class model and
+generates a Z15 Balanced YHB1 with static DDR liveness and double-buffered
+scratch tiles. See the [C6 lowering and validation flow](docs/c6-z15-lowering.md)
+and [C99 board kit](deploy/z15_yolo26n_320_kit/README-YOLO26N-Z15.md).
