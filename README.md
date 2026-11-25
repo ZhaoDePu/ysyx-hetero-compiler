@@ -98,7 +98,7 @@ runner compares stage results over actual AXI DMA and checks the emitted
 MMIO commands and GPU machine code. Phase 8 replays actual full arena images
 through the native descriptor and v6 GPU models. Build scripts read pinned
 hardware files into `/dev/shm/ysyx_compiler_c4a`, apply low-priority scheduling,
-and limit each build to two jobs.
+and limit each build to four jobs.
 
 Standalone validation commands are `python3 -B -m tools.verify_npu_rtl`
 (`p8|z15`, executable, scratch directory) and
@@ -175,3 +175,10 @@ commands above exercise additional ONNX and hardware paths.
 - [Frozen Full tensor comparison](docs/c3-full-qualification.md)
 - [64 KiB ASIC IP software contract and 4 KiB compatibility target](docs/asic_ip_v3_contract.md)
 - [Z15 Balanced C99 board kit with checked programs and IO](deploy/z15_board_kit/README.md)
+
+## Phase C4-A persistent KV and bank-aware dispatch
+
+- [Compile and replay a causal KV session](docs/c4a-kv-cache.md).
+- [Run strict A0–A3 ablations on standard streaming ONNX](examples/c4a_streams/README.md).
+- [Drive the C99 KV checkpoints and feed back device-produced tokens](docs/yhb-format.md#optional-kv-checkpoints).
+- [Run the standalone Z15 deployment fixtures](deploy/z15_board_kit/README.md).
