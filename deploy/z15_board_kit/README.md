@@ -66,3 +66,19 @@ The included fixture feeds back actual generated tokens automatically.
 Both replay the compiled bank-aware YHB through the regular C99 dispatch
 path. The optional instruction preload used by the MMIO ablation runner is
 specific to that replay tool.
+
+## C4-VPU and Step 2 MMIO
+
+The C99 loader validates the Step 2 Z15 ABI family, major revision, ready
+status, command ownership, aligned DMA extents and explicit LUT commits.
+The included VPU cases use the same frozen ABI and YHB1 loader.
+
+- `50-vpu-kv` uses incremental native packed V, compound causal ATTN and
+  five host-visible checkpoints.
+- `51-vpu-attention` uses 24 windows with 48 causal keys each.
+- `52-vpu-transformer` runs four complete layers with RMSNorm, ATTN,
+  activation-table SwiGLU, EW_MUL and residual EW_ADD.
+
+Keep the noncoherent DDR UIO reserved mapping and the matching Step 2
+bitstream. The loader reports the final ABI error word and the number of
+invalid DMA descriptors for each successful execution.

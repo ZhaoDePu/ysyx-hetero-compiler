@@ -148,49 +148,155 @@ static int valid_symbols(const ysyx_program_t *p)
 
 static int allowed_tensor_register(uint32_t reg)
 {
-    return !(reg & 3u) && ((reg >= 0x60u && reg <= 0x98u) ||
-                             (reg >= 0xa0u && reg <= 0xccu));
+    return !(reg & 3u) && ((reg >= Z15_NPU_DIMS && reg <= Z15_ATTN_POSITION) ||
+                          (reg >= Z15_EW_A && reg <= Z15_ACTIVATION));
 }
 
-static int valid_tensor_bases(const uint32_t cfg[52], uint64_t present,
-                              uint32_t action, uint32_t zone)
+static uint64_t reg_bit(unsigned reg)
+{
+    return UINT64_C(1) << (reg / 4u);
+}
+
+static int tensor_field(const uint32_t *cfg, uint64_t present, unsigned reg, uint32_t mask)
+{
+    return (present & reg_bit(reg)) && !(cfg[reg / 4u] & ~mask);
+}
+
+static int tensor_extent(uint32_t base, uint32_t count, uint32_t zone)
+{
+    return count && (base >> 20) == zone && region(base, count, (zone + 1u) * Z15_HALF_BYTES);
+}
+
+static int spans_intersect(uint32_t a, uint32_t n, uint32_t b, uint32_t m)
+{
+    return (uint64_t)a < (uint64_t)b + m && (uint64_t)b < (uint64_t)a + n;
+}
+
+static uint32_t round_word(uint32_t n)
+{
+    return (n + 3u) & ~3u;
+}
+
+static int valid_attention(const uint32_t *cfg, uint64_t present, uint32_t zone)
+{
+    if (!tensor_field(cfg, present, Z15_NPU_DIMS, 0x01ff01ffu) ||
+        !tensor_field(cfg, present, Z15_NPU_K, 0x01ff01ffu) ||
+        !tensor_field(cfg, present, Z15_ATTN_CONTROL, 0x01f1ff07u) ||
+        !tensor_field(cfg, present, Z15_ATTN_POSITION, 511u))
+        return 0;
+    const uint32_t dims = cfg[Z15_NPU_DIMS / 4u], depth = cfg[Z15_NPU_K / 4u];
+    const uint32_t ctl = cfg[Z15_ATTN_CONTROL / 4u], pos = cfg[Z15_ATTN_POSITION / 4u];
+    const uint32_t keys = dims & 511u, feature = depth & 511u, values = dims >> 16;
+    const uint32_t queries = ctl & 2u ? (ctl >> 8) & 511u : keys;
+    const uint32_t tile = depth >> 16;
+    if (!keys || keys > 128 || !queries || ((ctl & 2u) && pos + queries > keys) ||
+        !feature || !values || (tile != 16 && tile != 32 && tile != 64 && tile != 128))
+        return 0;
+    const unsigned fields[] = {Z15_NPU_A, Z15_NPU_B, Z15_ATTN_V, Z15_ATTN_SCORES, Z15_ATTN_P, Z15_NPU_C};
+    const uint32_t extents[] = {queries * round_word(feature), keys * round_word(feature),
+                                values * round_word(keys), 4u * queries * keys,
+                                queries * round_word(keys),
+                                queries * (ctl & 4u ? round_word(values) : 4u * values)};
+    uint32_t end = zone * Z15_HALF_BYTES;
+    for (size_t i = 0; i < sizeof(fields) / sizeof(fields[0]); ++i) {
+        const uint32_t base = cfg[fields[i] / 4u];
+        if (base < end || !tensor_extent(base, extents[i], zone))
+            return 0;
+        end = base + extents[i];
+    }
+    return 1;
+}
+
+static int valid_ewise(const uint32_t *cfg, uint64_t present, uint32_t zone)
+{
+    if (!tensor_field(cfg, present, Z15_EW_FLAGS, 0x1fffff1fu))
+        return 0;
+    const uint32_t flags = cfg[Z15_EW_FLAGS / 4u], op = flags & 15u;
+    const uint32_t a = cfg[Z15_EW_A / 4u], b = cfg[Z15_EW_B / 4u], c = cfg[Z15_EW_C / 4u];
+    uint32_t na, nb = 0, nc;
+    if (op == 7u || op == 9u || op == 12u) {
+        if (!tensor_field(cfg, present, Z15_EW_SHAPE, 0x03ff03ffu) ||
+            !tensor_field(cfg, present, Z15_EW_CHANNELS, 0x03ff03ffu))
+            return 0;
+        const uint32_t rows = cfg[Z15_EW_SHAPE / 4u] & 1023u;
+        const uint32_t dim = cfg[Z15_EW_CHANNELS / 4u] & 1023u;
+        if (op == 7u) {
+            if (!tensor_field(cfg, present, Z15_EW_EPS, 0xffffffu) || (dim & 3u))
+                return 0;
+            na = nc = rows * dim;
+            nb = dim;
+        } else if (op == 9u) {
+            const uint32_t stride = cfg[Z15_EW_CHANNELS / 4u] >> 16;
+            if (!rows || !dim || stride < rows)
+                return 0;
+            /* The last written byte is C[(cols - 1) * stride + rows - 1]. */
+            na = rows * dim;
+            nc = (dim - 1u) * stride + rows;
+        } else {
+            const uint32_t keys = cfg[Z15_EW_SHAPE / 4u] >> 16;
+            if (rows > 511 || keys > 128 || dim > 511 || ((flags & 0x100u) && dim + rows > keys) ||
+                (flags & 0x00fffc00u))
+                return 0;
+            na = 4u * rows * keys;
+            nc = rows * round_word(keys);
+        }
+    } else if (op == 0u || op == 6u || op == 11u) {
+        if (!tensor_field(cfg, present, Z15_EW_LENGTH, 0x003fffffu))
+            return 0;
+        na = nc = cfg[Z15_EW_LENGTH / 4u];
+        nb = op == 11u ? 0 : na;
+    } else {
+        /* Legacy native elementwise commands retain device geometry checks. */
+        return op <= 12u;
+    }
+    return tensor_extent(a, na, zone) && tensor_extent(c, nc, zone) &&
+           !spans_intersect(a, na, c, nc) &&
+           (!nb || (tensor_extent(b, nb, zone) && !spans_intersect(b, nb, c, nc)));
+}
+
+static int valid_tensor_bases(const uint32_t *cfg, uint64_t present, uint32_t action, uint32_t zone)
 {
     unsigned bases[8];
     size_t count = 0;
-    if (action == 64u) {
-        bases[count++] = 0xa0u;
-        bases[count++] = 0xa8u;
-        const uint32_t op = cfg[0xbcu / 4u] & 15u;
-        if (!(present & (UINT64_C(1) << (0xbcu / 4u))))
-            return 0;
-        if (op == 0u || op == 6u)
-            bases[count++] = 0xa4u;
+    uint32_t addr_mask = (Z15_SCRATCH_SIZE - 1u) & ~3u;
+    if (action == Z15_START_EW) {
+        const uint32_t op = cfg[Z15_EW_FLAGS / 4u] & 15u;
+        if (op == 9u)
+            addr_mask = Z15_SCRATCH_SIZE - 1u; /* Strided transpose uses byte lanes. */
+        bases[count++] = Z15_EW_A;
+        bases[count++] = Z15_EW_C;
+        if (op == 0u || op == 1u || op == 6u || op == 7u || op == 10u)
+            bases[count++] = Z15_EW_B;
+        if (op == 2u)
+            bases[count++] = Z15_EW_D;
     } else {
-        bases[count++] = 0x68u;
-        bases[count++] = 0x6cu;
-        bases[count++] = 0x70u;
-        if (action == 32u) {
-            bases[count++] = 0x8cu;
-            bases[count++] = 0x90u;
-            bases[count++] = 0x94u;
+        bases[count++] = Z15_NPU_A;
+        bases[count++] = Z15_NPU_B;
+        bases[count++] = Z15_NPU_C;
+        if (action == Z15_START_ATTN) {
+            bases[count++] = Z15_ATTN_V;
+            bases[count++] = Z15_ATTN_SCORES;
+            bases[count++] = Z15_ATTN_P;
         } else {
-            const uint32_t flags = cfg[0x78u / 4u];
-            const uint32_t dimensions = cfg[0x64u / 4u];
-            if (!(present & (UINT64_C(1) << (0x78u / 4u))) ||
-                !(present & (UINT64_C(1) << (0x64u / 4u))))
+            const uint32_t flags = cfg[Z15_NPU_FLAGS / 4u];
+            const uint32_t dimensions = cfg[Z15_NPU_K / 4u];
+            if (!(present & reg_bit(Z15_NPU_FLAGS)) || !(present & reg_bit(Z15_NPU_K)))
                 return 0;
             if (flags & 2u)
-                bases[count++] = 0x74u;
+                bases[count++] = Z15_NPU_BIAS;
             if ((flags & (1u << 17)) && (dimensions & 511u) > ((dimensions >> 16) & 511u))
-                bases[count++] = 0x84u;
+                bases[count++] = Z15_NPU_PARTIAL;
         }
     }
     for (size_t i = 0; i < count; ++i) {
-        const unsigned index = bases[i] / 4u;
-        if (!(present & (UINT64_C(1) << index)) || (cfg[index] & 3u) ||
-            (cfg[index] >> 20) != zone)
+        if (!tensor_field(cfg, present, bases[i], addr_mask) ||
+            (cfg[bases[i] / 4u] >> 20) != zone)
             return 0;
     }
+    if (action == Z15_START_ATTN)
+        return valid_attention(cfg, present, zone);
+    if (action == Z15_START_EW)
+        return valid_ewise(cfg, present, zone);
     return 1;
 }
 
@@ -300,17 +406,24 @@ static int valid_stage(const ysyx_program_t *p, const uint8_t *s)
     for (uint32_t i = 0; i < words; i += 2) {
         uint32_t reg = get(regs, i), value = get(regs, i + 1);
         if (i + 2 == words) {
-            if (reg != Z15_CTRL || (engine == VPU ? value != 64u : value != 8u && value != 32u) ||
+            if (reg != Z15_CTRL ||
+                (value != Z15_START_ATTN && value != (engine == VPU ? Z15_START_EW : Z15_START_NPU)) ||
                 !valid_tensor_bases(cfg, present, value, get(s, 7)))
                 return 0;
         } else if (reg == Z15_CTRL) {
-            if (value != 128u && value != 256u)
+            if (value == Z15_WRITE_SCALE && tensor_field(cfg, present, Z15_SCALE_INDEX, 0x1ffu) &&
+                tensor_field(cfg, present, Z15_SCALE_DATA, 0x1fffffu)) {
+                present &= ~(reg_bit(Z15_SCALE_INDEX) | reg_bit(Z15_SCALE_DATA));
+            } else if (value == Z15_WRITE_ACT && tensor_field(cfg, present, Z15_ACTIVATION, 0xffffu)) {
+                present &= ~reg_bit(Z15_ACTIVATION);
+            } else {
                 return 0;
+            }
         } else if (!allowed_tensor_register(reg)) {
             return 0;
         } else {
             cfg[reg / 4u] = value;
-            present |= UINT64_C(1) << (reg / 4u);
+            present |= reg_bit(reg);
         }
     }
     return 1;
@@ -487,6 +600,21 @@ static int write32(const run_t *run, uint32_t reg, uint32_t value)
     return run->hal->mmio_write32(run->hal->ctx, reg, value);
 }
 
+static int read_error(const run_t *run)
+{
+    uint32_t error;
+    return read32(run, Z15_ERROR, &error) || error;
+}
+
+static int action(const run_t *run, uint32_t bit)
+{
+    if (!(bit & Z15_ACTIONS) || (bit & ~Z15_ACTIONS) || (bit & (bit - 1u)))
+        return -1;
+    if (write32(run, Z15_CTRL, bit))
+        return -1;
+    return read_error(run);
+}
+
 static int read_counter(const run_t *run, uint32_t reg, uint64_t *value)
 {
     for (unsigned i = 0; i < 8; ++i) {
@@ -508,7 +636,7 @@ static int poll_status(const run_t *run, uint32_t required, uint32_t busy)
         if (read32(run, Z15_STATUS, &value) || value & Z15_HAS_ERROR || !(value & Z15_LOCKED))
             return -1;
         if ((value & required) == required && !(value & busy))
-            return 0;
+            return read_error(run);
     }
     return -1;
 }
@@ -517,10 +645,10 @@ static int wait_gpu_slot(const run_t *run, uint32_t warp)
 {
     for (unsigned i = 0; i < POLL_LIMIT; ++i) {
         uint32_t value, status;
-        if (read32(run, Z15_STATUS, &status) || status & Z15_HAS_ERROR ||
-            read32(run, Z15_GPU_SLOTS, &value))
+        if (read32(run, Z15_STATUS, &status) || !(status & Z15_LOCKED) || status & Z15_HAS_ERROR ||
+            read32(run, Z15_GPU_SLOTS, &value) || value & Z15_GPU_SLOT_FAULTS)
             return -1;
-        if (!(value & (16u | (1u << warp))))
+        if (!(value & (Z15_GPU_PENDING | (1u << warp))))
             return 0;
     }
     return -1;
@@ -528,6 +656,8 @@ static int wait_gpu_slot(const run_t *run, uint32_t warp)
 
 static int launch_gpu(const run_t *run, const uint8_t *stage, const uint8_t *words)
 {
+    if (poll_status(run, 0, Z15_GPU_BUSY))
+        return -1;
     for (uint32_t i = 0; i < get(stage, 4); ++i)
         if (write32(run, Z15_PROGRAM + 4u * i, get(words, i)))
             return -1;
@@ -539,7 +669,7 @@ static int launch_gpu(const run_t *run, const uint8_t *stage, const uint8_t *wor
         if (i && page != previous_page && poll_status(run, Z15_GPU_DONE, Z15_GPU_BUSY))
             return -1;
         if (wait_gpu_slot(run, get(job, 3)) || write32(run, Z15_GPU_PC, get(job, 0)) ||
-            write32(run, Z15_GPU_JOB, config) || write32(run, Z15_CTRL, Z15_START_GPU))
+            write32(run, Z15_GPU_JOB, config) || action(run, Z15_START_GPU))
             return -1;
         previous_page = page;
     }
@@ -559,9 +689,13 @@ static int launch_stage(run_t *run, uint32_t index)
         if (launch_gpu(run, stage, words))
             return -1;
     } else {
-        for (uint32_t i = 0; i < get(stage, 4); i += 2)
-            if (write32(run, get(words, i), get(words, i + 1)))
+        if (poll_status(run, 0, Z15_NPU_BUSY))
+            return -1;
+        for (uint32_t i = 0; i < get(stage, 4); i += 2) {
+            const uint32_t reg = get(words, i), value = get(words, i + 1);
+            if (reg == Z15_CTRL ? action(run, value) : write32(run, reg, value))
                 return -1;
+        }
     }
     run->pending[engine] = index;
     return 0;
@@ -621,7 +755,7 @@ static int launch_dma(run_t *run, uint32_t index)
 {
     const uint8_t *move = record(run->program, MOVES, index);
     uint32_t out = get(move, 0) == DMA_STORE;
-    if (finish_dma(run) ||
+    if (finish_dma(run) || poll_status(run, 0, Z15_DMA_BUSY) ||
         run->hal->cache_sync(run->hal->ctx, get(move, 1), get(move, 3), YSYX_SYNC_FOR_DEVICE) ||
         (run->trace && read_counter(run, Z15_WALL_CYCLES, &run->dma_start)))
         return -1;
@@ -630,7 +764,7 @@ static int launch_dma(run_t *run, uint32_t index)
         write32(run, Z15_DMA_SCRATCH, get(move, 2)) ||
         write32(run, Z15_DMA_BYTES, get(move, 3)) ||
         write32(run, Z15_DMA_FLAGS, get(move, 4) | out) ||
-        write32(run, Z15_CTRL, Z15_START_DMA))
+        action(run, Z15_START_DMA))
         return -1;
     run->dma_index = index;
     ++run->stats->dma_operations;
@@ -706,7 +840,7 @@ static int attach(const ysyx_program_t *p, const ysyx_hal_t *hal, const ysyx_inp
     const run_t run = {.program = p, .hal = hal};
     uint32_t magic, version;
     if (read32(&run, Z15_MAGIC, &magic) || magic != Z15_MAGIC_VALUE ||
-        read32(&run, Z15_VERSION, &version) || version != Z15_VERSION_VALUE ||
+        read32(&run, Z15_VERSION, &version) || (version & Z15_VERSION_COMPAT_MASK) != Z15_VERSION_VALUE ||
         poll_status(&run, 0, Z15_NPU_BUSY | Z15_GPU_BUSY | Z15_DMA_BUSY))
         return fail(error, "Z15 Balanced ABI absent, busy or reporting a sticky fault");
     if (write_initial(p, hal, inputs, count))
@@ -755,8 +889,12 @@ static int execute_range(const ysyx_program_t *p, const ysyx_hal_t *hal, uint32_
     for (unsigned i = 0; i < 2; ++i)
         if (run.pending[i] != UINT32_MAX && finish_stage(&run, run.pending[i]))
             return fail(error, "final compute fence failed");
-    if (finish_dma(&run) || sample_telemetry(&run, stats))
+    if (finish_dma(&run) || sample_telemetry(&run, stats) ||
+        read32(&run, Z15_ERROR, &stats->abi_error))
         return fail(error, "final DMA fence or counter read failed");
+    stats->invalid_dma_descriptors = !!(stats->abi_error & Z15_ERR_DMA_DESC);
+    if (stats->abi_error)
+        return fail(error, "Z15 reported a sticky fault at end of execution");
     stats->wall_ticks -= begin.wall_ticks;
     stats->npu_ticks -= begin.npu_ticks;
     stats->gpu_ticks -= begin.gpu_ticks;

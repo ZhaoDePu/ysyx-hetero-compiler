@@ -105,6 +105,8 @@ static void add_stats(ysyx_stats_t *total, const ysyx_stats_t *step)
     total->dma_operations += step->dma_operations;
     total->dma_bytes += step->dma_bytes;
     total->has_observations = step->has_observations;
+    total->abi_error |= step->abi_error;
+    total->invalid_dma_descriptors += step->invalid_dma_descriptors;
     total->observed.axi_transactions += step->observed.axi_transactions;
     total->observed.dma_busy_ticks += step->observed.dma_busy_ticks;
     total->observed.dma_compute_overlap_ticks += step->observed.dma_compute_overlap_ticks;
@@ -358,9 +360,11 @@ int ysyx_run_cli(int argc, char **argv, int simulation_available)
     if (dump) {
         printf("STATS backend=%s npu_domain_wall_ticks=%" PRIu64
                " npu_busy_ticks=%" PRIu64 " gpu_busy_ticks=%" PRIu64 " npu_gpu_overlap_ticks=%" PRIu64
-               " dma_operations=%" PRIu32 " dma_bytes=%" PRIu64,
+               " dma_operations=%" PRIu32 " dma_bytes=%" PRIu64
+               " abi_error=0x%08" PRIx32 " invalid_dma_descriptors=%" PRIu32,
                backend, stats.wall_ticks, stats.npu_ticks, stats.gpu_ticks,
-               stats.npu_gpu_overlap_ticks, stats.dma_operations, stats.dma_bytes);
+               stats.npu_gpu_overlap_ticks, stats.dma_operations, stats.dma_bytes,
+               stats.abi_error, stats.invalid_dma_descriptors);
         if (stats.has_observations)
             printf(" axi_transactions=%" PRIu64 " dma_busy_ticks=%" PRIu64
                    " dma_compute_overlap_ticks=%" PRIu64 " triple_overlap_ticks=%" PRIu64

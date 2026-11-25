@@ -131,7 +131,7 @@ loading, device feedback, host feedback and a host override:
 
 ```sh
 nice -n 10 python3 -B -m tools.verify_c4a_session \
-  --out /dev/shm/ysyx_compiler_c4a/runtime/session-proof
+  --out /dev/shm/ysyx_compiler_c4vpu/runtime/session-proof
 ```
 
 ## Build and execute
@@ -144,6 +144,8 @@ prefix, for example `CC=aarch64-xilinx-linux-gcc AR=aarch64-xilinx-linux-ar`.
 The C core uses standard-library allocation and file I/O. The Linux HAL
 uses POSIX UIO discovery, memory mapping and ordering primitives.
 
+The Step 2 `z15-mmio-abi-v1` contract is archived at
+`/home/zdp/ysyx-migration/artifacts/z15-board-bringup-step2-20261125-212110/z15-mmio-abi-v1.md`.
 The Linux HAL validates control map0 at physical `0x80000000` for 64 KiB,
 and reserved DMA map0 at `0x40000000` for 512 MiB. It reads UIO sysfs names
 and mapping metadata and accepts explicit names or `/dev/uioN` paths.
@@ -153,15 +155,42 @@ that mapping. The runtime also calls `msync` and accepts the unsupported
 operation errors produced by UIO drivers without a synchronization callback.
 A cached alias requires kernel-managed cache maintenance.
 [Linux UIO](https://github.com/torvalds/linux/blob/master/drivers/uio/uio.c),
-[Linux msync implementation](https://github.com/torvalds/linux/blob/master/mm/msync.c). The CLI checks ABI magic, version and idle status before
-writing data. C compiler compatibility does not establish board operation.
+[Linux msync implementation](https://github.com/torvalds/linux/blob/master/mm/msync.c).
+Before writing the DDR image, the runtime requires `MAGIC=0x5A313548`,
+Balanced version family `0x0C0C`, ABI major 1, `STATUS[0]`, idle engines
+and zero `ERROR`. The ABI minor byte may change within that major version.
+Each DMA, tensor launch or register commit uses one CTRL action bit after
+checking the owning engine. Scale commits require INDEX and DATA written
+for that commit. Activation commits require a fresh packed index and
+value. GPU instruction uploads wait for a globally idle GPU and use
+32-bit words. Each GPU doorbell waits for its warp and the pending slot
+to be free. Commands in flight share one page. The runtime reads sticky
+`ERROR` after action writes, when fences retire, and after the final
+counters. All four counter pairs use high/low/high retry.
+The C99 loader rejects invalid DMA apertures and cross-half extents
+before touching the device. Native attention also validates all six
+ordered tensor spans, including rounded physical row widths. New
+elementwise, lookup, RMSNorm and Softmax stages validate their active
+spans and scratch ownership. Strided transpose (EW opcode 9) supports
+byte offsets for incremental value-cache packing. The loader checks the
+full strided destination span, source/destination overlap and a stride
+at least as large as the input row count. Successful statistics include `abi_error=0`
+and `invalid_dma_descriptors=0`; a sticky error aborts the invocation.
+C compiler compatibility does not establish board operation.
 
 The Verilator build links the same C files against the frozen compiled
 Z15 RTL and the C++ AXI/DDR rig. Run `bash tools/build_npu_z15_rtl.sh`
 before `bash runtime/build_verilator.sh`. The bridge instruments the
-copied rig and does not change frozen HDL. On xu4090 use the C2 scratch
-directory and launch all compilation and simulation via low-priority
-`nice` and `ionice`.
+copied rig and does not change frozen HDL. On xu4090 use `/dev/shm/ysyx_compiler_c4vpu`. Launch compilation and
+simulation via low-priority `nice` and `ionice`, with make capped at four
+jobs. The ABI gate includes counter rollover and HAL-call sequencing,
+designated DMA rejections with repaired CRCs, and byte-exact RTL kit
+replay.
+
+```sh
+nice -n 10 make -C runtime -j4 check
+nice -n 10 python3 -B -m runtime.verify_z15_abi --out /dev/shm/ysyx_compiler_c4vpu/runtime/abi-verify
+```
 
 ```sh
 ysyx_run program.yhb --inspect

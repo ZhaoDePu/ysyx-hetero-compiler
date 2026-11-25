@@ -51,6 +51,7 @@ typedef struct {
     uint64_t dma_bytes;
     ysyx_observation_t observed;
     int has_observations;
+    uint32_t abi_error, invalid_dma_descriptors;
 } ysyx_stats_t;
 
 typedef struct ysyx_program ysyx_program_t;

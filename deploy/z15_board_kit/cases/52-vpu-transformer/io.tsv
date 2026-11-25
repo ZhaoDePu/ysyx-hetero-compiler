@@ -1,0 +1,12 @@
+input	layer00_tokens	input-0.bin
+input	layer03_tokens	input-1.bin
+input	layer02_tokens	input-2.bin
+input	layer01_tokens	input-3.bin
+output	layer00_vocab_out	output-0.bin
+output	layer00_predict_out	output-1.bin
+output	layer01_vocab_out	output-2.bin
+output	layer01_predict_out	output-3.bin
+output	layer02_vocab_out	output-4.bin
+output	layer02_predict_out	output-5.bin
+output	layer03_vocab_out	output-6.bin
+output	layer03_predict_out	output-7.bin
