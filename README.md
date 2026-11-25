@@ -159,3 +159,10 @@ nice -n 15 ionice -c 3 python3 -B -m runtime.verify_yhb \
 The Verilator binary uses the pinned Balanced AXI/MMIO shell. The Linux
 binary requires the matching UIO control and noncached reserved DDR devices
 on the board. All four standard targets support packing and inspection.
+
+The C1-preserving regression is reproducible with
+`bash tools/run_c2_regression.sh /dev/shm/ysyx_compiler_c2/regression`.
+It checks all software tests, 42 legacy GPU full-page results, 13 native
+NPU/VPU outputs, all 13 frozen O4 examples, the other C1 complete bundles
+and YHB emission for all four targets. The C2 ablation and C99 runtime
+commands above exercise additional ONNX and hardware paths.
