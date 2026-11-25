@@ -28,8 +28,12 @@ def main():
                            help="Pipeline independent graph tiles across Z15 scratch halves")
     streaming.add_argument("--stream-ddr", action="store_true",
                         help="Use the DDR-backed Z15 scratch schedule even when the graph fits resident")
+    parser.add_argument("--pipeline-scheduler", choices=("c3", "bank-aware"),
+                        help="Choose dependency scheduling for --pipeline-tiles")
     parser.add_argument("--no-mem-reuse", "--no-reuse", dest="no_reuse", action="store_true")
     args = parser.parse_args()
+    if args.pipeline_scheduler and not args.pipeline_tiles:
+        parser.error("--pipeline-scheduler requires --pipeline-tiles")
     model_format = args.format
     if model_format == "auto":
         model_format = "onnx" if args.graph.suffix.lower() == ".onnx" else "auto"
@@ -37,7 +41,10 @@ def main():
         raw = (parse_model(args.graph.read_bytes()) if model_format == "onnx"
                else json.loads(args.graph.read_text(encoding="utf-8")))
         dialect = {"legacy": "legacy", "auto": "auto"}.get(model_format, "canonical")
-        result = compile_bundle(raw, load_profile(args.profile), args.out, dialect=dialect,
+        profile = load_profile(args.profile)
+        if args.pipeline_scheduler:
+            profile["pipeline_scheduler"] = args.pipeline_scheduler
+        result = compile_bundle(raw, profile, args.out, dialect=dialect,
                                 fuse=not args.no_fuse, reuse=not args.no_reuse,
                                 overlap=not args.no_overlap, device_policy=args.device_policy,
                                 stream_ddr=args.stream_ddr, emit_binary=args.emit_binary,

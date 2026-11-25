@@ -208,7 +208,7 @@ def _zone_bounds(stages, specs, profile, groups):
         stage["zone"] = specs[stage["output"]]["zone"]
 
 
-def _allocate(specs, groups, zone_size, reuse):
+def _allocate(specs, groups, zone_size, reuse, *, prefer_upper=()):
     contained, blocks = set(), []
     for names in groups:
         if tuple(names) in [tuple(old) for old in blocks]:
@@ -232,20 +232,27 @@ def _allocate(specs, groups, zone_size, reuse):
                         min(x["limit"] - off - x["stored_size"]
                             for x, off in zip(items, offsets, strict=True))))
     ranges, allocs = defaultdict(list), {}
+    upper = set(prefer_upper) if reuse else set()
     for names, offsets, size, alignment, first, last, zone, ceiling in sorted(
-            records, key=lambda rec: (rec[7], rec[4], -rec[2], rec[0])):
-        loc = _align(zone * zone_size, alignment)
+            records, key=lambda rec: (rec[0][0] not in upper, rec[7], rec[4], -rec[2], rec[0])):
+        floor = zone * zone_size
+        loc = _align(floor, alignment)
         conflicts = sorted((lo, hi) for lo, hi, start, end in ranges[zone]
                            if last >= start and first <= end)
-        if not reuse:
+        if names[0] in upper:
+            loc = ceiling // alignment * alignment
+            for lo, hi in reversed(conflicts):
+                if loc < hi and loc + size > lo:
+                    loc = (lo - size) // alignment * alignment
+        elif not reuse:
             loc = _align(max((r[1] for r in ranges[zone]), default=loc), alignment)
-            conflicts = []
-        for lo, hi in conflicts:
-            if loc + size <= lo:
-                break
-            if loc < hi:
-                loc = _align(hi, alignment)
-        if loc > ceiling:
+        else:
+            for lo, hi in conflicts:
+                if loc + size <= lo:
+                    break
+                if loc < hi:
+                    loc = _align(hi, alignment)
+        if not floor <= loc <= ceiling:
             where = "GPU address window" if any(specs[n]["gpu"] for n in names) else "scratch zone"
             raise GraphError(f"{where} exhausted while placing {', '.join(names)} (size={size})")
         ranges[zone].append((loc, loc + size, first, last))

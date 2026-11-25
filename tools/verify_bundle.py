@@ -11,6 +11,7 @@ from pathlib import Path
 
 from hetero_compiler.compiler import tensor_bytes
 from hetero_compiler.reference import evaluate
+from tools.c4a_imem import ReplayPrograms
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRATCH = Path("/dev/shm/ysyx_compiler_c4a")
@@ -88,10 +89,12 @@ def _z15_loads(case, manifest, arena):
     return setup
 
 
-def _z15_launch(bundle, key, gpu, npu):
+def _z15_launch(bundle, key, gpu, npu, cache=None):
     if key not in gpu:
         return [f"write {addr} {value}" for addr, value in npu[key]["writes"]]
     program = gpu[key]
+    if cache is not None:
+        return cache.commands(key, program["jobs"])
     lines = [f"write {0x4000 + 4*i} {word}"
              for i, word in enumerate(_hex(bundle / program["hex"]))]
     return lines + [f"submit_gpu {job['entry']} {job['gpu_job_reg']}" for job in program["jobs"]]
@@ -170,7 +173,7 @@ def _verify_z15(bundle, case, manifest, arena, values, execute_plan):
     _execute([Z15, control])
 
 
-def _verify_z15_stream(bundle, case, manifest, values, ddr):
+def _verify_z15_stream(bundle, case, manifest, values, ddr, imem_cache=False):
     img = case / "ddr-initial.bin"
     img.write_bytes(ddr)
     setup = ["- 0 0", f"ddr_put {img} 0 {len(ddr)}"]
@@ -179,18 +182,28 @@ def _verify_z15_stream(bundle, case, manifest, values, ddr):
     npu = {s["stage"]: s for s in products["npu"]["commands"]}
     stage_labels = {s["id"]: f"s{i}" for i, s in enumerate(manifest["plan"]["stages"])}
     started, drained = set(), set()
+    active_gpu = None
+    cache = ReplayPrograms({key: _hex(bundle / p["hex"]) for key, p in gpu.items()}) if imem_cache else None
+    if cache is not None:
+        setup.extend(cache.preload)
     for cmd in manifest["execution"]:
         kind = cmd["type"]
         if kind == "launch":
             name = cmd["stage"]
             _require(name not in started, f"repeated stage launch {name}")
+            if cache is not None and name in gpu:
+                _require(active_gpu is None, f"GPU stage {name} launched before draining {active_gpu}")
+                active_gpu = name
             started.add(name)
-            setup.extend(_z15_launch(bundle, name, gpu, npu))
+            setup.extend(_z15_launch(bundle, name, gpu, npu, cache))
         elif kind == "fence":
             name = cmd["wait_for"]
             _require(name in started, f"wait references unlaunched stage {name}")
             if name not in drained:
                 engine = "gpu" if name in gpu else "npu"
+                if cache is not None and engine == "gpu":
+                    _require(active_gpu == name, f"GPU fence refers to inactive stage {name}")
+                    active_gpu = None
                 setup.append(f"wait_{engine} {stage_labels[name]}")
                 drained.add(name)
         elif kind == "dma":
@@ -200,12 +213,16 @@ def _verify_z15_stream(bundle, case, manifest, values, ddr):
             setup.append("dma_wait")
         else:
             raise ValueError(f"unrecognized streaming command {kind!r}")
-    _require(started == drained == stage_labels.keys(), "incomplete streaming execution")
+    _require(active_gpu is None and started == drained == stage_labels.keys(),
+             "incomplete streaming execution")
     for index, (name, spec) in enumerate(manifest["output_bindings"].items()):
         data = tensor_bytes(values[name], spec["dtype"])
         expected = case / f"output-{index}.bin"
         expected.write_bytes(data)
         setup.append(f"compare_ddr {expected} {spec['ddr_offset']} {len(data)}")
+    if cache is not None:
+        print("Z15_IMEM_CACHE " + json.dumps({"preloaded_images": len(cache.address),
+              "preloaded_words": len(cache.preload), "fallback_uploads": cache.reloads}, sort_keys=True), flush=True)
     control = case / "z15-stream.txt"
     control.write_text("\n".join(setup) + "\n", encoding="ascii")
     _execute([Z15, control])
@@ -244,6 +261,8 @@ def main():
     parser.add_argument("--inputs", type=Path, help="Runtime tensor values as a JSON mapping")
     parser.add_argument("--execute-plan", action="store_true",
                         help="Run the Z15 launch/fence plan and check the final DMA table")
+    parser.add_argument("--imem-cache", action="store_true",
+                        help="Preload shareable PC-relative GPU images in frozen Z15 IMEM")
     args = parser.parse_args()
     bundle = args.bundle.resolve(strict=True)
     case = _case_path(args.case.resolve())
@@ -257,6 +276,8 @@ def main():
     contents = (bundle / "initial.bin").read_bytes()
     _check_backend_files(bundle, manifest, contents)
     streaming = "execution" in manifest
+    _require(not args.imem_cache or (name == "fpga_zu15eg_balanced" and streaming),
+             "IMEM cache requires a frozen Z15 streaming bundle")
     arena = bytearray((bundle / manifest["initial_ddr"]).read_bytes() if streaming else contents)
     runtime = json.loads(args.inputs.read_text()) if args.inputs else {}
     values = evaluate(graph, runtime)
@@ -269,7 +290,7 @@ def main():
     print("replay command=" + shlex.join(sys.argv) + " binding=" + profile["binding"], flush=True)
     if name == "fpga_zu15eg_balanced":
         if streaming:
-            _verify_z15_stream(bundle, case, manifest, values, arena)
+            _verify_z15_stream(bundle, case, manifest, values, arena, args.imem_cache)
         else:
             _verify_z15(bundle, case, manifest, arena, values, args.execute_plan)
     else:

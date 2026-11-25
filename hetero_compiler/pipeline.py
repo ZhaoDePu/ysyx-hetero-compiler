@@ -11,6 +11,89 @@ _POINTWISE = {"Add", "Mul", "Requant", "Relu", "Sigmoid", "SiLU", "GELU", "Looku
 _BATCH_SPATIAL = {"Conv", "MaxPool", "Resize", "SPPF", "C2f"}
 
 
+def _simplify_tile_layouts(graph):
+    """Share exact constants and fold inverse Transpose across private edges."""
+    tensors = graph["tensors"]
+    protected = set(graph["inputs"] + graph["outputs"])
+    aliases, constants = {}, {}
+    for name, record in tensors.items():
+        if record["kind"] == "constant" and name not in protected:
+            signature = (record["dtype"], tuple(record["shape"]), tuple(record["data"]))
+            aliases[name] = constants.setdefault(signature, name)
+
+    producers, nodes = {}, []
+    for node in graph["nodes"]:
+        out = node["output"]
+        inputs = [aliases.get(name, name) for name in node["inputs"]]
+        if node["op"] == "Transpose" and out not in protected:
+            parent = producers.get(inputs[0])
+            if parent and parent["op"] == "Transpose":
+                first, second = parent["attrs"]["perm"], node["attrs"]["perm"]
+                if [first[i] for i in second] == list(range(len(first))):
+                    aliases[out] = parent["inputs"][0]
+                    continue
+        producer = {**node, "inputs": inputs}
+        producers[out] = producer
+        nodes.append(producer)
+    names = set(protected)
+    kept = []
+    for node in reversed(nodes):
+        if node["output"] in names:
+            names.update(node["inputs"])
+            kept.append(node)
+    return dict(graph, tensors={name: val for name, val in tensors.items() if name in names},
+                nodes=list(reversed(kept)))
+
+
+def _dispatch_cost(engine, stage, graph, profile):
+    """Estimated BALANCED wall-domain service cost, not a measured gate."""
+    cycles = stage["estimate"]["compute_cycles"]
+    if engine == "tensor":
+        return cycles * 3 + 55
+    output = graph["tensors"][stage["output"]]
+    items = math.prod(output["shape"])
+    if stage["op"] in ("QSoftmax", "RowSoftmax", "RMSNorm"):
+        items //= output["shape"][-1]
+    if stage["op"] == "QSoftmax":
+        cycles = max(cycles, 9 * output["shape"][-1] * items)
+    slots = profile["gpu"]["lanes"] * profile["gpu"]["warps"]
+    setup = (items + slots - 1) // slots
+    return 8 * cycles + setup * 145
+
+
+def _schedule_banks(tiles):
+    """Assemble independent half fences using host-aware service estimates."""
+    streams = [[(index, *entry) for index in range(zone, len(tiles), 2)
+                for entry in tiles[index]] for zone in range(2)]
+    positions, active, now = [0, 0], {}, 0
+    commands = []
+    while active or any(i < len(row) for i, row in zip(positions, streams, strict=True)):
+        ready = []
+        for zone, row in enumerate(streams):
+            if zone in active or positions[zone] >= len(row):
+                continue
+            index, engine, command, duration = row[positions[zone]]
+            if any(other == engine for other, _, _ in active.values()):
+                continue
+            # Give short MMIO launches a head start before a GPU wave submission.
+            priority = {"tensor": 0, "dma": 1, "gpu": 2}[engine]
+            # Finish the older tile first on a shared engine so the GPU tail of the
+            # oldest tile overlaps the other half's full NPU chain.
+            ready.append((priority, index, zone, engine, command, duration))
+        if ready:
+            _, _, zone, engine, command, duration = min(ready)
+            positions[zone] += 1
+            active[zone] = (engine, command, now + duration)
+            commands.append(command)
+            continue
+        zone = min(active, key=lambda k: (active[k][2], k))
+        engine, command, end = active.pop(zone)
+        wait = _wait_for(engine, command)
+        commands.append({**wait, "zone": zone})
+        now = max(now, end)
+    return commands
+
+
 def _independent(graph):
     """Return disjoint input components, sharing only immutable tensors."""
     inputs = {name: key for key, name in enumerate(graph["inputs"])}
@@ -155,14 +238,15 @@ def _moves(tile, copies, allocs, ddr, packed, zone, beat):
     return reads, writes
 
 
-def _task(stage):
+def _task(stage, graph=None, profile=None):
     rec = {"type": "launch", "stage": stage["id"], "device": stage["device"], "zone": stage["zone"]}
     engine = "gpu" if stage["device"] == "GPU" else "tensor"
-    return engine, rec, stage["estimate"]["compute_cycles"]
+    duration = _dispatch_cost(engine, stage, graph, profile) if graph else stage["estimate"]["compute_cycles"]
+    return engine, rec, duration
 
 
-def _dma_task(record, beat):
-    return "dma", record, 12 + record["bytes"] // beat
+def _dma_task(record, beat, bank_aware=False):
+    return "dma", record, (80 + 2 * record["bytes"] // beat if bank_aware else 12 + record["bytes"] // beat)
 
 
 def _wait_for(engine, rec):
@@ -203,6 +287,30 @@ def schedule_tiles(tiles, overlap):
     return commands
 
 
+def _allocate_tile(specs, groups, stages, half, reuse, bank_aware):
+    if bank_aware and reuse:
+        # The frozen GPU's QSoftmax timing changes when base addresses fit a
+        # single immediate. Pair the operands near the end of the GPU window
+        # to preserve the faster wide-immediate code shape during reuse.
+        occupied = {name for group in groups for name in group}
+        softmax_pairs = []
+        for stage in stages:
+            if stage["device"] == "GPU" and stage["op"] == "QSoftmax":
+                pair = [stage["inputs"][0], stage["output"]]
+                if not occupied.intersection(pair):
+                    occupied.update(pair)
+                    softmax_pairs.append(pair)
+        if softmax_pairs:
+            try:
+                return _allocate(specs, groups + softmax_pairs, half, reuse,
+                                 prefer_upper={pair[0] for pair in softmax_pairs})
+            except GraphError:
+                # Ordinary allocation still applies when the adjacent layout
+                # has insufficient room or conflicts with a native buffer.
+                pass
+    return _allocate(specs, groups, half, reuse)
+
+
 def make_pipeline_plan(graph, profile, *, fuse, reuse, overlap, device_policy):
     if profile["npu"]["variant"] != "z15":
         raise GraphError("graph tile pipelines require the Z15 two-half DMA ABI")
@@ -210,6 +318,9 @@ def make_pipeline_plan(graph, profile, *, fuse, reuse, overlap, device_policy):
     half = profile["sram"]["zone_bytes"]
     page = profile["gpu"]["window_bytes"]
     beat = profile["dma"]["beat_bytes"]
+    bank_aware = profile.get("pipeline_scheduler", "c3") == "bank-aware"
+    if bank_aware:
+        graph = _simplify_tile_layouts(graph)
     parts = _independent(graph) or _batch_tiles(graph, beat)
     if not parts:
         raise GraphError("no independent leading-batch slices or closed ONNX input components")
@@ -222,7 +333,7 @@ def make_pipeline_plan(graph, profile, *, fuse, reuse, overlap, device_policy):
         specs, groups, _ = _resources(tile, profile, stages, npu, gpu)
         local_specs = {name: {**rec, "zone": 0, "limit": min(rec["limit"], half)}
                        for name, rec in specs.items()}
-        local, slots = _allocate(local_specs, groups, half, reuse)
+        local, slots = _allocate_tile(local_specs, groups, stages, half, reuse, bank_aware)
         used = max(end for _, end, _, _ in slots[0])
         zone = i % 2
         base = 0 if reuse else _align(high[zone], page if any(s["device"] == "GPU" for s in stages) else align)
@@ -257,14 +368,15 @@ def make_pipeline_plan(graph, profile, *, fuse, reuse, overlap, device_policy):
     queues = []
     for tile, stages, local, zone in tile_records:
         reads, writes = _moves(tile, all_copies, local, ddr, packed, zone, beat)
-        queues.append([_dma_task(move, beat) for move in reads] +
-                      [_task(stage) for stage in stages] +
-                      [_dma_task(move, beat) for move in writes])
-    execution = schedule_tiles(queues, overlap)
+        queues.append([_dma_task(move, beat, bank_aware) for move in reads] +
+                      [_task(stage, tile if bank_aware else None, profile) for stage in stages] +
+                      [_dma_task(move, beat, bank_aware) for move in writes])
+    execution = _schedule_banks(queues) if overlap and bank_aware else schedule_tiles(queues, overlap)
     phys = {**graph, "tensors": all_tensors, "nodes": [], "inputs": [], "outputs": []}
     plan = {"schema": "hetero-plan-v1", "profile": profile["name"], "stages": all_stages,
             "commands": [x for x in execution if x["type"] in ("launch", "fence")],
             "allocations": all_allocs, "streaming": True, "pipeline_tiles": len(parts),
+            "pipeline_scheduler": "bank-aware" if bank_aware else "c3",
             "ddr_allocations": ddr, "ddr_packed_offsets": packed, "ddr_image_bytes": size,
             "descriptor_metadata_bytes": 0, "arena_end": profile["sram"]["capacity"],
             "peak_live_bytes": sum(live) if overlap else max(live),
