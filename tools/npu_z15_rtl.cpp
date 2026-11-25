@@ -187,13 +187,16 @@ int main(int argc, char **argv) {
                "\"npu_busy_ticks\":%llu,\"gpu_busy_ticks\":%llu,\"gpu_busy_edges\":%llu,"
                "\"npu_gpu_overlap_ticks\":%u,\"dma_busy_ticks\":%llu,"
                "\"compute_dma_overlap_ticks\":%llu,\"gpu_dma_overlap_ticks\":%llu,"
-               "\"npu_dma_overlap_ticks\":%llu,\"triple_overlap_ticks\":%llu}\n",
+               "\"npu_dma_overlap_ticks\":%llu,\"triple_overlap_ticks\":%llu,"
+               "\"dma_read_bytes\":%llu,\"dma_write_bytes\":%llu,\"rtl_dma_bytes\":%llu}\n",
                wall, rig.transactions,
                (unsigned long long)root->z15_bd_axi_shell__DOT__implementation__DOT__npu_busy_cycles,
                (unsigned long long)root->z15_bd_axi_shell__DOT__implementation__DOT__gpu_busy_cycles,
                (unsigned long long)rig.c2_gpu_clock, overlap, (unsigned long long)rig.c2_dma,
                (unsigned long long)rig.c2_compute_dma, (unsigned long long)rig.c2_dma_gpu,
-               (unsigned long long)rig.c2_dma_tensor, (unsigned long long)rig.c2_triple);
+               (unsigned long long)rig.c2_dma_tensor, (unsigned long long)rig.c2_triple,
+               (unsigned long long)rig.c3_read_bytes, (unsigned long long)rig.c3_write_bytes,
+               (unsigned long long)(rig.c3_read_bytes + rig.c3_write_bytes));
         rig.dut.final();
     } catch (const std::exception &e) {
         fprintf(stderr,"Z15_NPU_RTL_FAIL %s\n",e.what());

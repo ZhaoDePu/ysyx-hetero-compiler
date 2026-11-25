@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 runtime=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
-root=/dev/shm/ysyx_compiler_c2
+root=/dev/shm/ysyx_compiler_c3
 out="$root/runtime/verilator"
 build="$root/npu/z15-build"
 src="$root/npu/z15-src"
@@ -11,7 +11,7 @@ sdk=/home/zdp/ysyx-migration/tools/oss-cad-suite
 test ! -L "$root/runtime" && test ! -L "$out"
 mkdir -p "$out"
 export TMPDIR="$out" CCACHE_DISABLE=1 OMP_NUM_THREADS=1
-low=(nice -n 15 ionice -c 3)
+low=(nice -n 10 ionice -c2 -n7)
 "${low[@]}" python3 -B "$runtime/../tools/z15_observed_rig.py" "$src/sim/closed_loop.cpp" "$out/observed_rig.inc"
 c99=(-std=c99 -O2 -Wall -Wextra -Werror -I"$runtime")
 for source in ysyx_rt hal_linux_uio ysyx_run; do

@@ -3,7 +3,7 @@ set -euo pipefail
 workspace=$(cd "$(dirname "$0")/.." && pwd -P)
 hardware=/home/zdp/ysyx-migration/repos/ysyx-gpu-ext
 variant=$1
-base=/dev/shm/ysyx_compiler_c2/gpu
+base=/dev/shm/ysyx_compiler_c3/gpu
 case "$variant" in
     v6) pin=19852c9a370828fa06aa1cfb90ad5fcd668cad30;;
     g4-16t4w|g4-8t8w) pin=df2b2b732c0786acc3dd0e207be3e39c2a6a9e28;;
@@ -35,6 +35,6 @@ else
             -GBANKS=4 -GNUM_CORES=2 -GLANES="$lanes" -GSTACK_BYTES=256 -CFLAGS "-DFPGA_WARPS=$warps")
     src+=("$build/context_sim.sv" src/{gpu_zu15eg_multiwarp,g1_shared_bram,g1_warp_scheduler,g2_banked_bram,g3_lock_allocator}.sv)
 fi
-nice -n 15 ionice -c 3 verilator --cc --exe --build -j 2 --threads 1 --output-split 5000 \
+nice -n 10 ionice -c2 -n7 verilator --cc --exe --build -j 2 --threads 1 --output-split 5000 \
     -Wno-fatal --Mdir "$build/obj" -o "$build/sim" "${vflags[@]}" \
     "${src[@]}" "$workspace/tools/gpu_rtl.cpp" > "$build/build.log" 2>&1

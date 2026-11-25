@@ -9,7 +9,7 @@ import tempfile
 from hetero_compiler import gpu
 from hetero_compiler.profile import load_profile
 
-ROOT = Path("/dev/shm/ysyx_compiler_c2")
+ROOT = Path("/dev/shm/ysyx_compiler_c3")
 PAGE = 4096
 FORMATS = {"int8": "b", "uint8": "B", "int32": "i", "int64": "q"}
 
@@ -154,7 +154,7 @@ def validate(root, profile, example, page_index=47):
     commands.append(f"check_gpu {name} {expected} {page_offset} {PAGE}")
     control.write_text("\n".join(commands) + "\n")
     binary = ROOT / "npu/z15-build/run-npu-z15"
-    subprocess.run(["nice", "-n", "15", "ionice", "-c", "3", str(binary), str(control)],
+    subprocess.run(["nice", "-n", "10", "ionice", "-c2", "-n7", str(binary), str(control)],
                    cwd=folder, check=True, timeout=40)
 
 

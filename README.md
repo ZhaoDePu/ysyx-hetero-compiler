@@ -9,9 +9,9 @@ for GPU stages.
 
 ```sh
 cd /home/zdp/ysyx-migration/work-compiler
-mkdir -p /dev/shm/ysyx_compiler_c2
-case_dir=$(mktemp -d /dev/shm/ysyx_compiler_c2/quick.XXXXXX)
-nice -n 15 ionice -c 3 python3 -B -m hetero_compiler \
+mkdir -p /dev/shm/ysyx_compiler_c3
+case_dir=$(mktemp -d /dev/shm/ysyx_compiler_c3/quick.XXXXXX)
+nice -n 10 ionice -c2 -n7 python3 -B -m hetero_compiler \
   --graph examples/mixed.json --profile fpga_zu15eg_balanced --out "$case_dir/bundle"
 ```
 
@@ -86,9 +86,9 @@ verify the generated bundle. Use a fresh case directory inside compiler RAM.
 ```sh
 bash tools/build_npu_z15_rtl.sh
 # Phase 8: bash tools/build_npu_p8_rtl.sh
-nice -n 15 ionice -c 3 python3 -B -m tools.verify_bundle \
+nice -n 10 ionice -c2 -n7 python3 -B -m tools.verify_bundle \
   --bundle "$case_dir/bundle" --case "$case_dir/check"
-nice -n 15 ionice -c 3 python3 -B -m unittest discover -s tests -v
+nice -n 10 ionice -c2 -n7 python3 -B -m unittest discover -s tests -v
 ```
 
 Add `--inputs <json mapping>` to replay with runtime inputs. Add
@@ -97,7 +97,7 @@ DMA extents, including concurrent ownership where applicable. The Z15
 runner compares stage results over actual AXI DMA and checks the emitted
 MMIO commands and GPU machine code. Phase 8 replays actual full arena images
 through the native descriptor and v6 GPU models. Build scripts read pinned
-hardware files into `/dev/shm/ysyx_compiler_c2`, apply low-priority scheduling,
+hardware files into `/dev/shm/ysyx_compiler_c3`, apply low-priority scheduling,
 and limit each build to two jobs.
 
 Standalone validation commands are `python3 -B -m tools.verify_npu_rtl`
@@ -130,8 +130,8 @@ Disabling overlap drains the active owner before that transfer.
 Run the four configurations over the same inputs:
 
 ```sh
-nice -n 15 ionice -c 3 python3 -B -m tools.run_c2_ablation \
-  --out /dev/shm/ysyx_compiler_c2/ablation \
+nice -n 10 ionice -c2 -n7 python3 -B -m tools.run_c2_ablation \
+  --out /dev/shm/ysyx_compiler_c3/ablation \
   examples/yolo_block_int8.onnx examples/transformer_layer_int8.onnx examples/mixed.json
 ```
 
@@ -149,11 +149,11 @@ native/textual artifacts alone. Build the portable C99 library and the Linux
 UIO CLI with a warning gate:
 
 ```sh
-nice -n 15 ionice -c 3 make -C runtime -j2 CC=gcc
+nice -n 10 ionice -c2 -n7 make -C runtime -j2 CC=gcc
 bash runtime/build_verilator.sh
-nice -n 15 ionice -c 3 python3 -B -m runtime.verify_yhb \
-  --bundle /dev/shm/ysyx_compiler_c2/quick.example/bundle \
-  --scratch /dev/shm/ysyx_compiler_c2/runtime/yhb-check
+nice -n 10 ionice -c2 -n7 python3 -B -m runtime.verify_yhb \
+  --bundle /dev/shm/ysyx_compiler_c3/quick.example/bundle \
+  --scratch /dev/shm/ysyx_compiler_c3/runtime/yhb-check
 ```
 
 The Verilator binary uses the pinned Balanced AXI/MMIO shell. The Linux
@@ -161,7 +161,7 @@ binary requires the matching UIO control and noncached reserved DDR devices
 on the board. All four standard targets support packing and inspection.
 
 The C1-preserving regression is reproducible with
-`bash tools/run_c2_regression.sh /dev/shm/ysyx_compiler_c2/regression`.
+`bash tools/run_c2_regression.sh /dev/shm/ysyx_compiler_c3/regression`.
 It checks all software tests, 42 legacy GPU full-page results, 13 native
 NPU/VPU outputs, all 13 frozen O4 examples, the other C1 complete bundles
 and YHB emission for all four targets. The C2 ablation and C99 runtime

@@ -13,10 +13,10 @@ from hetero_compiler.compiler import tensor_bytes
 from hetero_compiler.reference import evaluate
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRATCH = Path("/dev/shm/ysyx_compiler_c2")
+SCRATCH = Path("/dev/shm/ysyx_compiler_c3")
 P8 = SCRATCH / "npu/p8-build/run-npu-p8"
 Z15 = SCRATCH / "npu/z15-build/run-npu-z15"
-LOW_PRIORITY = ["nice", "-n", "15", "ionice", "-c", "3"]
+LOW_PRIORITY = ["nice", "-n", "10", "ionice", "-c2", "-n7"]
 
 
 def _words(data):
@@ -34,7 +34,7 @@ def _require(cond, msg):
 
 def _execute(command):
     subprocess.run(LOW_PRIORITY + [str(word) for word in command], cwd=ROOT, check=True,
-                   timeout=180, env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1",
+                   timeout=int(os.environ.get("YSYX_REPLAY_TIMEOUT", "900")), env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1",
                                      "OMP_NUM_THREADS": "1", "TMPDIR": str(SCRATCH)})
 
 

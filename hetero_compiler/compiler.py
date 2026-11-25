@@ -9,6 +9,7 @@ from tempfile import TemporaryDirectory
 from . import gpu, npu
 from .ir import GraphError, normalize
 from .planner import make_plan
+from .pipeline import make_pipeline_plan
 from .streaming import make_stream_plan
 from .yhb import TARGET_IDS, emit_yhb
 
@@ -103,11 +104,13 @@ def _stream_images(graph, plan, profile, native):
 
 
 def compile_bundle(raw_graph, profile, output, *, dialect="auto", fuse=True, reuse=True,
-                   overlap=True, device_policy="auto", stream_ddr=False, emit_binary=None):
+                   overlap=True, device_policy="auto", stream_ddr=False, emit_binary=None, pipeline_tiles=False):
     graph = normalize(raw_graph, dialect=dialect)
     physical, execution = graph, None
     options = {"fuse": fuse, "reuse": reuse, "overlap": overlap, "device_policy": device_policy}
-    if stream_ddr:
+    if pipeline_tiles:
+        plan, physical, execution = make_pipeline_plan(graph, profile, **options)
+    elif stream_ddr:
         plan, physical, execution = make_stream_plan(graph, profile, **options)
     else:
         try:
@@ -116,7 +119,10 @@ def compile_bundle(raw_graph, profile, output, *, dialect="auto", fuse=True, reu
             if profile["npu"]["variant"] != "z15" or not any(
                     text in str(exc) for text in ("GPU address window", "scratch zone exhausted", f"no {profile['name']} lowering")):
                 raise
-            plan, physical, execution = make_stream_plan(graph, profile, **options)
+            try:
+                plan, physical, execution = make_pipeline_plan(graph, profile, **options)
+            except GraphError:
+                plan, physical, execution = make_stream_plan(graph, profile, **options)
     output = Path(output)
     if output.exists() or output.is_symlink():
         raise FileExistsError(f"bundle output already exists: {output}")

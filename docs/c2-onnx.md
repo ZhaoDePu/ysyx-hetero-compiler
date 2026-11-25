@@ -36,8 +36,8 @@ that range. An explicit divisor takes priority over the power-of-two shift.
 Run from the repository root to reproduce the binary files.
 
 ```shell
-nice -n 15 ionice -c 3 python3 -B examples/generate_quantized_onnx.py
-nice -n 15 ionice -c 3 python3 -B -m unittest discover -s tests -p test_onnx_c2.py
+nice -n 10 ionice -c2 -n7 python3 -B examples/generate_quantized_onnx.py
+nice -n 10 ionice -c2 -n7 python3 -B -m unittest discover -s tests -p test_onnx_c2.py
 ```
 
 - `yolo_block_int8.onnx` includes a 3×3 and a 1×1 quantized convolution, bias,

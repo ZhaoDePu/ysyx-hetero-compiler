@@ -23,7 +23,10 @@ def main():
                         help="Write program.yhb (default for standard profiles)")
     binary.add_argument("--no-yhb", dest="emit_binary", action="store_false",
                         help="Emit textual/native artifacts only")
-    parser.add_argument("--stream-ddr", action="store_true",
+    streaming = parser.add_mutually_exclusive_group()
+    streaming.add_argument("--pipeline-tiles", action="store_true",
+                           help="Pipeline independent graph tiles across Z15 scratch halves")
+    streaming.add_argument("--stream-ddr", action="store_true",
                         help="Use the DDR-backed Z15 scratch schedule even when the graph fits resident")
     parser.add_argument("--no-mem-reuse", "--no-reuse", dest="no_reuse", action="store_true")
     args = parser.parse_args()
@@ -37,7 +40,8 @@ def main():
         result = compile_bundle(raw, load_profile(args.profile), args.out, dialect=dialect,
                                 fuse=not args.no_fuse, reuse=not args.no_reuse,
                                 overlap=not args.no_overlap, device_policy=args.device_policy,
-                                stream_ddr=args.stream_ddr, emit_binary=args.emit_binary)
+                                stream_ddr=args.stream_ddr, emit_binary=args.emit_binary,
+                                pipeline_tiles=args.pipeline_tiles)
     except (ValueError, OSError) as exc:
         parser.exit(2, f"compiler error: {exc}\n")
     plan = result["plan"]

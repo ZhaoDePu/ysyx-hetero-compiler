@@ -16,7 +16,8 @@ def observe(source):
     result = substitute(result, "    unsigned transactions=0;",
                         """    unsigned transactions=0;
     uint64_t c2_dma=0,c2_compute_dma=0,c2_triple=0,c2_gpu_clock=0;
-    uint64_t c2_dma_gpu=0,c2_dma_tensor=0;""")
+    uint64_t c2_dma_gpu=0,c2_dma_tensor=0;
+    uint64_t c3_read_bytes=0,c3_write_bytes=0;""")
     result = substitute(result, "        gpu_phase+=2;",
                         "        const bool was_gpu_high=dut.clk_gpu;\n        gpu_phase+=2;")
     result = substitute(result, "        context.timeInc(1);\n        dut.eval();",
@@ -25,6 +26,11 @@ def observe(source):
         if(!was_gpu_high && dut.clk_gpu && dut.aresetn &&
            dut.rootp->z15_bd_axi_shell__DOT__implementation__DOT__gpu_busy)
             ++c2_gpu_clock;""")
+    result = substitute(result, "            --read_left; ar_st+=32; read_hold=false;",
+                        "            c3_read_bytes+=32;\n            --read_left; ar_st+=32; read_hold=false;")
+    result = substitute(result, "                ddr[aw_st+j]=uint8_t(dut.m_axi_wdata[j/4]>>(8*(j%4)));",
+                        """                {ddr[aw_st+j]=uint8_t(dut.m_axi_wdata[j/4]>>(8*(j%4)));
+                 ++c3_write_bytes;}""")
     return substitute(result, "        ++tick_count;",
                       """        ++tick_count;
         if(dut.aresetn) {

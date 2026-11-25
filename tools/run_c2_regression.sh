@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 repo=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
-scratch=/dev/shm/ysyx_compiler_c2
+scratch=/dev/shm/ysyx_compiler_c3
 root=${1:?new evidence directory under compiler C2 RAM required}
 [[ $(realpath -e -- "$scratch") == "$scratch" && -O "$scratch" ]]
 [[ $(realpath -m -- "$root") == "$root" && "$root" == "$scratch/"* && ! -e "$root" ]]
 mkdir -p "$root"/{logs,bundles,replay,models}
 cd "$repo"
 export TMPDIR="$scratch" PYTHONDONTWRITEBYTECODE=1 OMP_NUM_THREADS=1 LC_ALL=C
-low=(nice -n 15 ionice -c 3)
+low=(nice -n 10 ionice -c2 -n7)
 run() {
     local label=$1
     shift

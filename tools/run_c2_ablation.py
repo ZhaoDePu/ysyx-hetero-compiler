@@ -21,8 +21,8 @@ SETTINGS = [
     ("A3", {}),
 ]
 FMAX_NPU_MHZ, FMAX_GPU_MHZ = 164.555, 124.239
-PRIORITY = ["nice", "-n", "15", "ionice", "-c", "3"]
-SCRATCH = Path("/dev/shm/ysyx_compiler_c2")
+PRIORITY = ["nice", "-n", "10", "ionice", "-c2", "-n7"]
+SCRATCH = Path("/dev/shm/ysyx_compiler_c3")
 
 
 def input_values(graph, seed, *, vary_defaults=False):
@@ -38,7 +38,7 @@ def input_values(graph, seed, *, vary_defaults=False):
     return values
 
 
-def run(root, model, records, seed):
+def run(root, model, records, seed, pipeline):
     path = Path(model)
     raw = parse_model(path.read_bytes()) if path.suffix == ".onnx" else json.loads(path.read_text())
     graph = normalize(raw, dialect="canonical" if path.suffix == ".onnx" else "auto")
@@ -53,10 +53,12 @@ def run(root, model, records, seed):
         result = {"model": str(stem), "ablation": label}
         try:
             manifest = compile_bundle(raw, target, destination,
-                                      dialect="canonical" if path.suffix == ".onnx" else "auto", **settings)
+                                      dialect="canonical" if path.suffix == ".onnx" else "auto",
+                                      pipeline_tiles=pipeline, **settings)
         except (ValueError, OSError) as exc:
             result.update(status="compile_error", reason=str(exc))
             records.append(result)
+            print(f"{stem} {label}: {result['reason']}", flush=True)
             continue
         stats = manifest["estimates"]
         result.update({k: stats[k] for k in ("scratch_peak_live_bytes", "scratch_reserved_bytes",
@@ -69,13 +71,16 @@ def run(root, model, records, seed):
                          "--execute-plan"]
         try:
             with log.open("w", encoding="utf-8") as stream:
-                proc = subprocess.run(cmd, stdout=stream, stderr=subprocess.STDOUT, timeout=180)
+                proc = subprocess.run(cmd, stdout=stream, stderr=subprocess.STDOUT,
+                                      timeout=960 if pipeline else 180)
             output = log.read_text(encoding="utf-8").splitlines()
             counters = [line.split(" ", 1)[1] for line in output if line.startswith("Z15_METRICS ")]
             if proc.returncode != 0 or len(counters) != 1 or not any(
                     line.startswith("BUNDLE_RTL_PASS ") for line in output):
                 raise GraphError(f"RTL check failed. See {log.name}")
             result.update(json.loads(counters[0]))
+            if pipeline and result.get("rtl_dma_bytes") != result["external_transfer_bytes"]:
+                raise GraphError(f"actual AXI byte counter disagrees with scheduled bytes. See {log.name}")
             ticks = result["wall_npu_ticks"]
             if label == "A0":
                 baseline = ticks
@@ -93,6 +98,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--seed", type=int, default=11)
+    parser.add_argument("--pipeline-tiles", action="store_true",
+                        help="Require a four-step speed ladder and real overlap on tile pipelines")
     parser.add_argument("models", nargs="+")
     args = parser.parse_args()
     root = args.out.resolve()
@@ -101,17 +108,28 @@ def main():
     root.mkdir()
     records = []
     for path in args.models:
-        run(root, path, records, args.seed)
+        run(root, path, records, args.seed, args.pipeline_tiles)
+    ladder = {}
+    if args.pipeline_tiles:
+        for model in dict.fromkeys(rec["model"] for rec in records):
+            model_rows = [rec for rec in records if rec["model"] == model]
+            exact = len(model_rows) == 4 and all(rec["status"] == "byte_exact" for rec in model_rows)
+            timings = [rec["wall_npu_ticks"] for rec in model_rows] if exact else []
+            ladder[model] = exact and all(a > b for a, b in zip(timings, timings[1:])) and (
+                model_rows[-1]["compute_dma_overlap_ticks"] > 0 or
+                model_rows[-1]["npu_gpu_overlap_ticks"] > 0)
     data = {"measurement": "frozen Z15 Balanced Verilator MMIO",
             "fmax_npu_mhz": FMAX_NPU_MHZ, "fmax_gpu_mhz": FMAX_GPU_MHZ,
             "fmax_conversion": "Phase 12C routed Fmax projection, not measured board time",
-            "results": records}
+            "speed_ladder": ladder, "results": records}
     (root / "ablation.json").write_text(json.dumps(data, indent=2) + "\n")
     fields = list(dict.fromkeys(key for rec in records for key in rec))
     with (root / "ablation.csv").open("w", newline="") as stream:
         writer = csv.DictWriter(stream, fieldnames=fields)
         writer.writeheader()
         writer.writerows(records)
+    if args.pipeline_tiles:
+        return int(not all(ladder.values()))
     return int(any(rec["status"] != "byte_exact" and (rec["ablation"] != "A0" or
                    rec["status"] == "rtl_error") for rec in records))
 

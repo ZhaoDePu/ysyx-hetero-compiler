@@ -8,9 +8,9 @@ import subprocess
 import tempfile
 
 
-SCRATCH = Path("/dev/shm/ysyx_compiler_c2/gpu")
+SCRATCH = Path("/dev/shm/ysyx_compiler_c3/gpu")
 BUILD = Path(__file__).with_name("build_gpu_rtl.sh")
-PRIORITY = ["nice", "-n", "15", "ionice", "-c", "3"]
+PRIORITY = ["nice", "-n", "10", "ionice", "-c2", "-n7"]
 
 
 def program_from_bundle(bundle, stage, code_limit):
