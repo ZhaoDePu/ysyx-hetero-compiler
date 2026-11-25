@@ -1,0 +1,272 @@
+{
+  "seed": 7126,
+  "iterations": 240,
+  "token_accuracy": 1.0,
+  "quantization": "symmetric dyadic PTQ",
+  "tokens_scored": 60,
+  "trace": [
+    {
+      "iteration": 1,
+      "loss": 4.209482192993164,
+      "token_accuracy": 0.016666666666666666
+    },
+    {
+      "iteration": 20,
+      "loss": 0.577380895614624,
+      "token_accuracy": 0.9333333333333333
+    },
+    {
+      "iteration": 40,
+      "loss": 0.01318022795021534,
+      "token_accuracy": 1.0
+    },
+    {
+      "iteration": 60,
+      "loss": 0.002002847148105502,
+      "token_accuracy": 1.0
+    },
+    {
+      "iteration": 80,
+      "loss": 0.0010165864368900657,
+      "token_accuracy": 1.0
+    },
+    {
+      "iteration": 100,
+      "loss": 0.0007396648870781064,
+      "token_accuracy": 1.0
+    },
+    {
+      "iteration": 120,
+      "loss": 0.0005926023586653173,
+      "token_accuracy": 1.0
+    },
+    {
+      "iteration": 140,
+      "loss": 0.00048817507922649384,
+      "token_accuracy": 1.0
+    },
+    {
+      "iteration": 160,
+      "loss": 0.0004067594709340483,
+      "token_accuracy": 1.0
+    },
+    {
+      "iteration": 180,
+      "loss": 0.0003414587990846485,
+      "token_accuracy": 1.0
+    },
+    {
+      "iteration": 200,
+      "loss": 0.0002881779510062188,
+      "token_accuracy": 1.0
+    },
+    {
+      "iteration": 220,
+      "loss": 0.000244440627284348,
+      "token_accuracy": 1.0
+    },
+    {
+      "iteration": 240,
+      "loss": 0.00020836574549321085,
+      "token_accuracy": 1.0
+    }
+  ],
+  "fp32_continuations": [
+    [
+      2,
+      58,
+      47,
+      7,
+      18,
+      19,
+      27,
+      39,
+      0
+    ],
+    [
+      17,
+      8,
+      50,
+      5,
+      57,
+      28,
+      42,
+      31,
+      0
+    ],
+    [
+      59,
+      32,
+      14,
+      56,
+      45,
+      6,
+      4,
+      20,
+      0
+    ]
+  ],
+  "vocab": [
+    ".",
+    "a",
+    "across",
+    "after",
+    "and",
+    "any",
+    "bandwidth",
+    "banks",
+    "before",
+    "buffers",
+    "checks",
+    "compiler",
+    "completed",
+    "completion",
+    "compute",
+    "consumer",
+    "data",
+    "descriptor",
+    "during",
+    "each",
+    "energy",
+    "engine",
+    "every",
+    "final",
+    "finished",
+    "full",
+    "has",
+    "inference",
+    "into",
+    "keeps",
+    "kernels",
+    "memory",
+    "near",
+    "once",
+    "only",
+    "operation",
+    "our",
+    "ownership",
+    "parallel",
+    "pass",
+    "plans",
+    "reading",
+    "reserved",
+    "reuse",
+    "runtime",
+    "save",
+    "schedules",
+    "scratch",
+    "share",
+    "signals",
+    "starting",
+    "static",
+    "tensor",
+    "the",
+    "their",
+    "this",
+    "to",
+    "transfer",
+    "two",
+    "weights",
+    "work",
+    "<unused0>",
+    "<unused1>",
+    "<unused2>"
+  ],
+  "prompts": [
+    [
+      36,
+      11,
+      46,
+      60
+    ],
+    [
+      53,
+      44,
+      10,
+      22
+    ],
+    [
+      55,
+      52,
+      21,
+      29
+    ]
+  ],
+  "corpus": [
+    [
+      36,
+      11,
+      46,
+      60,
+      2,
+      58,
+      47,
+      7,
+      18,
+      19,
+      27,
+      39,
+      0
+    ],
+    [
+      53,
+      44,
+      10,
+      22,
+      17,
+      8,
+      50,
+      5,
+      57,
+      28,
+      42,
+      31,
+      0
+    ],
+    [
+      55,
+      52,
+      21,
+      29,
+      59,
+      32,
+      14,
+      56,
+      45,
+      6,
+      4,
+      20,
+      0
+    ],
+    [
+      38,
+      30,
+      48,
+      37,
+      34,
+      3,
+      1,
+      12,
+      35,
+      49,
+      25,
+      13,
+      0
+    ],
+    [
+      51,
+      40,
+      43,
+      9,
+      33,
+      54,
+      23,
+      15,
+      26,
+      24,
+      41,
+      16,
+      0
+    ]
+  ]
+}

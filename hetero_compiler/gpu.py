@@ -7,7 +7,8 @@ import json
 
 _WIDTH = {"int8": 1, "uint8": 1, "int32": 4, "int64": 8}
 _LAYOUT = {"Transpose", "Reshape", "Slice", "Resize", "Concat", "Expand"}
-_ADVANCED = _LAYOUT | {"Cast", "Conv", "MaxPool", "ArgMax", "RowSoftmax", "RMSNorm", "QRMSNorm", "QSoftmax"}
+_ADVANCED = _LAYOUT | {"Cast", "Conv", "MaxPool", "ArgMax", "RowSoftmax", "RMSNorm", "QRMSNorm",
+                       "QSoftmax", "TopKIndices", "Gather"}
 _LOAD = {"int8": 0, "uint8": 4, "int32": 2}
 _VARIANTS = {"v6", "g3", "g4"}
 _LEGACY_SILU_KNOTS = (0, 0, 1, 2, 5, 12, 31, 69, 128, 187, 225, 244, 251, 254, 255, 256, 256)
@@ -174,6 +175,14 @@ def _supports_advanced(op, inputs, out, attrs):
     if op in {"RMSNorm", "RowSoftmax"}:
         return (len(inputs) == 1 and src == dst and len(src) == 2 and dtypes[0] == "int8"
                 and dtype == ("uint8" if op == "RowSoftmax" else "int8") and src[1] <= 4096)
+    if op == "TopKIndices":
+        k = attrs.get("k")
+        return (len(inputs) == 1 and len(src) == 1 and src[0] <= 128 and dtypes[0] in _LOAD and
+                dtype == "int64" and type(k) is int and 1 <= k <= min(16, src[0]) and dst == [k])
+    if op == "Gather":
+        return (len(inputs) == 2 and len(src) in (1, 2) and src[0] <= 1024 and
+                attrs.get("axis", 0) == 0 and dtypes == [dtype, "int64"] and dtype in _LOAD and
+                len(inputs[1]["shape"]) == 1 and dst == inputs[1]["shape"] + src[1:])
     if op == "ArgMax":
         axis = attrs.get("axis", 0)
         if (len(inputs) != 1 or dtypes[0] == "int64" or dtype not in {"int32", "int64"}
@@ -676,6 +685,68 @@ def _layout(p, op, inputs, offsets, out, attrs):
     _layout_load(p, 8, offsets[0], dtype)
 
 
+def _topk_indices(p, tensor, offset):
+    length = tensor["shape"][0]
+    dtype = tensor["dtype"]
+    p.li(6, offset)
+    p.li(8, (1 << 31) - 1)
+    p.li(9, -1)
+    p.li(10, 0)
+    # Recover the index at the requested rank without a per-lane scratch list.
+    # The previous lexicographic (score descending, index ascending) key bounds
+    # the next rank. Index order handles ties, even at both signed extrema.
+    p.label("topk_rank")
+    p.li(11, -(1 << 31))
+    p.li(12, length)
+    p.li(13, 0)
+    p.label("topk_scan")
+    p.indexed(15, 13, 6, dtype)
+    p.load(14, 15, dtype)
+    p.branch(4, 8, 14, "topk_next")
+    p.branch(1, 8, 14, "topk_eligible")
+    p.branch(5, 9, 13, "topk_next")
+    p.label("topk_eligible")
+    p.branch(4, 11, 14, "topk_store")
+    p.branch(4, 14, 11, "topk_next")
+    p.li(15, length)
+    p.branch(1, 12, 15, "topk_next")
+    p.label("topk_store")
+    p.addi(11, 14, 0)
+    p.addi(12, 13, 0)
+    p.label("topk_next")
+    p.addi(13, 13, 1)
+    p.li(15, length)
+    p.branch(4, 13, 15, "topk_scan")
+    p.addi(8, 11, 0)
+    p.addi(9, 12, 0)
+    p.addi(10, 10, 1)
+    p.branch(5, 5, 10, "topk_rank")
+    p.addi(7, 9, 0)
+
+
+def _gather(p, tensor, offsets):
+    shape = tensor["shape"]
+    length, width = shape[0], prod(shape[1:])
+    _constant_arith(p, 8, 5, width, "divu", 15)
+    p.address(8, 8, offsets[1], "int64", temp=15)
+    p.load(9, 8, "int32")
+    p.load(10, 8, "int32", 4)
+    p.li(7, 0)
+    p.branch(0, 10, 0, "gather_range")
+    p.li(15, -1)
+    p.branch(1, 10, 15, "gather_done")
+    p.addi(9, 9, length)
+    p.label("gather_range")
+    p.li(15, length)
+    p.branch(7, 9, 15, "gather_done")
+    _constant_arith(p, 9, 9, width, "mul", 15)
+    _constant_arith(p, 11, 5, width, "remu", 15)
+    p.arithmetic(9, 9, 11)
+    p.address(6, 9, offsets[0], tensor["dtype"], temp=15)
+    p.load(7, 6, tensor["dtype"])
+    p.label("gather_done")
+
+
 def _argmax(p, tensor, offset, attrs):
     shape, dtype = tensor["shape"], tensor["dtype"]
     axis = attrs.get("axis", 0) % len(shape)
@@ -951,6 +1022,10 @@ def _advanced(p, op, inputs, offsets, output, attrs):
         _spatial(p, op, inputs, offsets, output, attrs)
     elif op == "ArgMax":
         _argmax(p, inputs[0], offsets[0], attrs)
+    elif op == "TopKIndices":
+        _topk_indices(p, inputs[0], offsets[0])
+    elif op == "Gather":
+        _gather(p, inputs[0], offsets)
     elif op == "QSoftmax":
         _qsoftmax(p, inputs[0], offsets[0], attrs)
     elif op == "QRMSNorm":

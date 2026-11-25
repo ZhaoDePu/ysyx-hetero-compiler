@@ -97,6 +97,18 @@ def evaluate_layout(op, args, shapes, dest, attrs):
                 for ix in range(max(0, x*sx-px), min(width, x*sx-px+kw)))
             for b, y, x, c in _coordinates(dest)
         ]
+    if op == "TopKIndices":
+        return sorted(range(len(data)), key=lambda i: (-data[i], i))[:attrs["k"]]
+    if op == "Gather":
+        width = math.prod(src[1:])
+        result = []
+        for idx in args[1]:
+            if -src[0] <= idx < src[0]:
+                idx %= src[0]
+                result.extend(data[idx*width:(idx+1)*width])
+            else:
+                result.extend([0]*width)
+        return result
     if op == "ArgMax":
         axis = attrs["axis"]
         candidates = range(src[axis])

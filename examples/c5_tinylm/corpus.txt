@@ -1,0 +1,5 @@
+our compiler schedules work across two scratch banks during each inference pass .
+the runtime checks every descriptor before starting any transfer into reserved memory .
+this tensor engine keeps weights near compute to save bandwidth and energy .
+parallel kernels share ownership only after a completed operation signals full completion .
+static plans reuse buffers once their final consumer has finished reading data .

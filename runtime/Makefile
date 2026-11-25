@@ -1,6 +1,6 @@
 CC ?= gcc
 AR ?= ar
-OUT ?= /dev/shm/ysyx_compiler_c4vpu/runtime/linux
+OUT ?= /dev/shm/ysyx_compiler_c5/runtime/linux
 CPPFLAGS ?=
 CFLAGS ?= -O2
 WARNFLAGS := -std=c99 -Wall -Wextra -Werror

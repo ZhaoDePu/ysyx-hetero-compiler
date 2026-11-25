@@ -6,6 +6,7 @@ ARITIES = {
     "Transpose": (1,), "Reshape": (1,), "Slice": (1,), "Resize": (1,),
     "Concat": range(1, 33), "MaxPool": (1,), "ArgMax": (1,), "Sigmoid": (1,),
     "Cast": (1,), "Expand": (1,), "Lookup": (1,), "QSoftmax": (1,),
+    "TopKIndices": (1,), "Gather": (2,),
 }
 
 ATTRIBUTES = {
@@ -13,6 +14,7 @@ ATTRIBUTES = {
     "Resize": {"shape"}, "Concat": {"axis"}, "MaxPool": {"kernel_shape", "strides", "pads"},
     "ArgMax": {"axis", "keepdims", "select_last_index"}, "Sigmoid": set(),
     "Cast": set(), "Expand": {"shape"}, "Lookup": {"table"},
+    "TopKIndices": {"k"}, "Gather": {"axis"},
     "QSoftmax": {"axis", "in_scale", "out_scale", "zero_point", "algorithm", "causal_offset"},
 }
 
@@ -44,6 +46,21 @@ def infer(op, inputs, attrs, output_dtype):
     base = inputs[0]
     shape, dtype = base["shape"], base["dtype"]
     rank = len(shape)
+    if op == "TopKIndices":
+        k = attrs.get("k")
+        if (rank != 1 or shape[0] > 128 or dtype not in ("int8", "uint8", "int32") or
+                type(k) is not int or not 1 <= k <= min(16, shape[0]) or
+                output_dtype not in (None, "int64")):
+            raise ValueError("TopK requires a 1-D integer vector up to 128 items and static k up to 16")
+        return [k], "int64"
+    if op == "Gather":
+        index = inputs[1]
+        if (rank not in (1, 2) or shape[0] > 1024 or axis(attrs.get("axis", 0), rank) != 0 or
+                index["dtype"] != "int64" or len(index["shape"]) != 1 or
+                dtype not in ("int8", "uint8", "int32") or output_dtype not in (None, dtype)):
+            raise ValueError("Gather requires axis 0 of a 1-D or 2-D integer tensor and 1-D int64 indices")
+        attrs["axis"] = 0
+        return index["shape"] + shape[1:], dtype
     if op == "ArgMax":
         if dtype not in ("int8", "uint8", "int32") or output_dtype not in (None, "int64"):
             raise ValueError("ArgMax requires an 8-bit or 32-bit integer input and int64 output")

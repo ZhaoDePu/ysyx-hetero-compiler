@@ -14,7 +14,7 @@ from hetero_compiler.reference import evaluate
 from tools.c4a_imem import ReplayPrograms
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRATCH = Path("/dev/shm/ysyx_compiler_c4vpu")
+SCRATCH = Path("/dev/shm/ysyx_compiler_c5")
 P8 = SCRATCH / "npu/p8-build/run-npu-p8"
 Z15 = SCRATCH / "npu/z15-build/run-npu-z15"
 LOW_PRIORITY = ["nice", "-n", "10", "ionice", "-c2", "-n7"]

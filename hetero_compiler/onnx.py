@@ -546,6 +546,19 @@ class _Import:
             if not outs:
                 raise GraphError("Split requires outputs")
             return self.split(inputs, outs, attrs, ident, opset)
+        if op == "TopK" and not domain:
+            _check_args(inputs, 2)
+            _check_attrs(attrs, "axis", "largest", "sorted")
+            shape = self.spec(inputs[0])["shape"]
+            if (opset < 11 or len(outs) != 2 or len(shape) != 1 or
+                    axis(attrs.get("axis", -1), len(shape)) != 0 or
+                    attrs.get("largest", 1) != 1 or attrs.get("sorted", 1) != 1):
+                raise GraphError("TopK requires two outputs and sorted largest selection on a 1-D vector")
+            if self.spec(inputs[1])["shape"] != [1]:
+                raise GraphError("TopK requires one int64 K in a rank-one initializer")
+            k, = self.static(inputs[1], {"int64"})
+            self.emit("TopKIndices", inputs[:1], outs[1], {"k": k}, ident)
+            return self.emit("Gather", [inputs[0], outs[1]], outs[0], {"axis": 0})
         if len(outs) != 1:
             raise GraphError("operator requires one output")
         out = outs[0]
@@ -614,6 +627,10 @@ class _Import:
             src = self.transpose(source, [0, 2, 3, 1])
             pooled = self.temp(op, [src], {"kernel_shape": kernel, "strides": strides, "pads": pads})
             return self.transpose(pooled, [0, 3, 1, 2], out, ident)
+        if op == "Gather" and not domain:
+            _check_args(inputs, 2)
+            _check_attrs(attrs, "axis")
+            return self.emit(op, inputs, out, attrs, ident)
         if op == "ArgMax":
             _check_args(inputs, 1)
             _check_attrs(attrs, "axis", "keepdims", "select_last_index")
