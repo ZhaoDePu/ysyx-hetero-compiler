@@ -1,0 +1,13 @@
+{
+  "name": "causal_attention",
+  "tensors": {
+    "q": {"shape": [2,4], "dtype": "int8", "kind": "input", "data": [2,-1,2,3, -1,1,3,0]},
+    "k": {"shape": [4,4], "dtype": "int8", "data": [1,2,-3,1, -1,1,1,1, 0,2,1,-2, 1,-1,1,2]},
+    "v": {"shape": [4,4], "dtype": "int8", "data": [23,11,0,-7, -21,13,10,-9, 20,62,0,8, -30,9,9,-28]}
+  },
+  "nodes": [
+    {"id": "attention", "op": "Attention", "inputs": ["q","k","v"], "output": "y",
+     "attrs": {"causal": true, "position": 1, "exp_shift": 2}}
+  ],
+  "outputs": ["y"]
+}

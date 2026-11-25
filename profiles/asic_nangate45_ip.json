@@ -11,7 +11,7 @@
   },
   "gpu": {
     "variant": "v6",
-    "lanes": 4,
+    "lanes": 8,
     "warps": 1,
     "issue_width": 2,
     "window_bytes": 4096,

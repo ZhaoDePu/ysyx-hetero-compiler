@@ -8,9 +8,12 @@ DTYPES = {"int8": (1, -128, 127), "uint8": (1, 0, 255),
           "int32": (4, -(1 << 31), (1 << 31) - 1)}
 ARITIES = {"Gemm": (2, 3), "Conv": (2, 3), "Add": (2,), "Mul": (2,),
            "Relu": (1,), "Requant": (1,), "SiLU": (1,), "GELU": (1,),
-           "Attention": (3,), "GatedBranch": (1,)}
+           "Attention": (3,), "GatedBranch": (1,), "RMSNorm": (1,), "RowSoftmax": (1,),
+           "C2f": (2,), "SPPF": (1,), "YoloDetectHead": (2,), "YoloNMS": (1,)}
 ALIASES = {"MatMul": "Gemm", "BiasAdd": "Add", "ReLU": "Relu",
-           "Silu": "SiLU", "Gelu": "GELU"}
+           "Silu": "SiLU", "Gelu": "GELU", "MatMulS32": "Gemm",
+           "BiasAddS32": "Add", "RequantizeS8": "Requant", "ResidualAdd": "Add",
+           "Conv2D": "Conv", "SPPF_MaxPool": "SPPF", "C2f_SplitConcat": "C2f"}
 
 
 class GraphError(ValueError):
@@ -45,10 +48,12 @@ def _check_tensor(name, tensor):
 def _attributes(op, a, node):
     attrs = dict(a)
     allowed = {"narrowing", "dtype"} | {
-        "Gemm": set(), "Conv": {"strides", "pads"}, "Add": {"broadcast"},
+        "Gemm": {"transpose_b"}, "Conv": {"strides", "pads", "shift"}, "Add": {"broadcast"},
         "Mul": set(), "Relu": set(), "Requant": {"multiplier", "shift", "zero_point"},
-        "SiLU": set(), "GELU": set(), "Attention": {"causal", "exp_shift", "position"},
-        "GatedBranch": {"threshold", "rounds"},
+        "SiLU": {"mode"}, "GELU": set(), "Attention": {"causal", "exp_shift", "position"},
+        "GatedBranch": {"threshold", "rounds"}, "RMSNorm": set(),
+        "RowSoftmax": {"causal_mask"}, "C2f": set(), "SPPF": {"kernel"},
+        "YoloDetectHead": {"reg_max", "stride"}, "YoloNMS": {"score_threshold", "iou_threshold"},
     }[op]
     if unknown := attrs.keys() - allowed:
         raise GraphError(f"{node}: unsupported attributes {sorted(unknown)}")
@@ -56,6 +61,20 @@ def _attributes(op, a, node):
         raise GraphError(f"{node}: invalid narrowing")
     if "dtype" in attrs and (not isinstance(attrs["dtype"], str) or attrs["dtype"] not in DTYPES):
         raise GraphError(f"{node}: invalid output dtype")
+    if op == "Gemm" and type(attrs.get("transpose_b", False)) is not bool:
+        raise GraphError(f"{node}: transpose_b must be boolean")
+    if op == "RowSoftmax" and type(attrs.setdefault("causal_mask", False)) is not bool:
+        raise GraphError(f"{node}: causal_mask must be boolean")
+    if op == "SiLU" and attrs.get("mode") not in (None, "legacy_q4_knots"):
+        raise GraphError(f"{node}: unsupported SiLU mode")
+    if op == "SPPF" and (type(attrs.setdefault("kernel", 3)) is not int or attrs["kernel"] not in (3, 5)):
+        raise GraphError(f"{node}: expected SPPF kernel 3 or 5")
+    if op == "YoloDetectHead" and any(type(attrs.setdefault(k, 4)) is not int or attrs[k] != 4
+                                      for k in ("reg_max", "stride")):
+        raise GraphError(f"{node}: expected four DFL bins and stride four")
+    if op == "YoloNMS" and any(not _ints([attrs.setdefault(k, d)], 1, 0, 255)
+                                for k, d in (("score_threshold", 160), ("iou_threshold", 100))):
+        raise GraphError(f"{node}: invalid score or IoU threshold")
     if op == "Requant":
         for k, val, lo, hi in (("multiplier", 1, -(1 << 31), (1 << 31) - 1),
                                ("shift", 0, 0, 31),
@@ -66,6 +85,8 @@ def _attributes(op, a, node):
     if op == "Add" and attrs.get("broadcast", "none") not in ("none", "last"):
         raise GraphError(f"{node}: invalid broadcast mode")
     if op == "Conv":
+        if "shift" in attrs and not _ints([attrs["shift"]], 1, 0, 31):
+            raise GraphError(f"{node}: invalid Conv shift")
         if not _ints(attrs.setdefault("strides", [1, 1]), 2, 1, 256):
             raise GraphError(f"{node}: expected two positive strides")
         if not _ints(attrs.setdefault("pads", [0, 0, 0, 0]), 4, 0, 256):
@@ -87,9 +108,10 @@ def _infer(op, inputs, attrs, legacy, output_dtype):
         if not (dtype in ("int8", "uint8") and wtype == "int8"):
             raise GraphError(f"{op}: requires byte A and int8 weights")
         if op == "Gemm":
-            if len(shape) != 2 or len(weight) != 2 or shape[1] != weight[0]:
-                raise GraphError("Gemm: expected A[M,K] and B[K,N]")
-            out = [shape[0], weight[1]]
+            k_axis = 1 if attrs.get("transpose_b", False) else 0
+            if len(shape) != 2 or len(weight) != 2 or shape[1] != weight[k_axis]:
+                raise GraphError("Gemm: the two rank-2 reduction dimensions must match")
+            out = [shape[0], weight[1 - k_axis]]
         else:
             if len(shape) != 4 or len(weight) != 4 or shape[-1] != weight[2]:
                 raise GraphError("Conv: expected NHWC input and HWIO weights")
@@ -115,6 +137,31 @@ def _infer(op, inputs, attrs, legacy, output_dtype):
         if (not _ints([attrs.setdefault("rounds", 64)], 1, 64, 4096) or
                 not _ints([attrs.setdefault("threshold", 0)], 1, *DTYPES[dtype][1:])):
             raise GraphError("GatedBranch: invalid rounds or threshold")
+    if op in ("RMSNorm", "RowSoftmax"):
+        expected = "int8" if op == "RMSNorm" else "uint8"
+        if len(shape) != 2 or dtype != "int8" or output_dtype not in (None, expected):
+            raise GraphError(f"{op}: requires rank-2 int8 input and {expected} output")
+        return shape[:], expected
+    if op in ("C2f", "SPPF"):
+        if len(shape) != 4 or output_dtype not in (None, dtype) or dtype == "int32":
+            raise GraphError(f"{op}: requires byte NHWC geometry")
+        if op == "C2f":
+            if (shape[-1] % 2 or inputs[1]["shape"] != shape[:-1] + [shape[-1] // 2] or
+                    inputs[1]["dtype"] != dtype):
+                raise GraphError("C2f: branch channels must be half the primary channels")
+            return shape[:-1] + [shape[-1] * 3 // 2], dtype
+        return shape[:-1] + [shape[-1] * 4], dtype
+    if op == "YoloDetectHead":
+        cls = inputs[1]
+        if (len(shape) != 4 or shape[0] != 1 or shape[-1] != 16 or
+                len(cls["shape"]) != 4 or cls["shape"][:-1] != shape[:-1] or
+                dtype != "int8" or cls["dtype"] != "int8" or output_dtype not in (None, "uint8")):
+            raise GraphError("YoloDetectHead: expected matching int8 DFL and class NHWC")
+        return [shape[1] * shape[2], 6], "uint8"
+    if op == "YoloNMS":
+        if len(shape) != 2 or shape[1] != 6 or dtype != "uint8" or output_dtype not in (None, "uint8"):
+            raise GraphError("YoloNMS: expected rows of six candidate bytes")
+        return [shape[0], 7], "uint8"
     if op == "Attention":
         k, v = inputs[1:]
         if (len(shape) != 2 or len(k["shape"]) != 2 or len(v["shape"]) != 2 or
@@ -127,6 +174,30 @@ def _infer(op, inputs, attrs, legacy, output_dtype):
     if op in ("SiLU", "GELU", "GatedBranch") and output_dtype not in (None, dtype):
         raise GraphError(f"{op}: output dtype must match the input")
     return shape[:], output_dtype or ("int8" if op == "Requant" else dtype)
+
+
+def _expand_legacy(nodes, tensors):
+    used_names = {s for n in nodes for s in (n.get("id", n.get("name")), n.get("output"))
+                  if isinstance(s, str)} | set(tensors)
+    expanded = []
+    for idx, node in enumerate(nodes):
+        if node.get("op") != "ScaledMatMul":
+            expanded.append(node)
+            continue
+        attrs = node.get("attrs", {})
+        if not isinstance(attrs, dict) or attrs.keys() - {"shift", "transpose_b"}:
+            raise GraphError("ScaledMatMul: unsupported attributes")
+        tag = f"@legacy/accumulator/{idx}"
+        while tag in used_names:
+            tag += "_"
+        used_names.add(tag)
+        expanded.extend((
+            {"id": tag, "op": "Gemm", "inputs": node.get("inputs"), "output": tag,
+             "attrs": {"dtype": "int32", "transpose_b": attrs.get("transpose_b", False)}},
+            {**node, "op": "RequantizeS8", "inputs": [tag],
+             "attrs": {"shift": attrs.get("shift", 0)}},
+        ))
+    return expanded
 
 
 def normalize(graph, dialect="auto"):
@@ -146,6 +217,8 @@ def normalize(graph, dialect="auto"):
         tensors = {t["name"]: {k: v for k, v in t.items() if k != "name"} for t in tensors}
     if not isinstance(tensors, dict):
         raise GraphError("tensors must be a mapping or a list")
+    if legacy:
+        nodes = _expand_legacy(nodes, tensors)
     tensors = {k: _check_tensor(k, v) for k, v in tensors.items()}
     producers, ids, records = {}, set(), []
     for raw in nodes:
@@ -167,8 +240,25 @@ def normalize(graph, dialect="auto"):
             for key in ("threshold", "rounds"):
                 if key in raw:
                     attrs.setdefault(key, raw[key])
-        if raw_op == "BiasAdd":
+        if raw_op in ("BiasAdd", "BiasAddS32"):
             attrs["broadcast"] = "last"
+        if raw_op in ("MatMulS32", "BiasAddS32"):
+            attrs.setdefault("dtype", "int32")
+        if raw_op == "RequantizeS8":
+            attrs.update(dtype="int8", narrowing="saturate")
+        if raw_op in ("ResidualAdd", "RMSNorm", "RowSoftmax", "Conv2D"):
+            attrs["narrowing"] = "saturate"
+        if raw_op == "Conv2D":
+            attrs.setdefault("dtype", "int8")
+            if "stride" in attrs:
+                attrs["strides"] = attrs.pop("stride")
+            if "padding" in attrs:
+                padding = attrs.pop("padding")
+                if not _ints(padding, 4, 0, 256):
+                    raise GraphError("Conv2D: invalid legacy padding")
+                attrs["pads"] = [padding[i] for i in (0, 2, 1, 3)]
+        if legacy and raw_op == "SiLU":
+            attrs.setdefault("mode", "legacy_q4_knots")
         producers[out] = len(records)
         ids.add(nid)
         records.append({"id": nid, "op": op, "inputs": ins[:], "output": out,

@@ -61,8 +61,8 @@ class Frontends(unittest.TestCase):
     def test_profile_capacities(self):
         expected = {"fpga_zu15eg_balanced": (16, 16, 4, 2 << 20),
                     "fpga_zu15eg_full": (24, 8, 8, 2 << 20),
-                    "asic_nangate45_p8": (4, 4, 1, 4096),
-                    "asic_nangate45_ip": (4, 4, 1, 65536)}
+                    "asic_nangate45_p8": (4, 8, 1, 4096),
+                    "asic_nangate45_ip": (4, 8, 1, 65536)}
         for name, spec in expected.items():
             p = load_profile(name)
             self.assertEqual((p["npu"]["rows"], p["gpu"]["lanes"], p["gpu"]["warps"],
