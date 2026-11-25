@@ -73,41 +73,98 @@ def _case_path(path):
     return path
 
 
-def _verify_z15(bundle, case, manifest, arena, values):
-    graph, plan, products = (manifest[x] for x in ("graph", "plan", "backends"))
-    initial = case / "initial-beat.bin"
-    initial.write_bytes(bytes(32))
-    setup = [f"{initial} 0 32"]
+def _z15_loads(case, manifest, arena):
+    setup = []
     for index, move in enumerate(manifest["dma"]):
         if move["direction"] != "load":
             continue
         lo, size = move["scratch_offset"], move["bytes"]
+        _require(lo == move["ddr_offset"], "replay requires an identity DDR offset")
         region = case / f"upload-{index}.bin"
         region.write_bytes(arena[lo:lo + size])
-        setup.append(f"upload {region} {lo} {size}")
+        tail = f"{region} {lo} {size}"
+        setup.append("upload " + tail if setup else tail)
+    _require(bool(setup), "missing Z15 startup extents")
+    return setup
+
+
+def _z15_launch(bundle, key, gpu, npu):
+    if key not in gpu:
+        return [f"write {addr} {value}" for addr, value in npu[key]["writes"]]
+    program = gpu[key]
+    lines = [f"write {0x4000 + 4*i} {word}"
+             for i, word in enumerate(_hex(bundle / program["hex"]))]
+    return lines + [f"submit_gpu {job['entry']} {job['gpu_job_reg']}" for job in program["jobs"]]
+
+
+def _verify_z15_plan(bundle, case, manifest, arena, values, setup, gpu, npu):
+    graph, plan = manifest["graph"], manifest["plan"]
+    stage_labels = {stage["id"]: f"s{i}" for i, stage in enumerate(plan["stages"])}
+    launched, drained = set(), set()
+    in_flight = {}
+
+    def wait(key):
+        _require(key in launched, f"wait references an unlaunched stage: {key}")
+        if key in drained:
+            return
+        engine = "gpu" if key in gpu else "npu"
+        _require(in_flight.get(engine) == key, f"stage {key} lost its engine completion")
+        setup.append(f"wait_{engine} {stage_labels[key]}")
+        drained.add(key)
+        del in_flight[engine]
+
+    for cmd in plan["commands"]:
+        if cmd["type"] == "fence":
+            wait(cmd["wait_for"])
+            print(f"plan fence wait_for={cmd['wait_for']!r} zone={cmd['zone']}", flush=True)
+            continue
+        _require(cmd["type"] == "launch", "unknown Z15 schedule command")
+        key = cmd["stage"]
+        _require(key in stage_labels and key not in launched, "invalid or repeated Z15 launch")
+        if "engine_predecessor" in cmd:
+            wait(cmd["engine_predecessor"])
+        engine = "gpu" if key in gpu else "npu"
+        _require(engine not in in_flight, f"stage {key} omitted its engine predecessor")
+        setup += _z15_launch(bundle, key, gpu, npu)
+        in_flight[engine] = key
+        launched.add(key)
+        print(f"plan launch stage={stage_labels[key]} node={key!r} "
+              f"device={cmd['device']} zone={cmd['zone']}", flush=True)
+    _require(launched == stage_labels.keys(), "incomplete Z15 command schedule")
+    for key in list(in_flight.values()):
+        wait(key)
+    for stage in plan["stages"]:
+        _stage_value(arena, graph, plan, values, stage)
+    for index, move in enumerate(manifest["dma"]):
+        if move["direction"] != "store":
+            continue
+        lo, size = move["scratch_offset"], move["bytes"]
+        _require(lo == move["ddr_offset"], "replay requires an identity DDR offset")
+        expected = case / f"output-{index}.bin"
+        expected.write_bytes(arena[lo:lo + size])
+        setup.append(f"download o{index} {expected} {lo} {size}")
+
+
+def _verify_z15(bundle, case, manifest, arena, values, execute_plan):
+    graph, plan, products = (manifest[x] for x in ("graph", "plan", "backends"))
+    setup = _z15_loads(case, manifest, arena)
     gpu = {s["id"]: s for s in products["gpu"]["stages"]}
     npu = {s["stage"]: s for s in products["npu"]["commands"]}
-    for index, stage in enumerate(plan["stages"]):
-        key = stage["id"]
-        # Writes start from a clean sticky status and the previous launch has drained.
-        setup.append("write 16 2")
-        if key in gpu:
-            program = gpu[key]
-            words = _hex(bundle / program["hex"])
-            setup += [f"write {0x4000+4*i} {w}" for i, w in enumerate(words)]
-            for job in program["jobs"]:
-                setup.append(f"submit_gpu {job['entry']} {job['gpu_job_reg']}")
-            check = "check_gpu"
-        else:
-            setup += [f"write {addr} {value}" for addr, value in npu[key]["writes"]]
-            check = "check_npu"
-        off, size = _stage_value(arena, graph, plan, values, stage)
-        lo, high = off // 32 * 32, (off + size + 31) // 32 * 32
-        golden = case / f"expected-{index}.bin"
-        golden.write_bytes(arena[lo:high])
-        setup.append(f"{check} s{index} {golden} {lo} {high-lo}")
-        print(f"replay stage=s{index} node={key!r} device={stage['device']} "
-              f"output_offset={off} output_bytes={size}", flush=True)
+    if execute_plan:
+        _verify_z15_plan(bundle, case, manifest, arena, values, setup, gpu, npu)
+    else:
+        for index, stage in enumerate(plan["stages"]):
+            key = stage["id"]
+            setup.append("write 16 2")
+            setup.extend(_z15_launch(bundle, key, gpu, npu))
+            check = "check_gpu" if key in gpu else "check_npu"
+            off, size = _stage_value(arena, graph, plan, values, stage)
+            lo, high = off // 32 * 32, (off + size + 31) // 32 * 32
+            golden = case / f"expected-{index}.bin"
+            golden.write_bytes(arena[lo:high])
+            setup.append(f"{check} s{index} {golden} {lo} {high-lo}")
+            print(f"replay stage=s{index} node={key!r} device={stage['device']} "
+                  f"output_offset={off} output_bytes={size}", flush=True)
     control = case / "z15.txt"
     control.write_text("\n".join(setup) + "\n", encoding="ascii")
     _execute([Z15, control])
@@ -144,6 +201,8 @@ def main():
     parser.add_argument("--bundle", required=True, type=Path)
     parser.add_argument("--case", required=True, type=Path, help="New directory inside compiler RAM")
     parser.add_argument("--inputs", type=Path, help="Runtime tensor values as a JSON mapping")
+    parser.add_argument("--execute-plan", action="store_true",
+                        help="Run the Z15 launch/fence plan and check the final DMA table")
     args = parser.parse_args()
     bundle = args.bundle.resolve(strict=True)
     case = _case_path(args.case.resolve())
@@ -167,8 +226,9 @@ def main():
         arena[offset:offset + size] = encoded
     print("replay command=" + shlex.join(sys.argv) + " binding=" + profile["binding"], flush=True)
     if name == "fpga_zu15eg_balanced":
-        _verify_z15(bundle, case, manifest, arena, values)
+        _verify_z15(bundle, case, manifest, arena, values, args.execute_plan)
     else:
+        _require(not args.execute_plan, "scheduled MMIO replay is available on balanced Z15")
         _verify_p8(bundle, case, manifest, arena, values)
     print("BUNDLE_RTL_PASS " + json.dumps({name: values[name] for name in graph["outputs"]},
                                           ensure_ascii=False), flush=True)

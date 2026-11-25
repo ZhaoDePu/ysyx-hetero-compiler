@@ -102,13 +102,22 @@ int main(int argc, char **argv) {
                 if (!(control >> source >> lo >> bytes))
                     throw std::runtime_error("malformed DMA upload");
                 upload(rig, source, lo, bytes);
-            } else if (command == "check" || command == "check_npu" || command == "check_gpu") {
+            } else if (command == "wait_npu" || command == "wait_gpu") {
+                if (!(control >> stage))
+                    throw std::runtime_error("malformed launch wait");
+                const bool gpu = command == "wait_gpu";
+                wait_for(rig, gpu ? Z15_GPU_DONE : Z15_NPU_DONE, gpu ? Z15_GPU_BUSY : Z15_NPU_BUSY);
+                printf("Z15_PLAN_DRAIN stage=%s device=%s wall_npu_ticks=%u\n",
+                       stage.c_str(), gpu ? "GPU" : "TENSOR", rig.tick_count);
+            } else if (command == "download" || command == "check" || command == "check_npu" ||
+                       command == "check_gpu") {
                 unsigned lo = address, bytes = size;
                 if (!(control >> stage >> expected) || (command != "check" && !(control >> lo >> bytes)))
                     throw std::runtime_error("malformed output check");
                 extent(lo, bytes);
                 bool gpu = command == "check_gpu";
-                wait_for(rig, gpu ? Z15_GPU_DONE : Z15_NPU_DONE, gpu ? Z15_GPU_BUSY : Z15_NPU_BUSY);
+                if (command != "download")
+                    wait_for(rig, gpu ? Z15_GPU_DONE : Z15_NPU_DONE, gpu ? Z15_GPU_BUSY : Z15_NPU_BUSY);
                 unsigned current = rig.read(gpu ? Z15_GPU_CYCLES_LO : Z15_NPU_CYCLES_LO);
                 unsigned &previous = gpu ? prior_gpu : prior_npu;
                 dma(rig, lo, bytes, true);
@@ -121,16 +130,22 @@ int main(int argc, char **argv) {
                                                  " got " + std::to_string(actual[byte]) +
                                                  " expected " + std::to_string(golden[byte]));
                 ++commands;
-                printf("Z15_%s_RTL_STAGE_PASS stage=%s busy_ticks=%u compared_bytes=%u\n",
-                       gpu ? "GPU" : "NPU", stage.c_str(), current - previous, bytes);
-                previous = current;
+                if (command == "download") {
+                    printf("Z15_PLAN_DMA_PASS output=%s compared_bytes=%u\n", stage.c_str(), bytes);
+                } else {
+                    printf("Z15_%s_RTL_STAGE_PASS stage=%s busy_ticks=%u compared_bytes=%u\n",
+                           gpu ? "GPU" : "NPU", stage.c_str(), current - previous, bytes);
+                    previous = current;
+                }
             } else {
                 throw std::runtime_error("unknown control command");
             }
         }
         require(commands != 0, "no hardware checks performed");
-        printf("Z15_RTL_PASS commands=%u wall_npu_ticks=%u axi_transactions=%u\n",
-               commands, rig.tick_count, rig.transactions);
+        const unsigned wall = rig.tick_count;
+        const unsigned overlap = rig.read(Z15_OVERLAP_CYCLES_LO);
+        printf("Z15_RTL_PASS commands=%u wall_npu_ticks=%u axi_transactions=%u overlap_npu_ticks=%u\n",
+               commands, wall, rig.transactions, overlap);
         rig.dut.final();
     } catch (const std::exception &e) {
         fprintf(stderr,"Z15_NPU_RTL_FAIL %s\n",e.what());

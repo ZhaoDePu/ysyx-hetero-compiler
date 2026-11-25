@@ -45,6 +45,11 @@ def validate_profile(p):
             raise GraphError("inconsistent target memory or GPU limits")
         if npu["variant"] not in ("p8", "z15") or gpu["variant"] not in ("v6", "g3", "g4"):
             raise GraphError("unsupported hardware ABI")
+        if npu["variant"] == "z15" and (cap, zone, beat, npu["window_bytes"]) != (
+                2 << 20, 1 << 20, 32, 2 << 20):
+            raise GraphError("Z15 requires two 1 MiB ownership halves and 32-byte DMA beats")
+        if npu["variant"] == "p8" and (npu["window_bytes"] != 4096 or beat or zone != cap or align < 8):
+            raise GraphError("Phase 8 requires a 4096-byte native window and 8-byte alignment")
     except (KeyError, TypeError) as exc:
         raise GraphError(f"incomplete target profile: {exc}") from exc
     return p

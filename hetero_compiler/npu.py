@@ -106,6 +106,8 @@ def _tensor_spec(stage, graph, target):
             if part_attrs.get("broadcast") != "last" or bt["shape"] != [n]:
                 raise ValueError("tensor bias fusion requires last-axis bias")
             if not seen_requant and (tensors[current]["dtype"] == bt["dtype"] == tensors[part["output"]]["dtype"] == "int32"):
+                if shift:
+                    raise ValueError("int32 bias cannot be hoisted before an existing tensor shift")
                 bias_mode = "wide"
             elif (target == "p8" and
                   tensors[current]["dtype"] == bt["dtype"] == tensors[part["output"]]["dtype"] == "int8" and
@@ -118,7 +120,7 @@ def _tensor_spec(stage, graph, target):
                     part_attrs.get("narrowing", "saturate") != "saturate" or
                     tensors[part["output"]]["dtype"] != "int8"):
                 raise ValueError("native requant requires a signed, saturating shift")
-            shift = part_attrs.get("shift", 0)
+            shift = min(31, shift + part_attrs.get("shift", 0))
             narrowing = part_attrs.get("narrowing", "saturate")
             seen_requant = True
         elif part["op"] in ("Relu", "SiLU", "GELU"):
@@ -136,6 +138,8 @@ def _tensor_spec(stage, graph, target):
         if (c["dtype"] != "int8" or activation == "GELU" or
                 (activation == "SiLU" and activation_mode != "legacy_q4_knots")):
             raise ValueError("Phase 8 native activation supports ReLU and the legacy signed Q4 knot approximation")
+        if wide and bias_mode == "legacy":
+            raise ValueError("Phase 8 wide PROGRAM requires int32 pre-requant bias")
         if wide and (op != "Gemm" or transpose or a["dtype"] != "int8" or narrowing == "wrap" or k > 4096):
             raise ValueError("Phase 8 signed-wide bias/large-K path requires saturated signed GEMM")
     else:

@@ -52,6 +52,47 @@ class NpuTests(unittest.TestCase):
             result = lower(graph, plan, P8, pathlib.Path(tmp))
         self.assertEqual(result["records"][0]["words"][5], 3)
 
+    def test_conv_preserves_shift_before_requant_and_does_not_hoist_bias(self):
+        graph, plan = fixture(bias=True)
+        graph["tensors"].update(
+            a={"shape": [1, 1, 2, 4], "dtype": "int8"},
+            b={"shape": [1, 1, 4, 4], "dtype": "int8", "data": list(range(16))},
+            acc={"shape": [1, 1, 2, 4], "dtype": "int32"},
+            biased={"shape": [1, 1, 2, 4], "dtype": "int32"},
+            c={"shape": [1, 1, 2, 4], "dtype": "int8"},
+        )
+        stage = plan["stages"][0]
+        stage.update(op="Conv", inputs=["a", "b"], fused=[
+            dict(op="Conv", inputs=["a", "b"], output="acc", attrs={"shift": 1}),
+            dict(op="Requant", inputs=["acc"], output="c", attrs={"shift": 2}),
+        ])
+        with tempfile.TemporaryDirectory() as tmp:
+            result = lower(graph, plan, P8, pathlib.Path(tmp))
+        self.assertEqual(result["records"][0]["words"][5], 3)
+        stage["inputs"].append("bias")
+        stage["fused"].insert(1, dict(op="Add", inputs=["acc", "bias"], output="biased",
+                                      attrs={"broadcast": "last"}))
+        stage["fused"][-1]["inputs"] = ["biased"]
+        self.assertFalse(supports(stage, graph, Z15))
+
+    def test_wide_program_does_not_treat_legacy_byte_bias_as_int32(self):
+        graph, plan = fixture()
+        graph["tensors"].update(
+            a={"shape": [2, 256], "dtype": "int8"},
+            b={"shape": [256, 4], "dtype": "int8"},
+            acc={"shape": [2, 4], "dtype": "int32"},
+            narrowed={"shape": [2, 4], "dtype": "int8"},
+            bias={"shape": [4], "dtype": "int8"},
+        )
+        stage = plan["stages"][0]
+        stage.update(inputs=["a", "b", "bias"], fused=[
+            dict(op="Gemm", inputs=["a", "b"], output="acc", attrs={}),
+            dict(op="Requant", inputs=["acc"], output="narrowed", attrs={"shift": 2}),
+            dict(op="Add", inputs=["narrowed", "bias"], output="c",
+                 attrs={"broadcast": "last", "narrowing": "wrap"}),
+        ])
+        self.assertFalse(supports(stage, graph, P8))
+
     def test_phase8_signed_wide(self):
         graph, plan = fixture(bias=True)
         self.assertTrue(supports(plan["stages"][0], graph, P8))

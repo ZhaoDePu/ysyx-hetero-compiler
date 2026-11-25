@@ -165,8 +165,9 @@ def parse_model(data):
             raise GraphError(f"ONNX initializer differs from ValueInfo for {name}")
         initializers.add(name)
         tensors[name] = spec
-    for name in inputs - initializers:
+    for name in inputs:
         tensors[name]["kind"] = "input"
+    defined = inputs | initializers
     for idx, payload in enumerate(_all(graph, 1, 2)):
         node = _message(payload)
         op = _text(_one(node, 4, 2))
@@ -184,6 +185,13 @@ def parse_model(data):
             attrs = {"narrowing": "wrap"}
         else:
             raise GraphError(f"{name}: unsupported ONNX operator {op}")
+        if any(i not in defined for i in ins):
+            raise GraphError(f"{name}: unbound ONNX operand")
+        if not outs[0] or outs[0] in defined:
+            raise GraphError(f"{name}: empty or multiply defined ONNX output")
+        defined.add(outs[0])
         nodes.append({"id": name, "op": op, "inputs": ins, "output": outs[0], "attrs": attrs})
+    if any(name not in defined for name in outputs):
+        raise GraphError("unbound ONNX graph output")
     return {"name": _text(_one(graph, 2, 2)), "tensors": tensors,
             "nodes": nodes, "outputs": outputs}

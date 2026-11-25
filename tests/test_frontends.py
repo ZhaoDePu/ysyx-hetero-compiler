@@ -51,6 +51,23 @@ class Frontends(unittest.TestCase):
         self.assertEqual(parsed["tensors"]["y"]["dtype"], "int32")
         self.assertEqual(parsed["nodes"][0]["op"], "Gemm")
 
+    def test_onnx_initializer_on_input_is_a_default(self):
+        node = field(1, "x") + field(1, "w") + field(2, "y") + field(4, "MatMulInteger")
+        w = field(1, bytes((2, 1))) + field(2, 3) + field(8, "w") + field(9, bytes((3, 254)))
+        graph = field(1, node) + field(5, w) + field(11, info("x", [1, 2]))
+        graph += field(11, info("w", [2, 1])) + field(12, info("y", [1, 1], 6))
+        model = field(1, 8) + field(7, graph) + field(8, field(2, 13))
+        parsed = normalize(parse_model(model))
+        self.assertEqual(set(parsed["inputs"]), {"x", "w"})
+        self.assertEqual(parsed["tensors"]["w"]["data"], [3, -2])
+
+    def test_onnx_value_info_cannot_supply_an_input(self):
+        node = field(1, "x") + field(2, "y") + field(4, "Relu")
+        graph = field(1, node) + field(13, info("x", [1, 2])) + field(12, info("y", [1, 2]))
+        model = field(1, 8) + field(7, graph) + field(8, field(2, 14))
+        with self.assertRaisesRegex(GraphError, "unbound ONNX operand"):
+            parse_model(model)
+
     def test_cycle_and_truncated_onnx(self):
         with self.assertRaisesRegex(GraphError, "cycle"):
             normalize({"tensors": {}, "outputs": ["x"], "nodes": [
