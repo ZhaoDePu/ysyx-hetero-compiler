@@ -5,8 +5,9 @@ It uses YHB1 target ID 5. The Phase A2 frozen source and its SRAM interface
 at `a4dbe9329170f2a250b07c7d2034c7e01e91ddfc` expose four 4096×32-bit data
 banks and a 16 KiB instruction window. Their host port takes 16-bit byte
 addresses. The Phase A2 GPU still addresses a selected 4 KiB page per launch.
-The exact Phase A3 shared-VPU command input remains to be bound after its ABI
-is frozen. This document defines the compiler-side adapter contract.
+The [Phase A3 native vector binding](asic-ip-vpu-abi.md) specifies the
+additional descriptors and their frozen hardware host-port mapping. This
+document defines the baseline YHB projection and its software contract.
 
 ## Execution and storage
 
@@ -76,7 +77,7 @@ Run from the compiler repository on xu4090:
 
 ```sh
 nice -n 10 ionice -c2 -n7 python3 -B -m tools.verify_asic_c3_target \
-  --out /dev/shm/ysyx_compiler_c4vpu/targets/ip-native
+  --out /dev/shm/ysyx_compiler_c5/targets/ip-native
 ```
 
 The fixture maps all six requested shared VPU arithmetic operations. It uses

@@ -1,0 +1,5 @@
+input	image	input-0.bin
+output	scores	output-0.bin
+output	indices	output-1.bin
+output	classes	output-2.bin
+output	boxes	output-3.bin

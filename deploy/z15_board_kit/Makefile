@@ -5,10 +5,13 @@ CPPFLAGS ?=
 CFLAGS ?= -O2
 LDFLAGS ?=
 LDLIBS ?=
+DEMO_LINK ?= $(CC)
+DEMO_LIBS ?=
 WARNFLAGS = -std=c99 -Wall -Wextra -Werror
 
-.PHONY: all
-all: $(OUT)/ysyx_run
+.PHONY: all demos
+all: $(OUT)/ysyx_run demos
+demos: $(OUT)/z15_tinylm_demo $(OUT)/z15_yolo26_demo
 
 $(OUT):
 	mkdir -p "$@"
@@ -21,3 +24,11 @@ $(OUT)/libysyx_rt.a: $(OUT)/ysyx_rt.o
 
 $(OUT)/ysyx_run: $(OUT)/ysyx_run.o $(OUT)/hal_linux_uio.o $(OUT)/libysyx_rt.a
 	$(CC) $(LDFLAGS) $^ $(LDLIBS) -o "$@"
+
+$(OUT)/demo_support.o $(OUT)/z15_tinylm_demo.o $(OUT)/z15_yolo26_demo.o: source/demo_support.h
+
+$(OUT)/z15_tinylm_demo: $(OUT)/z15_tinylm_demo.o $(OUT)/demo_support.o $(OUT)/hal_linux_uio.o $(OUT)/libysyx_rt.a
+	$(DEMO_LINK) $(LDFLAGS) $^ $(DEMO_LIBS) $(LDLIBS) -o "$@"
+
+$(OUT)/z15_yolo26_demo: $(OUT)/z15_yolo26_demo.o $(OUT)/demo_support.o $(OUT)/hal_linux_uio.o $(OUT)/libysyx_rt.a
+	$(DEMO_LINK) $(LDFLAGS) $^ $(DEMO_LIBS) $(LDLIBS) -lm -o "$@"

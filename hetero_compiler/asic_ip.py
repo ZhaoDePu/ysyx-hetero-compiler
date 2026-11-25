@@ -1,9 +1,9 @@
-"""Proposed ASIC IP v3 descriptor lowering and functional simulator."""
+"""ASIC IP v3 descriptor lowering, software replay and A3 vector host binding."""
 
 import json
 from math import prod
 from pathlib import Path
-from struct import pack, unpack_from
+from struct import iter_unpack, pack, unpack_from
 
 from . import ir, reference
 
@@ -13,14 +13,28 @@ MAGIC = int.from_bytes(b"IPV3", "little")
 WORDS = 32
 NONE = (1 << 32) - 1
 OPS = {"Gemm": 1, "Conv": 2, "Requant": 3, "Relu": 4, "SiLU": 5, "GELU": 6,
-       "RowSoftmax": 7, "RMSNorm": 8, "Add": 9, "Mul": 10}
+       "RowSoftmax": 7, "RMSNorm": 8, "Add": 9, "Mul": 10,
+       "Z15RMSNorm": 11, "Z15Softmax": 12, "Lookup": 13, "Z15Mul": 14}
 OP_NAMES = {code: name for name, code in OPS.items()}
 TYPE_IDS = {"int8": 1, "uint8": 2, "int32": 3}
 TYPES = {code: name for name, code in TYPE_IDS.items()}
 FORMAT = {"int8": "b", "uint8": "B", "int32": "i"}
 NPU_OPS = {"Gemm", "Conv"}
 OP_FLAGS = {"Gemm": 0x1, "Conv": 0, "Requant": 0x8, "Relu": 0, "SiLU": 0x4, "GELU": 0,
-            "RowSoftmax": 0x2, "RMSNorm": 0, "Add": 0x1, "Mul": 0}
+            "RowSoftmax": 0x2, "RMSNorm": 0, "Add": 0x1, "Mul": 0,
+            "Z15RMSNorm": 0, "Z15Softmax": 0x6, "Lookup": 0, "Z15Mul": 0}
+NATIVE_FIXED = {"Z15RMSNorm", "Z15Softmax", "Z15Mul"}
+BINARY = {"Gemm", "Conv", "Add", "Mul", "Z15RMSNorm", "Z15Mul"}
+
+
+def _table_name(stage):
+    return stage["id"] + ".__asic_lut"
+
+
+def _byte_pair(a, c):
+    return (a["dtype"] in ("int8", "uint8") and c["dtype"] in ("int8", "uint8") and
+            a["shape"] == c["shape"])
+
 
 
 def supports(stage, graph, profile):
@@ -29,11 +43,21 @@ def supports(stage, graph, profile):
         return False
     if stage["device"] != ("NPU" if op in NPU_OPS else "VPU"):
         return False
+    tensors = graph["tensors"]
     names = stage["inputs"] + [stage["output"]]
-    return all(graph["tensors"][name]["dtype"] in TYPE_IDS for name in names)
+    if not all(tensors[name]["dtype"] in TYPE_IDS for name in names):
+        return False
+    aligned = profile.get("asic_vpu_aligned", False)
+    if op == "Requant" and aligned:
+        return _byte_pair(tensors[names[0]], tensors[names[-1]])
+    if op == "Lookup":
+        return aligned
+    return True
 
 
 def requirements(stage, graph, profile):
+    if stage["op"] == "Lookup":
+        return {_table_name(stage): {"kind": "constant", "size": 256}}
     return {}
 
 
@@ -68,6 +92,13 @@ def _args(op, attrs):
         flags |= int(attrs.get("broadcast") == "last") << 1
     elif op == "RowSoftmax":
         flags |= int(attrs.get("causal_mask", False)) << 2
+    elif op == "Z15RMSNorm":
+        p = [attrs["gain"], attrs["epsilon"], attrs["shift"]]
+    elif op == "Z15Softmax":
+        flags |= int(attrs.get("causal", False)) << 2 | int(attrs.get("fast", False)) << 3
+        p = [attrs["exp_shift"], attrs.get("position", 0)]
+    elif op == "Z15Mul":
+        p = [attrs["scale"], attrs["shift"]]
     return flags, [value & NONE for value in p] + [0] * (7 - len(p))
 
 
@@ -93,6 +124,8 @@ def _descriptor(stage, graph, plan):
             raise ir.GraphError(f"{name}: invalid ASIC IP SRAM allocation")
         return rec["offset"]
 
+    if stage["op"] == "Lookup":
+        params[0] = offset(_table_name(stage))
     return [MAGIC, OPS[stage["op"]], flags,
             len(ta["shape"]), len(tb["shape"]) if tb else 0, len(td["shape"]),
             offset(a), offset(b), offset(dst), offset(bias),
@@ -103,7 +136,7 @@ def _descriptor(stage, graph, plan):
 def lower(graph, plan, profile, output):
     if profile["npu"]["variant"] != ABI or profile["sram"]["capacity"] != CAPACITY:
         raise ir.GraphError("ASIC IP v3 requires a native 65536-byte data arena")
-    commands = []
+    commands, constants = [], []
     for stage in plan["stages"]:
         if stage["device"] == "GPU":
             continue
@@ -113,7 +146,10 @@ def lower(graph, plan, profile, output):
         # Validate descriptor geometry before encoding.
         _decode(words, stage["device"])
         commands.append({"stage": stage["id"], "device": stage["device"], "words": words})
-    result = {"abi": ABI, "commands": commands, "constants": []}
+        if stage["op"] == "Lookup":
+            constants.append({"tensor": _table_name(stage), "offset": words[25],
+                              "data": [value & 255 for value in stage["attrs"]["table"]]})
+    result = {"abi": ABI, "commands": commands, "constants": constants}
     output = Path(output)
     payload = [word for cmd in commands for word in cmd["words"]]
     (output / "npu.bin").write_bytes(pack(f"<{len(payload)}I", *payload))
@@ -140,13 +176,14 @@ def _decode(words, device):
     op = OP_NAMES[opcode]
     # Flags: bit0 wrap, bit1 transpose/broadcast, bit2 causal,
     # bit3 legacy knots, bit4 nearest-even. The table is opcode-specific.
-    if flags & ~(1 | (OP_FLAGS[op] << 1)) or device != ("NPU" if op in NPU_OPS else "VPU"):
+    if (flags & ~(int(op not in NATIVE_FIXED) | (OP_FLAGS[op] << 1)) or
+            device != ("NPU" if op in NPU_OPS else "VPU")):
         raise ValueError("invalid ASIC IP descriptor flags or engine")
     a, ar = _tensor(words[13:17], arank, ati, ao)
     c, cr = _tensor(words[21:25], crank, cti, co)
     operands, ranges = {"a": a}, {"a": ar}
     names = ["a"]
-    if op in ("Gemm", "Conv", "Add", "Mul"):
+    if op in BINARY:
         b, br = _tensor(words[17:21], brank, bti, bo)
         operands["b"], ranges["b"] = b, br
         names.append("b")
@@ -181,6 +218,8 @@ def _decode(words, device):
         elif p[1] >= 32 or p[2] != 1 << p[1]:
             raise ValueError("invalid ASIC IP arithmetic shift")
         used = 5
+    elif op in NATIVE_FIXED or op == "Lookup":
+        used = _decode_vector(op, p, flags, attrs, operands, c, ranges, cr)
     else:
         if op == "SiLU" and flags & 8:
             attrs["mode"] = "legacy_q4_knots"
@@ -192,8 +231,48 @@ def _decode(words, device):
     if any(p[used:]):
         raise ValueError("reserved ASIC IP descriptor parameters are nonzero")
     node = {"id": "op", "op": op, "inputs": names, "output": "c", "attrs": attrs}
-    normalized = ir.normalize({"tensors": {**operands, "c": c}, "nodes": [node], "outputs": ["c"]})
-    return normalized, {**ranges, "c": cr}
+    if op in NATIVE_FIXED or op == "Lookup":
+        graph = {"tensors": {**operands, "c": c}, "nodes": [node], "inputs": names, "outputs": ["c"]}
+    else:
+        graph = ir.normalize({"tensors": {**operands, "c": c}, "nodes": [node], "outputs": ["c"]})
+    return graph, {**ranges, "c": cr}
+
+
+def _decode_vector(op, p, flags, attrs, operands, c, ranges, cr):
+    a, b = operands["a"], operands.get("b")
+    if a["shape"] != c["shape"]:
+        raise ValueError("invalid ASIC vector output shape")
+    if op == "Lookup":
+        if not _byte_pair(a, c) or p[0] % 8 or p[0] > CAPACITY - 256:
+            raise ValueError("invalid ASIC activation table extent or tensor type")
+        lut = (p[0], p[0] + 256)
+        if any(lo < lut[1] and lut[0] < hi for lo, hi in (*ranges.values(), cr)):
+            raise ValueError("ASIC activation table overlaps a live tensor")
+        ranges["table"] = lut
+        return 1
+    if op == "Z15Mul":
+        if (b["shape"] != a["shape"] or any(t["dtype"] != "int8" for t in (a, b, c)) or
+                p[0] > 65535 or p[1] > 31):
+            raise ValueError("invalid ASIC scaled signed multiply")
+        attrs.update(scale=p[0], shift=p[1])
+        return 2
+    if len(a["shape"]) != 2 or a["shape"][-1] % 4:
+        raise ValueError("ASIC vector row operations require word-aligned rank-two tensors")
+    rows, columns = a["shape"]
+    if op == "Z15RMSNorm":
+        if (b["shape"] != [columns] or any(t["dtype"] != "int8" for t in (a, b, c)) or
+                rows > 1023 or columns > 1020 or p[0] > 65535 or p[1] >= 1 << 24 or p[2] > 31):
+            raise ValueError("invalid ASIC gamma RMSNorm")
+        attrs.update(gain=p[0], epsilon=p[1], shift=p[2])
+        return 3
+    causal, fast = bool(flags & 4), bool(flags & 8)
+    if (a["dtype"] != "int32" or c["dtype"] != "uint8" or rows > 511 or columns > 128 or
+            p[0] > 31 or (p[1] + rows > columns if causal else p[1] != 0)):
+        raise ValueError("invalid ASIC Softmax geometry")
+    # Physical ops in the common reference take only their arithmetic fields.
+    attrs.clear()
+    attrs.update(exp_shift=p[0], position=p[1], causal=causal, fast=fast)
+    return 2
 
 
 def execute_descriptor(image, words, device):
@@ -207,13 +286,19 @@ def execute_descriptor(image, words, device):
         offset = ranges[name][0]
         inputs[name] = list(unpack_from(f"<{prod(spec['shape'])}{FORMAT[spec['dtype']]}", image, offset))
     dst = graph["tensors"]["c"]["dtype"]
+    node = graph["nodes"][0]
+    if node["op"] == "Lookup":
+        lo, _ = ranges["table"]
+        node["attrs"]["table"] = list(unpack_from(f"<256{FORMAT[dst]}", image, lo))
+    elif node["op"] == "Z15Mul":
+        node["attrs"] = {k: node["attrs"][k] for k in ("scale", "shift")}
     out = reference.evaluate(graph, inputs)["c"]
     lo, hi = ranges["c"]
     image[lo:hi] = pack(f"<{len(out)}{FORMAT[dst]}", *out)
 
 
-def replay(blob, overrides=None):
-    """Replay a native-only target-5 YHB using its checked binary records."""
+def _program(blob, overrides):
+    """Read target-5 initializers, logical outputs and sequential launch records."""
     from .yhb import ASIC_IP_V3, inspect_yhb
 
     container = inspect_yhb(blob)
@@ -272,7 +357,7 @@ def replay(blob, overrides=None):
     if overrides:
         raise ValueError("unknown ASIC IP input")
 
-    launched, active = set(), None
+    launched, active, stages = set(), None, []
     for i in range(sections["commands"]["count"]):
         opcode, index, r1, r2 = words("commands", i, 4)
         if r1 or r2 or index >= sections["stages"]["count"]:
@@ -286,14 +371,115 @@ def replay(blob, overrides=None):
         if opcode != 1 or index in launched or active is not None:
             raise ValueError("ASIC IP launches must have a fence")
         no, nl, engine, offset, count, aux, jobs, zone = words("stages", index, 8)
-        if engine == 1:
-            raise ValueError(f"{name(no, nl)}: v6 GPU commands need a hardware backend")
-        if offset % 8 or aux % 8 or jobs or zone or engine not in (2, 3) or count != WORDS:
+        ident = name(no, nl)
+        if offset % 8 or aux % 8 or zone or engine not in (1, 2, 3):
             raise ValueError("invalid ASIC IP YHB stage")
-        execute_descriptor(data, unpack_from(f"<{WORDS}I", span("data", offset, 4 * count)),
-                           "NPU" if engine == 2 else "VPU")
+        if engine == 1:
+            if not 0 < count <= 4096 or not jobs:
+                raise ValueError("invalid ASIC GPU program size or job count")
+        elif jobs or count != WORDS:
+            raise ValueError("invalid ASIC native descriptor size")
+        payload = unpack_from(f"<{count}I", span("data", offset, 4 * count))
+        launches = tuple(unpack_from("<4I", span("data", aux + i * 16, 16)) for i in range(jobs))
+        stages.append((ident, engine, payload, launches))
         launched.add(index)
         active = index
     if len(launched) != sections["stages"]["count"]:
         raise ValueError("ASIC IP command list omits stages")
+    return data, outputs, stages
+
+
+def replay(blob, overrides=None):
+    """Replay a native-only target-5 YHB using its checked binary records."""
+    data, outputs, stages = _program(blob, overrides)
+    for name, engine, payload, _ in stages:
+        if engine == 1:
+            raise ValueError(f"{name}: v6 GPU commands need a hardware backend")
+        execute_descriptor(data, payload, "NPU" if engine == 2 else "VPU")
     return {key: bytes(data[lo:lo + size]) for key, (lo, size) in outputs.items()}
+
+
+def _lut_entries(op, attrs, a, c):
+    """Materialize an entire unary byte domain, preserving quantization ties."""
+    codes = list(range(256))
+    if a["dtype"] == "int8":
+        codes[128:] = range(-128, 0)
+    # Use the same reference and output narrowing as an ordinary graph, including
+    # wrap, signed rounding, zero points and both supported SiLU conventions.
+    shape = [256]
+    graph = {
+        "inputs": ["a"], "outputs": ["c"],
+        "tensors": {"a": {**a, "shape": shape}, "c": {**c, "shape": shape}},
+        "nodes": [{"id": "unary", "op": op, "inputs": ["a"], "output": "c", "attrs": attrs}],
+    }
+    return bytes(x & 255 for x in reference.evaluate(graph, {"a": codes})["c"])
+
+
+def _vector_request(name, payload, image):
+    graph, ranges = _decode(payload, "VPU")
+    node = graph["nodes"][0]
+    a, c = (graph["tensors"][key] for key in ("a", "c"))
+    op, attrs = node["op"], node["attrs"]
+    a_addr, b_addr, c_addr = payload[6:9]
+    cfg = {"op": None, "a": a_addr, "b": 0 if b_addr == NONE else b_addr, "c": c_addr,
+           "length": 0, "rows": 0, "cols": 0, "channels": 0, "scale": 0, "shift": 0, "epsilon": 0}
+    table = None
+    if op == "Z15RMSNorm":
+        cfg.update(op=7, rows=a["shape"][0], channels=a["shape"][1],
+                   scale=attrs["gain"], shift=attrs["shift"], epsilon=attrs["epsilon"])
+    elif op == "Z15Softmax":
+        cfg.update(op=12, rows=a["shape"][0], cols=a["shape"][1], channels=attrs["position"],
+                   scale=int(attrs["causal"]) | (int(attrs["fast"]) << 1), shift=attrs["exp_shift"])
+    elif op == "Z15Mul":
+        cfg.update(op=6, length=prod(a["shape"]), scale=attrs["scale"], shift=attrs["shift"])
+    elif op == "Lookup":
+        start, end = ranges["table"]
+        table = image[start:end]
+        cfg.update(op=11, length=prod(a["shape"]))
+    elif op in ("Relu", "SiLU", "GELU", "Requant") and _byte_pair(a, c):
+        table = _lut_entries(op, attrs, a, c)
+        cfg.update(op=11, length=prod(a["shape"]))
+    elif op in ("Add", "Mul") and not payload[2] and all(
+            graph["tensors"][n]["dtype"] == "int8" and graph["tensors"][n]["shape"] == a["shape"]
+            for n in ("a", "b", "c")):
+        cfg.update(op=0 if op == "Add" else 6, length=prod(a["shape"]), scale=int(op == "Mul"))
+    else:
+        raise ValueError(f"{name}: IPV3 {op} has no equivalent frozen ASIC vector command")
+    return cfg, table
+
+
+def hardware_vector_records(blob, expected, overrides=None):
+    """Build host-port replay records for frozen A3 VPU and v6 stages."""
+    image, outputs, stages = _program(blob, overrides)
+    if outputs.keys() != expected.keys():
+        raise ValueError("expected outputs must match the target-5 symbols")
+    records = [(0, index * 4, word, 15)
+               for index, (word,) in enumerate(iter_unpack("<I", image))]
+    records.append((6,))
+    bindings = []
+    for name, engine, payload, jobs in stages:
+        if engine == 2:
+            raise ValueError(f"{name}: software IPV3 tensor descriptor has no frozen host adapter")
+        if engine == 1:
+            records.extend((1, address * 4, word) for address, word in enumerate(payload))
+            for entry, config, threads, warp in jobs:
+                if entry % 4 or entry >= 4 * len(payload) or config or warp or not 1 <= threads <= 255:
+                    raise ValueError(f"{name}: invalid frozen ASIC v6 job")
+                records.append((2, 1, entry, threads, 0, 0, 0))
+            bindings.append({"stage": name, "device": "GPU", "jobs": len(jobs)})
+            continue
+        request, table = _vector_request(name, payload, image)
+        if table is not None:
+            records.extend((5, i, byte) for i, byte in enumerate(table))
+            records.append((5, 256, 0))
+        fields = ("op", "a", "b", "c", "length", "rows", "cols", "channels", "scale", "shift", "epsilon")
+        records.append((3, *(request[key] for key in fields)))
+        bindings.append({"stage": name, "device": "VPU", **request})
+    records.append((7,))
+    for key, (offset, size) in outputs.items():
+        if len(expected[key]) != size:
+            raise ValueError(f"{key}: expected bytes disagree with the YHB symbol")
+        for index in range(0, size, 4):
+            word = expected[key][index:index + 4]
+            records.append((4, offset + index, int.from_bytes(word, "little"), (1 << (8 * len(word))) - 1))
+    return records, bindings

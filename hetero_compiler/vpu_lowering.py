@@ -23,7 +23,7 @@ def _exponent_shift(scale):
     return max(0, min(31, round(math.log2(math.log(2) / float(scale)))))
 
 
-def lower(graph, *, fast=False):
+def lower(graph, *, fast=False, whole_attention=True):
     """Select hardware numerics only for statically representable subgraphs."""
     tensors = dict(graph["tensors"])
     nodes = graph["nodes"]
@@ -47,7 +47,7 @@ def lower(graph, *, fast=False):
                 not entry["attrs"].get("a_zero_point") and not entry["attrs"].get("b_zero_point"))
 
     # Prefer the complete QK/softmax/PV chain over the standalone vector opcode.
-    for end in nodes:
+    for end in (nodes if whole_attention else ()):
         out = end["output"]
         if tensors[out]["dtype"] != "int8" or _power_shift(end, 8) is None:
             continue

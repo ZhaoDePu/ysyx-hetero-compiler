@@ -300,8 +300,8 @@ static int valid_tensor_bases(const uint32_t *cfg, uint64_t present, uint32_t ac
     return 1;
 }
 
-/* The software-only ASIC v3 target shares the YHB section format, but
- * uses explicit 64 KiB byte addresses rather than Phase 8 triplets. */
+/* Target 5 uses explicit 64 KiB offsets and a host adapter for the A3
+ * vector launch port. The portable loader validates its descriptors. */
 enum { ASIC_IP_V3_TARGET = 5, ASIC_IP_V3_BYTES = 65536, ASIC_IP_V3_WORDS = 32 };
 
 static int valid_ip_span(const uint8_t *r, unsigned rank, unsigned type,
@@ -332,9 +332,9 @@ static int valid_ip_stage(const uint8_t *r, uint32_t words, uint32_t engine)
     if (words != ASIC_IP_V3_WORDS || get(r, 0) != UINT32_C(0x33565049))
         return 0;
     const uint32_t op = get(r, 1);
-    if (op < 1 || op > 10 || engine != (op <= 2 ? NPU : VPU))
+    if (op < 1 || op > 14 || engine != (op <= 2 ? NPU : VPU))
         return 0;
-    static const unsigned allowed_flags[] = {0, 3, 1, 17, 1, 9, 1, 5, 1, 3, 1};
+    static const unsigned allowed_flags[] = {0, 3, 1, 17, 1, 9, 1, 5, 1, 3, 1, 0, 12, 1, 0};
     if (get(r, 2) & ~allowed_flags[op])
         return 0;
     const uint32_t a = get(r, 6), b = get(r, 7), c = get(r, 8), bias = get(r, 9);
@@ -343,7 +343,7 @@ static int valid_ip_stage(const uint8_t *r, uint32_t words, uint32_t engine)
         !valid_ip_span(r, get(r, 5), get(r, 12), 21, c, &clen) ||
         ip_overlap(a, alen, c, clen))
         return 0;
-    if (op <= 2 || op >= 9) {
+    if (op <= 2 || op == 9 || op == 10 || op == 11 || op == 14) {
         if (!valid_ip_span(r, get(r, 4), get(r, 11), 17, b, &blen) ||
             ip_overlap(b, blen, c, clen))
             return 0;
@@ -358,7 +358,46 @@ static int valid_ip_stage(const uint8_t *r, uint32_t words, uint32_t engine)
             ip_overlap(bias, channels * 4u, c, clen))
             return 0;
     }
-    return 1;
+    if (op < 11 && op != 3)
+        return 1;
+
+    const uint32_t arank = get(r, 3), atype = get(r, 10), ctype = get(r, 12);
+    const uint32_t p0 = get(r, 25), p1 = get(r, 26), p2 = get(r, 27);
+    if (arank != get(r, 5) || get(r, 30) || get(r, 31))
+        return 0;
+    for (unsigned i = 0; i < arank; ++i)
+        if (get(r, 13 + i) != get(r, 21 + i))
+            return 0;
+    if (op == 3) {
+        return p1 <= 31u && ((get(r, 2) & 16u) ?
+            p2 > 0 && p2 <= UINT32_C(0x80000000) : p2 == (UINT32_C(1) << p1));
+    }
+    if (get(r, 28) || get(r, 29))
+        return 0;
+    if (op == 13) {
+        return atype <= 2 && ctype <= 2 && !p1 && !p2 && !(p0 & 7u) &&
+               region(p0, 256u, ASIC_IP_V3_BYTES) &&
+               !ip_overlap(a, alen, p0, 256u) && !ip_overlap(c, clen, p0, 256u);
+    }
+    if (op == 14) {
+        if (atype != 1 || get(r, 11) != 1 || ctype != 1 ||
+            arank != get(r, 4) || p0 > 65535u || p1 > 31u || p2)
+            return 0;
+        for (unsigned i = 0; i < arank; ++i)
+            if (get(r, 13 + i) != get(r, 17 + i))
+                return 0;
+        return 1;
+    }
+    const uint32_t rows = get(r, 13), columns = get(r, 14);
+    if (arank != 2u || (columns & 3u))
+        return 0;
+    if (op == 11) {
+        return atype == 1 && get(r, 11) == 1 && ctype == 1 && get(r, 4) == 1 &&
+               get(r, 17) == columns && rows <= 1023u && columns <= 1020u &&
+               p0 <= 65535u && p1 <= 0xffffffu && p2 <= 31u;
+    }
+    return atype == 3 && ctype == 2 && rows <= 511u && columns <= 128u && p0 <= 31u && !p2 &&
+           ((get(r, 2) & 4u) ? (rows <= columns && p1 <= columns - rows) : !p1);
 }
 
 static int valid_stage(const ysyx_program_t *p, const uint8_t *s)

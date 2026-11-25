@@ -12,7 +12,7 @@ from hetero_compiler.profile import load_profile
 from hetero_compiler.yhb import emit_yhb, inspect_yhb
 
 
-RAM = Path("/dev/shm/ysyx_compiler_c4vpu")
+RAM = Path("/dev/shm/ysyx_compiler_c5")
 PRIORITY = ["nice", "-n", "10", "ionice", "-c2", "-n7"]
 KIT = Path(__file__).resolve().parents[1] / "deploy/z15_board_kit"
 HEX_OR_DEC = r"(?:0x[0-9a-fA-F]+|[0-9]+)"

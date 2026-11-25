@@ -82,3 +82,28 @@ The included VPU cases use the same frozen ABI and YHB1 loader.
 Keep the noncoherent DDR UIO reserved mapping and the matching Step 2
 bitstream. The loader reports the final ABI error word and the number of
 invalid DMA descriptors for each successful execution.
+
+## C5 task demonstrations
+
+The standard build also produces `z15_tinylm_demo` and
+`z15_yolo26_demo`. Use the case directory from the same kit as the model.
+TinyLM accepts four whitespace-delimited vocabulary words and uses one
+C99 session through prefill and every hardware feedback step. The detector
+accepts a name from the packaged input samples. The detector ranks and
+decodes the candidates in the device program. The demo converts the
+integer coordinates and displays the scores using the case calibration.
+
+```sh
+./build/z15_tinylm_demo cases/60-tinylm-chat --prompt 'our compiler schedules work'
+./build/z15_yolo26_demo cases/61-yolo26-tiny --image dense-overlap
+```
+
+The demos report NPU, GPU, wall and overlap ticks read through the Step 2
+MMIO runtime. They also report throughput from the same ticks at 164.555
+and 125.00 MHz. Set `YSYX_CONTROL_UIO` and `YSYX_DMA_UIO` to select
+explicit UIO devices if needed.
+
+The compiler repository's `tools/build_c5_demos.sh` supports `x86`,
+`aarch64` and `verilator`. Build the frozen runner and the runtime
+bridge before the Verilator variant. Pass `--backend verilator` to run
+that variant against the frozen shell.

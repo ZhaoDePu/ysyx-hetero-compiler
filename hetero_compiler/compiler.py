@@ -109,10 +109,13 @@ def compile_bundle(raw_graph, profile, output, *, dialect="auto", fuse=True, reu
     if vpu_lowering not in ("on", "off") or vpu_attention not in ("exact", "fast"):
         raise GraphError("invalid VPU lowering or attention mode")
     graph = normalize(raw_graph, dialect=dialect)
-    if (vpu_lowering == "on" and fuse and device_policy != "gpu-only" and
-            profile["npu"]["variant"] == "z15" and profile["vpu"]["enabled"]):
-        graph = vpu_pass.lower(graph, fast=vpu_attention == "fast")
-        if any(node["op"] in ("Z15RMSNorm", "Z15Mul") for node in graph["nodes"]):
+    if vpu_lowering == "on" and fuse and device_policy != "gpu-only" and profile["vpu"]["enabled"]:
+        variant = profile["npu"]["variant"]
+        if variant in ("z15", asic_ip.ABI):
+            graph = vpu_pass.lower(graph, fast=vpu_attention == "fast", whole_attention=variant == "z15")
+        if variant == asic_ip.ABI:
+            profile = {**profile, "asic_vpu_aligned": True}
+        elif variant == "z15" and any(node["op"] in ("Z15RMSNorm", "Z15Mul") for node in graph["nodes"]):
             profile = {**profile, "vpu_fused_lowering": True}
     physical, execution = graph, None
     options = {"fuse": fuse, "reuse": reuse, "overlap": overlap, "device_policy": device_policy}
