@@ -208,3 +208,20 @@ The C6 compiler reads the calibrated, static COCO 80-class model and
 generates a Z15 Balanced YHB1 with static DDR liveness and double-buffered
 scratch tiles. See the [C6 lowering and validation flow](docs/c6-z15-lowering.md)
 and [C99 board kit](deploy/z15_yolo26n_320_kit/README-YOLO26N-Z15.md).
+
+## Phase C7 fast YOLO26n
+
+C7 keeps the C6 YHB1 and public C99 ABI. The release graph folds INT32
+wide requant into the NPU epilogue and runs both attention softmaxes on
+the VPU, with calibration of the existing PV multipliers. See the
+[hotspot breakdown](reports/m1-gpu-hotspot-breakdown.md) and
+[C7 deployment](deploy/z15_yolo26n_320_kit/README-C7.md).
+
+From the compiler repository on xu4090, set `C6_ARCHIVE` to the read-only C6
+archive and `YSYX_COMPILER_SCRATCH` to the dedicated C7 directory. The same
+weights, images and thresholds are used for replay.
+
+    nice -n 10 python3 -B -m tools.prepare_c7_softmax --archive "$C6_ARCHIVE" \
+      --output "$YSYX_COMPILER_SCRATCH/c7-quant" --modes vpu-raw vpu-raw --calibrate-pv
+    nice -n 10 python3 -B -m tools.compile_c6_yolo --quant "$YSYX_COMPILER_SCRATCH/c7-quant" \
+      --output "$YSYX_COMPILER_SCRATCH/c7-program" --fast-reduce --fuse-edge-luts --overlap
