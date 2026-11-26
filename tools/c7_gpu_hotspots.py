@@ -92,7 +92,7 @@ def main():
         "|---:|---|---|---:|---:|---:|---:|",
     ]
     for index, r in enumerate(rows[:10], 1):
-        lines.append(f"| {index} | {r['onnx_op']} \`{r['node']}\` | {r['shape']} | {r['lane_instructions']:,} | "
+        lines.append(f"| {index} | {r['onnx_op']} `{r['node']}` | {r['shape']} | {r['lane_instructions']:,} | "
                      f"{r['ticks']:,} | {r['frame_percent']:.2f}% | {r['gpu_percent']:.2f}% |")
     lines += [
         "",

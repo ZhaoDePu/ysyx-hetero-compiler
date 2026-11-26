@@ -18,8 +18,8 @@ class GpuStage:
         return "GPU"
 
 
-def build_gpu_stage(name, page, elements, kernel):
-    """Emit one warp entry per 16 elements, with x5 as the linear lane index."""
+def build_gpu_stage(name, page, elements, kernel, *, index_stride=1):
+    """Emit warp entries with x5 equal to lane + warp start * index_stride."""
     if not 0 <= page < 512 or not 1 <= elements <= PAGE_BYTES:
         raise ValueError(f"{name}: invalid GPU page or element count")
     p = Program(None)
@@ -29,7 +29,7 @@ def build_gpu_stage(name, page, elements, kernel):
         threads = min(elements - first, 16)
         jobs.append({"entry": len(p.words) * 4, "threads": threads, "warp": warp,
                      "gpu_job_reg": page | threads << 16 | warp << 24})
-        p.li(15, first)
+        p.li(15, first * index_stride)
         p.jump("kernel")
     p.label("kernel")
     p.emit(0xCC3022F3)  # Read logical GID into x5.

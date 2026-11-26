@@ -15,35 +15,39 @@ def _transpose(name, source, destination, rows, cols):
     ))
 
 
-def lower_matmul(name, left, right, output, left_shape, right_shape, mul, shift, *, unsigned_rhs=False):
+def lower_matmul(name, left, right, output, left_shape, right_shape, mul, shift, *,
+                 unsigned_rhs=False, raw_output=False):
     """Map one batch of dense row-major byte matrices with one output scale."""
     m, k = left_shape[-2:]
     rk, n = right_shape[-2:]
     if (list(left_shape[:-2]) != list(right_shape[:-2]) or k != rk or
             any(not 4 <= dim <= 511 or dim % 4 for dim in (m, n, k))):
         raise ValueError(f"{name}: unsupported native attention matrix shapes")
+    if raw_output and unsigned_rhs:
+        raise ValueError(f"{name}: raw QK output requires signed operands")
     batch = prod(left_shape[:-2])
     if not batch or any(at < 0 or at % ALIGNMENT for at in (left, right, output)):
         raise ValueError(f"{name}: invalid matrix placement")
     scratch = Scratch(0)
     a = scratch.reserve(batch * m * k)
     b = scratch.reserve(batch * k * n)
-    c = scratch.reserve(batch * m * n)
+    output_width = 4 if raw_output else 1
+    c = scratch.reserve(batch * m * n * output_width)
     operand = scratch.reserve(k * n)
     if unsigned_rhs:
         result_transposed = scratch.reserve(n * m)
     # NPU consumes unsigned bytes only on A. For V * P^T evaluate P * V^T
     # and transpose the output while keeping the same integer reduction.
     native_m, native_n = (n, m) if unsigned_rhs else (m, n)
-    config = channel_configuration(native_n, [mul] * native_n, [shift] * native_n)
+    config = () if raw_output else channel_configuration(native_n, [mul] * native_n, [shift] * native_n)
     tile_k = 128
-    partial = scratch.reserve(4 * native_m * native_n).offset if k > tile_k else 0
+    partial = scratch.reserve(4 * native_m * native_n).offset if not raw_output and k > tile_k else 0
     stages = []
     for head in range(batch):
         label = f"{name}.{head}"
         sa = a.offset + head * m * k
         sb = b.offset + head * k * n
-        sc = c.offset + head * m * n
+        sc = c.offset + head * m * n * output_width
         if unsigned_rhs:
             stages.append(_transpose(f"{label}.prob-transpose", sb, operand.offset, k, n))
             sa, sb, sc = operand.offset, sa, result_transposed.offset
@@ -51,7 +55,7 @@ def lower_matmul(name, left, right, output, left_shape, right_shape, mul, shift,
             stages.append(_transpose(f"{label}.pack", sb, operand.offset, k, n))
             sb = operand.offset
         # Packed B is column-major. Native tile-K is a power of two.
-        flags = int(unsigned_rhs) | 1 << 2 | 1 << 15 | 1 << 17
+        flags = 0 if raw_output else int(unsigned_rhs) | 1 << 2 | 1 << 15 | 1 << 17
         stages.append(NativeStage(f"{label}.dot", "NPU", config + (
             (0x60, native_m | native_n << 16), (0x64, k | tile_k << 16),
             (0x68, sa), (0x6C, sb), (0x70, sc), (0x74, 0),
@@ -191,4 +195,30 @@ def lower_vpu_softmax(name, source, output, shape, shift):
         loads = (Transfer("load", source + first * columns, page.offset, align_dma(size)),)
         stores = (Transfer("store", output + first * columns, probability.offset, probability.capacity),)
         tiles.append(Tile(zone, loads, (gpu, vpu), stores, scratch.used))
+    return tuple(tiles)
+
+
+def lower_vpu_softmax_words(name, source, output, shape, shift):
+    """Consume signed INT32 QK accumulators directly with native EW Softmax."""
+    columns, rows = shape[-1], prod(shape[:-1])
+    if (not rows or not 4 <= columns <= 128 or columns % 4 or not 0 <= shift <= 31
+            or any(at < 0 or at % ALIGNMENT for at in (source, output))):
+        raise ValueError(f"{name}: invalid raw native softmax extent")
+    granularity = ALIGNMENT // gcd(ALIGNMENT, columns)
+    tile_rows = 511 // granularity * granularity
+    tiles = []
+    for first in range(0, rows, tile_rows):
+        group = min(rows - first, tile_rows)
+        size = group * columns
+        zone = len(tiles) % 2
+        scratch = Scratch(zone)
+        scores = scratch.reserve(4 * size)
+        probability = scratch.reserve(size)
+        stage = NativeStage(f"{name}.{first}", "VPU", (
+            (0xA0, scores.offset), (0xA8, probability.offset), (0xB4, group | columns << 16),
+            (0xB8, 0), (0xBC, 12 | shift << 24), (Z15_CTRL, Z15_VPU_START),
+        ))
+        loads = (Transfer("load", source + 4 * first * columns, scores.offset, scores.capacity),)
+        stores = (Transfer("store", output + first * columns, probability.offset, probability.capacity),)
+        tiles.append(Tile(zone, loads, (stage,), stores, scratch.used))
     return tuple(tiles)

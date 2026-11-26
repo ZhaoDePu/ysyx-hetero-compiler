@@ -1,11 +1,12 @@
 """Compile the C6 calibrated graph into a static Balanced YHB1 program."""
 
+from collections import Counter
 from dataclasses import dataclass
 from math import prod
 
 import numpy as np
 
-from .c6_attention import lower_matmul, lower_q23_softmax, lower_vpu_softmax
+from .c6_attention import lower_matmul, lower_q23_softmax, lower_vpu_softmax, lower_vpu_softmax_words
 from .c6_depthwise import depthwise_tiles, depthwise_weights, depthwise_widths
 from .c6_layout import plan_layout
 from .c6_memory import Lifetime, reserve_ddr
@@ -13,10 +14,12 @@ from .c6_reduce_conv import combine_tiles, raw_conv_tiles, reduction_widths
 from .c6_schedule import emit_program
 from .c6_tensor import Conv, conv_tiles, pack_weights
 from .c6_vector import vector_tiles
+from .c7_reduce_conv import native_combine_tiles, native_combine_width
+from .c7_softmax import log_softmax_tables, lower_log_softmax
 
 
 WIDTH = {"int8": 1, "uint8": 1, "int16": 2, "uint16": 2, "int32": 4, "int64": 8}
-_MATRIX_OPS = {"MatMul", "Q23Softmax", "VpuSoftmax", "Transpose"}
+_MATRIX_OPS = {"MatMul", "Q23Softmax", "VpuSoftmax", "C7LogSoftmax", "Transpose"}
 _LAYOUT_CHAIN = {"EWAdd", "EWMul", "RequantLUT", "Lookup", "Split", "Concat", "Transpose"}
 _VECTOR_OPS = {"EWAdd", "EWMul", "RequantLUT", "Lookup", "Split", "Concat", "Resize", "MaxPool"}
 
@@ -82,7 +85,7 @@ class _Preparation:
         return name
 
 
-def _conv(node, ctx):
+def _conv(node, ctx, *, fast_reduce=False):
     name, attrs = node["id"], node["attrs"]
     src, dst = node["inputs"][0], node["outputs"][0]
     a, c = ctx.tensors[src], ctx.tensors[dst]
@@ -146,17 +149,26 @@ def _conv(node, ctx):
         b_names.append(ctx.constant(f"{name}/@kernel{idx}", pack_weights(child, src_part)))
         partials.append(ctx.temporary(f"{name}/@partial{idx}", 4 * oh * ow * co))
         first += count
-    words = (np.asarray(mul, dtype=np.uint32) | np.asarray(shift, dtype=np.uint32) << 16)
-    params = ctx.constant(f"{name}/@scales", words.astype("<u4").tobytes())
-    lut_name = ctx.constant(f"{name}/@lut", np.asarray(lut, dtype=np.int8).tobytes()) if lut is not None else None
+    width = native_combine_width(spec) if fast_reduce else 0
+    if width:
+        zero = ctx.constant(f"{name}/@epilogue_zero", bytes(4 * width + 4))
+    else:
+        words = (np.asarray(mul, dtype=np.uint32) | np.asarray(shift, dtype=np.uint32) << 16)
+        params = ctx.constant(f"{name}/@scales", words.astype("<u4").tobytes())
+        lut_name = ctx.constant(f"{name}/@lut", np.asarray(lut, dtype=np.int8).tobytes()) if lut is not None else None
 
     def schedule(slots):
         locations = [slots[part].offset for part in partials]
-        return (raw_conv_tiles(spec, input_ddr=slots[src].offset, weights_ddr=[slots[b].offset for b in b_names],
-                               bias_ddr=slots[bias_name].offset, partials_ddr=locations),
-                combine_tiles(spec, output_ddr=slots[dst].offset, partials_ddr=locations,
-                              params_ddr=slots[params].offset,
-                              lut_ddr=slots[lut_name].offset if lut_name else None))
+        raw = raw_conv_tiles(spec, input_ddr=slots[src].offset, weights_ddr=[slots[b].offset for b in b_names],
+                             bias_ddr=slots[bias_name].offset, partials_ddr=locations)
+        if width:
+            combined = native_combine_tiles(spec, output_ddr=slots[dst].offset, partials_ddr=locations,
+                                            zero_ddr=slots[zero].offset, mul=mul, shift=shift, lut=lut)
+        else:
+            combined = combine_tiles(spec, output_ddr=slots[dst].offset, partials_ddr=locations,
+                                     params_ddr=slots[params].offset,
+                                     lut_ddr=slots[lut_name].offset if lut_name else None)
+        return raw, combined
 
     return schedule
 
@@ -220,22 +232,35 @@ def _matrix(node, ctx):
     if node["op"] == "MatMul":
         b_name = node["inputs"][1]
         b = ctx.tensors[b_name]
-        if (b["layout"] != "row-major" or a["dtype"] != "int8" or c["dtype"] != "int8"
+        raw = attrs.get("raw_output", False)
+        result_dtype = "int32" if raw else "int8"
+        if (b["layout"] != "row-major" or a["dtype"] != "int8" or c["dtype"] != result_dtype
                 or b["dtype"] not in {"uint8", "int8"}):
             raise ValueError(f"{name}: invalid Z15 Q/K/V matrix dtype or layout")
 
         def schedule(slots):
             return (lower_matmul(name, slots[src].offset, slots[b_name].offset, slots[dst].offset,
                                  a["shape"], b["shape"], attrs["mul"], attrs["shift"],
-                                 unsigned_rhs=b["dtype"] == "uint8"),)
+                                 unsigned_rhs=b["dtype"] == "uint8", raw_output=raw),)
 
         return schedule
     if attrs["axis"] % len(a["shape"]) != len(a["shape"]) - 1:
         raise ValueError(f"{name}: C6 softmax requires the row-contiguous last axis")
     if node["op"] == "VpuSoftmax":
+        lower = lower_vpu_softmax_words if a["dtype"] == "int32" else lower_vpu_softmax
+
         def native(slots):
-            return (lower_vpu_softmax(name, slots[src].offset, slots[dst].offset, a["shape"], attrs["shift"]),)
+            return (lower(name, slots[src].offset, slots[dst].offset, a["shape"], attrs["shift"]),)
         return native
+    if node["op"] == "C7LogSoftmax":
+        table = log_softmax_tables(attrs["lut"], attrs["scale"], attrs["steps"], a["shape"][-1])
+        lut_name = ctx.constant(f"{name}/@log-softmax", table.payload)
+
+        def packed(slots):
+            return (lower_log_softmax(name, slots[src].offset, slots[dst].offset,
+                                      slots[lut_name].offset, a["shape"], table),)
+
+        return packed
     lut_name = ctx.constant(f"{name}/@exp", np.asarray(attrs["lut"], dtype="<u4").tobytes())
 
     def schedule(slots):
@@ -285,7 +310,34 @@ def _head_contract(graph, tensors, constants, ps, outputs):
                                       "classes": 80, "symbols": symbols, "head_shapes": shapes,
                                       "scales": list(map(float, scales)), "host_tail": ps}
 
-def prepare_graph(graph, constants, *, selected=None, lowerers=None):
+def fuse_conv_edge_luts(graph):
+    """Compose a private byte requant with the preceding native Conv epilogue."""
+    uses = Counter(name for node in graph["nodes"] for name in node["inputs"])
+    public = set(graph["outputs"])
+    producer = {}
+    nodes = []
+    for node in graph["nodes"]:
+        if node["op"] == "RequantLUT":
+            source, = node["inputs"]
+            index = producer.get(source)
+            if (index is not None and uses[source] == 1 and source not in public
+                    and nodes[index]["op"] == "Conv" and nodes[index]["outputs"] == [source]):
+                conv = nodes[index]
+                outer = node["attrs"]["lut"]
+                inner = conv["attrs"].get("lut", range(256))
+                attrs = {**conv["attrs"], "lut": [outer[code & 255] for code in inner],
+                         "fused_edge_ids": [*conv["attrs"].get("fused_edge_ids", ()), node["id"]]}
+                nodes[index] = {**conv, "attrs": attrs, "outputs": node["outputs"]}
+                for output in node["outputs"]:
+                    producer[output] = index
+                continue
+        for output in node["outputs"]:
+            producer[output] = len(nodes)
+        nodes.append(node)
+    return {**graph, "nodes": nodes}
+
+
+def prepare_graph(graph, constants, *, selected=None, lowerers=None, fast_reduce=False):
     """Resolve graph boundaries and return physical layer jobs with DDR liveness."""
     tensors = layouts(graph)
     active = [node for node in graph["nodes"] if node["device"] != "PS" and
@@ -307,8 +359,12 @@ def prepare_graph(graph, constants, *, selected=None, lowerers=None):
     if not outputs:
         raise ValueError("C6 graph has no outputs at the hardware boundary")
 
-    lower = {**dict.fromkeys(_VECTOR_OPS, _vector), "Conv": _conv, "Reshape": _layout,
-             "Transpose": _layout, "MatMul": _matrix, "Q23Softmax": _matrix, "VpuSoftmax": _matrix, **(lowerers or {})}
+    def conv(node, context):
+        return _conv(node, context, fast_reduce=True) if fast_reduce else _conv(node, context)
+
+    lower = {**dict.fromkeys(_VECTOR_OPS, _vector), "Conv": conv, "Reshape": _layout,
+             "Transpose": _layout, "MatMul": _matrix, "Q23Softmax": _matrix, "VpuSoftmax": _matrix, "C7LogSoftmax": _matrix,
+             **(lowerers or {})}
     for index, node in enumerate(active, start=1):
         for name in node["inputs"]:
             if not name or name in constants:
@@ -347,6 +403,7 @@ def prepare_graph(graph, constants, *, selected=None, lowerers=None):
         "passes": [len(tiles) for tiles in scheduled],
         "stages": [stage.id for tiles in scheduled for tile in tiles for stage in tile.stages],
         "engines": sorted({stage.device for tiles in scheduled for tile in tiles for stage in tile.stages}),
+        **({"fused_edge_ids": node["attrs"]["fused_edge_ids"]} if "fused_edge_ids" in node["attrs"] else {}),
     } for node, scheduled in zip(active, layer_groups, strict=True)]
     c6["source_onnx_sha256"] = graph.get("source_onnx_sha256")
     c6["static_placement_estimate"] = graph.get("placement_estimate")
@@ -357,10 +414,11 @@ def prepare_graph(graph, constants, *, selected=None, lowerers=None):
     return tensors, inputs, outputs, slots, initial, layers, const_outputs, c6
 
 
-def compile_graph(directory, graph, constants, *, lowerers=None, selected=None, seeded=None):
+def compile_graph(directory, graph, constants, *, lowerers=None, selected=None, seeded=None,
+                  fast_reduce=False, overlap=False):
     """Write a guarded legacy-compatible YHB1 bundle with C6 DDR/scratch jobs."""
     tensors, inputs, outputs, slots, initial, layers, const_outputs, c6 = prepare_graph(
-        graph, constants, selected=selected, lowerers=lowerers)
+        graph, constants, selected=selected, lowerers=lowerers, fast_reduce=fast_reduce)
     if seeded is not None:
         if set(seeded) != set(inputs):
             raise ValueError("replay seed tensors must exactly match compiled input symbols")
@@ -373,5 +431,5 @@ def compile_graph(directory, graph, constants, *, lowerers=None, selected=None, 
         yhb_tensors.update({alias: yhb_tensors[source] for alias, source in aliases.items()})
         yhb_tensors.update(const_outputs)
     manifest = emit_program(directory, layers, yhb_tensors, inputs, outputs, slots, initial,
-                            external_inputs=seeded is None, c6=c6)
+                            external_inputs=seeded is None, c6=c6, overlap=overlap)
     return manifest, tensors, initial

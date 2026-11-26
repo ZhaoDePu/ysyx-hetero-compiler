@@ -276,7 +276,7 @@ class QuantGraph:
                 y = lut_apply(q, attrs["lut"]) if "lut" in attrs else q
             elif op == "MatMul":
                 acc = _matmul_int(*args)
-                y = requant(acc, attrs["mul"], attrs["shift"])
+                y = acc if attrs.get("raw_output") else requant(acc, attrs["mul"], attrs["shift"])
             elif op in {"Lookup", "RequantLUT"}:
                 y = lut_apply(args[0], attrs["lut"])
             elif op == "EWAdd":
@@ -285,6 +285,9 @@ class QuantGraph:
                 y = ew_mul(*args, attrs["mul"], attrs["shift"])
             elif op == "VpuSoftmax":
                 y = native_softmax(args[0], attrs["axis"], attrs["shift"])
+            elif op == "C7LogSoftmax":
+                from .c7_softmax import log_softmax
+                y = log_softmax(args[0], attrs["axis"], attrs["lut"], attrs["scale"], attrs["steps"])
             elif op == "Q23Softmax":
                 axis = attrs["axis"]
                 delta = np.max(args[0], axis=axis, keepdims=True).astype(np.int16) - args[0]
