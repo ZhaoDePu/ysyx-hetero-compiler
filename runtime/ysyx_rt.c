@@ -1,9 +1,12 @@
-#include "ysyx_rt.h"
+#define _POSIX_C_SOURCE 200809L
+#include "c10_session_core.h"
 #include "z15_regs.h"
 
 #include <inttypes.h>
+#include <sched.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 enum { HEADER = 32, NSECTION = 7, DIRECTORY = 16, POLL_LIMIT = 1000000 };
 enum { STRINGS, SYMBOLS, DATA, INITIAL, STAGES, MOVES, COMMANDS };
@@ -629,7 +632,7 @@ typedef struct {
     ysyx_stats_t *stats;
     const uint8_t *gpu_code;
     size_t gpu_code_bytes;
-    int gpu_upload_always;
+    int gpu_upload_always, cooperative_poll;
 } run_t;
 
 static int read32(const run_t *run, uint32_t reg, uint32_t *value)
@@ -679,6 +682,8 @@ static int poll_status(const run_t *run, uint32_t required, uint32_t busy)
             return -1;
         if ((value & required) == required && !(value & busy))
             return read_error(run);
+        if (run->cooperative_poll && (i & 1023u) == 1023u)
+            (void)sched_yield();
     }
     return -1;
 }
@@ -692,6 +697,8 @@ static int wait_gpu_slot(const run_t *run, uint32_t warp)
             return -1;
         if (!(value & (Z15_GPU_PENDING | (1u << warp))))
             return 0;
+        if (run->cooperative_poll && (i & 1023u) == 1023u)
+            (void)sched_yield();
     }
     return -1;
 }
@@ -853,19 +860,26 @@ static int validate_inputs(const ysyx_program_t *program, const ysyx_input_t *in
     return 0;
 }
 
-static int write_initial(const ysyx_program_t *p, const ysyx_hal_t *hal,
-                         const ysyx_input_t *inputs, size_t count)
+static int write_static(const ysyx_program_t *p, const ysyx_hal_t *hal, uint64_t *bytes)
 {
     for (uint32_t i = 0; i < p->sections[INITIAL].count; ++i) {
         const uint8_t *r = record(p, INITIAL, i);
         if (hal->ddr_write(hal->ctx, get(r, 0), p->sections[DATA].bytes + get(r, 2), get(r, 1)))
             return -1;
+        *bytes += get(r, 1);
     }
+    return 0;
+}
+
+static int write_inputs(const ysyx_program_t *p, const ysyx_hal_t *hal,
+                        const ysyx_input_t *inputs, size_t count, uint64_t *bytes)
+{
     for (size_t i = 0; i < count; ++i) {
         ysyx_symbol_t symbol;
         if (ysyx_find_symbol(p, inputs[i].name, YSYX_INPUT, &symbol) ||
             hal->ddr_write(hal->ctx, symbol.ddr_offset, inputs[i].data, inputs[i].size))
             return -1;
+        *bytes += inputs[i].size;
     }
     return 0;
 }
@@ -878,35 +892,52 @@ static int sample_telemetry(const run_t *run, ysyx_stats_t *stats)
            read_counter(run, Z15_OVERLAP_CYCLES, &stats->npu_gpu_overlap_ticks);
 }
 
-static int attach(const ysyx_program_t *p, const ysyx_hal_t *hal, const ysyx_input_t *inputs,
-                  size_t count, const char **error)
+static int compatible_hal(const ysyx_program_t *p, const ysyx_hal_t *hal, const char **error)
 {
     if (!p || p->target != YSYX_TARGET_Z15_BALANCED || p->capacity != Z15_SCRATCH_SIZE)
         return fail(error, "this runtime executes only the frozen Z15 Balanced target");
     if (!hal || !hal->mmio_read32 || !hal->mmio_write32 || !hal->ddr_write || !hal->ddr_read ||
-        !hal->cache_sync || (!inputs && count))
+        !hal->cache_sync)
         return fail(error, "incomplete runtime HAL");
+    return 0;
+}
+
+static int ready_and_idle(const run_t *run)
+{
+    uint32_t magic, version;
+    return read32(run, Z15_MAGIC, &magic) || magic != Z15_MAGIC_VALUE ||
+           read32(run, Z15_VERSION, &version) || (version & Z15_VERSION_COMPAT_MASK) != Z15_VERSION_VALUE ||
+           poll_status(run, 0, Z15_NPU_BUSY | Z15_GPU_BUSY | Z15_DMA_BUSY);
+}
+
+static int attach(const ysyx_program_t *p, const ysyx_hal_t *hal, const ysyx_input_t *inputs,
+                  size_t count, const char **error)
+{
+    if (compatible_hal(p, hal, error))
+        return -1;
+    if (!inputs && count)
+        return fail(error, "missing runtime inputs");
     if (validate_inputs(p, inputs, count, error))
         return -1;
     const run_t run = {.program = p, .hal = hal};
-    uint32_t magic, version;
-    if (read32(&run, Z15_MAGIC, &magic) || magic != Z15_MAGIC_VALUE ||
-        read32(&run, Z15_VERSION, &version) || (version & Z15_VERSION_COMPAT_MASK) != Z15_VERSION_VALUE ||
-        poll_status(&run, 0, Z15_NPU_BUSY | Z15_GPU_BUSY | Z15_DMA_BUSY))
+    if (ready_and_idle(&run))
         return fail(error, "Z15 Balanced ABI absent, busy or reporting a sticky fault");
-    if (write_initial(p, hal, inputs, count))
+    uint64_t bytes = 0;
+    if (write_static(p, hal, &bytes) || write_inputs(p, hal, inputs, count, &bytes))
         return fail(error, "DDR initial image or runtime input write failed");
     return 0;
 }
 
 static int execute_range(const ysyx_program_t *p, const ysyx_hal_t *hal, uint32_t first,
-                         uint32_t end, ysyx_stats_t *stats, FILE *trace, const char **error)
+                         uint32_t end, ysyx_stats_t *stats, FILE *trace, const char **error,
+                         int resident)
 {
     memset(stats, 0, sizeof(*stats));
     const char *gpu_upload = getenv("YSYX_C8_GPU_UPLOAD");
     run_t run = {.program = p, .hal = hal, .trace = trace,
                  .pending = {UINT32_MAX, UINT32_MAX}, .dma_index = UINT32_MAX,
-                 .stats = stats, .gpu_upload_always = gpu_upload && !strcmp(gpu_upload, "always")};
+                 .stats = stats, .gpu_upload_always = gpu_upload && !strcmp(gpu_upload, "always"),
+                 .cooperative_poll = resident && !hal->observe};
     ysyx_stats_t begin = {0};
     if (sample_telemetry(&run, &begin))
         return fail(error, "hardware counter read failed");
@@ -949,6 +980,10 @@ static int execute_range(const ysyx_program_t *p, const ysyx_hal_t *hal, uint32_
     stats->invalid_dma_descriptors = !!(stats->abi_error & Z15_ERR_DMA_DESC);
     if (stats->abi_error)
         return fail(error, "Z15 reported a sticky fault at end of execution");
+    if (resident && (stats->wall_ticks < begin.wall_ticks || stats->npu_ticks < begin.npu_ticks ||
+                     stats->gpu_ticks < begin.gpu_ticks ||
+                     stats->npu_gpu_overlap_ticks < begin.npu_gpu_overlap_ticks))
+        return fail(error, "Z15 counters moved backwards during the resident frame");
     stats->wall_ticks -= begin.wall_ticks;
     stats->npu_ticks -= begin.npu_ticks;
     stats->gpu_ticks -= begin.gpu_ticks;
@@ -974,7 +1009,15 @@ int ysyx_execute(const ysyx_program_t *p, const ysyx_hal_t *hal, const ysyx_inpu
         return fail(error, "missing runtime statistics");
     if (attach(p, hal, inputs, count, error))
         return -1;
-    return execute_range(p, hal, 0, p->sections[COMMANDS].count, stats, trace, error);
+    return execute_range(p, hal, 0, p->sections[COMMANDS].count, stats, trace, error, 0);
+}
+
+static int read_symbol(const ysyx_hal_t *hal, const ysyx_symbol_t *symbol, void *data, size_t size)
+{
+    if (hal->cache_sync(hal->ctx, symbol->ddr_offset, size, YSYX_SYNC_FOR_HOST) ||
+        hal->ddr_read(hal->ctx, symbol->ddr_offset, data, size))
+        return -1;
+    return 0;
 }
 
 int ysyx_read_output(const ysyx_program_t *p, const ysyx_hal_t *hal, const char *name, void *data, size_t size)
@@ -982,8 +1025,240 @@ int ysyx_read_output(const ysyx_program_t *p, const ysyx_hal_t *hal, const char 
     ysyx_symbol_t symbol;
     if (ysyx_find_symbol(p, name, YSYX_OUTPUT, &symbol) || size != symbol.bytes)
         return -1;
-    return hal->cache_sync(hal->ctx, symbol.ddr_offset, size, YSYX_SYNC_FOR_HOST) ||
-           hal->ddr_read(hal->ctx, symbol.ddr_offset, data, size);
+    return read_symbol(hal, &symbol, data, size) != 0;
+}
+
+struct ysyx_c10_session {
+    const ysyx_program_t *program;
+    const ysyx_hal_t *hal;
+    int static_uploaded, frame_ready, failed;
+};
+
+typedef struct {
+    uint32_t start, end;
+} ddr_extent_t;
+
+static void add_ddr_extent(ddr_extent_t *extents, size_t *count, uint32_t start, uint32_t end)
+{
+    size_t first = 0;
+    while (first < *count && extents[first].end < start)
+        ++first;
+    size_t next = first;
+    while (next < *count && extents[next].start <= end) {
+        if (extents[next].start < start)
+            start = extents[next].start;
+        if (extents[next].end > end)
+            end = extents[next].end;
+        ++next;
+    }
+    memmove(extents + first + 1u, extents + next, (*count - next) * sizeof(*extents));
+    extents[first] = (ddr_extent_t){start, end};
+    *count = *count - (next - first) + 1u;
+}
+
+static int covers_ddr_extent(const ddr_extent_t *extents, size_t count, uint32_t start, uint32_t end)
+{
+    for (size_t i = 0; i < count && extents[i].start <= start; ++i)
+        if (end <= extents[i].end)
+            return 1;
+    return 0;
+}
+
+static int intersects_initial(const ysyx_program_t *p, uint32_t start, uint32_t end)
+{
+    for (uint32_t i = 0; i < p->sections[INITIAL].count; ++i) {
+        const uint8_t *initial = record(p, INITIAL, i);
+        if (get(initial, 0) >= end)
+            break;
+        if (start < get(initial, 0) + get(initial, 1))
+            return 1;
+    }
+    return 0;
+}
+
+static const char *resident_layout(const ysyx_program_t *p, ddr_extent_t *extents)
+{
+    size_t count = 0;
+    for (uint32_t i = 0; i < p->sections[INITIAL].count; ++i) {
+        const uint8_t *initial = record(p, INITIAL, i);
+        add_ddr_extent(extents, &count, get(initial, 0), get(initial, 0) + get(initial, 1));
+    }
+    for (size_t i = 0; i < ysyx_program_symbol_count(p); ++i) {
+        ysyx_symbol_t symbol;
+        if (ysyx_program_symbol(p, i, &symbol) || !(symbol.flags & YSYX_INPUT))
+            continue;
+        const uint32_t start = symbol.ddr_offset, end = start + symbol.bytes;
+        if (intersects_initial(p, start, end))
+            return "resident input aliases the static DDR image";
+        for (size_t j = 0; j < i; ++j) {
+            ysyx_symbol_t other;
+            if (!ysyx_program_symbol(p, j, &other) && (other.flags & YSYX_INPUT) &&
+                spans_intersect(start, symbol.bytes, other.ddr_offset, other.bytes))
+                return "resident inputs overlap in DDR";
+        }
+        /* Optional inputs may not provide the only initialization of a read. */
+        if (symbol.flags & YSYX_REQUIRED)
+            add_ddr_extent(extents, &count, start, end);
+    }
+    for (uint32_t i = 0; i < p->sections[COMMANDS].count; ++i) {
+        const uint8_t *command = record(p, COMMANDS, i);
+        if (get(command, 0) != DMA)
+            continue;
+        const uint8_t *move = record(p, MOVES, get(command, 1));
+        const uint32_t start = get(move, 1), end = start + get(move, 3);
+        if (get(move, 0) == DMA_STORE) {
+            if (intersects_initial(p, start, end))
+                return "resident DMA store aliases the static DDR image";
+            /* launch_dma serializes DDR transfers even across SRAM halves. */
+            add_ddr_extent(extents, &count, start, end);
+        } else if (!covers_ddr_extent(extents, count, start, end)) {
+            return "resident DMA load lacks a current-frame DDR source";
+        }
+    }
+    for (size_t i = 0; i < ysyx_program_symbol_count(p); ++i) {
+        ysyx_symbol_t symbol;
+        if (!ysyx_program_symbol(p, i, &symbol) && (symbol.flags & YSYX_OUTPUT) &&
+            !covers_ddr_extent(extents, count, symbol.ddr_offset, symbol.ddr_offset + symbol.bytes))
+            return "resident output lacks a current-frame DDR source";
+    }
+    return NULL;
+}
+
+int ysyx_c10_session_open(const ysyx_program_t *p, const ysyx_hal_t *hal,
+                         ysyx_c10_session_t **out, const char **error)
+{
+    if (!out)
+        return fail(error, "missing resident session handle");
+    *out = NULL;
+    if (compatible_hal(p, hal, error))
+        return -1;
+    if (p->kv_steps)
+        return fail(error, "KV bundles require the stepwise KV session");
+    const size_t extent_count = (size_t)p->sections[INITIAL].count + p->sections[SYMBOLS].count +
+                                p->sections[MOVES].count + 1u;
+    ddr_extent_t *extents = calloc(extent_count, sizeof(*extents));
+    if (!extents)
+        return fail(error, "out of memory checking resident DDR extents");
+    const char *reason = resident_layout(p, extents);
+    free(extents);
+    if (reason)
+        return fail(error, reason);
+    *out = calloc(1, sizeof(**out));
+    if (!*out)
+        return fail(error, "out of memory opening a resident session");
+    (*out)->program = p;
+    (*out)->hal = hal;
+    return 0;
+}
+
+static double monotonic_ms(void)
+{
+    struct timespec now;
+    if (clock_gettime(CLOCK_MONOTONIC, &now))
+        return 0.0;
+    return (double)now.tv_sec * 1e3 + (double)now.tv_nsec * 1e-6;
+}
+
+int ysyx_c10_session_run(ysyx_c10_session_t *s, const ysyx_input_t *inputs, size_t count,
+                        ysyx_stats_t *stats, ysyx_c10_timing_t *timing,
+                        FILE *trace, const char **error)
+{
+    ysyx_stats_t frame = {0};
+    ysyx_c10_timing_t stage = {0};
+    if (stats)
+        *stats = frame;
+    if (timing)
+        *timing = stage;
+    if (!s)
+        return fail(error, "missing resident session");
+    s->frame_ready = 0;
+    if (s->failed)
+        return fail(error, "resident session has a prior I/O or ABI fault");
+    const double begin = monotonic_ms();
+    if (!inputs && count)
+        return fail(error, "missing runtime inputs");
+    if (validate_inputs(s->program, inputs, count, error))
+        return -1;
+
+    const ysyx_program_t *p = s->program;
+    const ysyx_hal_t *hal = s->hal;
+    const run_t run = {.program = p, .hal = hal, .cooperative_poll = !hal->observe};
+    const char *failure = NULL;
+    if (ready_and_idle(&run)) {
+        failure = "Z15 ABI absent, busy or reporting a fault before resident frame";
+    } else {
+        const double copy_begin = monotonic_ms();
+        const int write_failed = (!s->static_uploaded && write_static(p, hal, &stage.static_h2d_bytes)) ||
+                                 write_inputs(p, hal, inputs, count, &stage.dynamic_h2d_bytes);
+        const double execute_begin = monotonic_ms();
+        stage.t_h2d_ms = execute_begin - copy_begin;
+        if (write_failed) {
+            failure = "resident DDR transfer failed";
+        } else {
+            s->static_uploaded = 1;
+            if (execute_range(p, hal, 0, p->sections[COMMANDS].count, &frame, trace,
+                              &failure, 1) == 0 && ready_and_idle(&run))
+                failure = "Z15 ABI absent, busy or reporting a fault after resident frame";
+            stage.t_execute_ms = monotonic_ms() - execute_begin;
+        }
+    }
+    if (failure) {
+        uint32_t abi_error;
+        if (!read32(&run, Z15_ERROR, &abi_error)) {
+            frame.abi_error = abi_error;
+            frame.invalid_dma_descriptors = !!(abi_error & Z15_ERR_DMA_DESC);
+        }
+        s->failed = 1;
+    } else {
+        s->frame_ready = 1;
+        stage.hardware_counters_valid = 1;
+    }
+    stage.t_e2e_ms = monotonic_ms() - begin;
+    stage.stats = frame;
+    if (stats)
+        *stats = frame;
+    if (timing)
+        *timing = stage;
+    return failure ? fail(error, failure) : 0;
+}
+
+int ysyx_c10_session_read(ysyx_c10_session_t *s, const char *name, void *data, size_t size)
+{
+    if (!s || !s->frame_ready || !name || !data)
+        return -1;
+    ysyx_symbol_t symbol;
+    if (ysyx_find_symbol(s->program, name, YSYX_OUTPUT, &symbol) || size != symbol.bytes)
+        return -1;
+    if (read_symbol(s->hal, &symbol, data, size)) {
+        s->frame_ready = 0;
+        s->failed = 1;
+        return -1;
+    }
+    return 0;
+}
+
+int ysyx_c10_session_static_output(const ysyx_c10_session_t *s, const char *name)
+{
+    ysyx_symbol_t symbol;
+    if (!s || !name || ysyx_find_symbol(s->program, name, YSYX_OUTPUT, &symbol))
+        return 0;
+    const ysyx_program_t *p = s->program;
+    uint32_t covered = symbol.ddr_offset;
+    const uint32_t end = covered + symbol.bytes;
+    for (uint32_t i = 0; i < p->sections[INITIAL].count && covered < end; ++i) {
+        const uint8_t *initial = record(p, INITIAL, i);
+        const uint32_t at = get(initial, 0), next = at + get(initial, 1);
+        if (at > covered)
+            break;
+        if (covered < next)
+            covered = next;
+    }
+    return covered >= end;
+}
+
+void ysyx_c10_session_close(ysyx_c10_session_t *s)
+{
+    free(s);
 }
 
 struct ysyx_kv_session {
@@ -1033,7 +1308,7 @@ int ysyx_kv_step(ysyx_kv_session_t *s, uint32_t step, ysyx_stats_t *stats, FILE 
     uint32_t end = s->cursor;
     while (end < p->sections[COMMANDS].count && get(record(p, COMMANDS, end), 0) != KV_YIELD)
         ++end;
-    if (end == p->sections[COMMANDS].count || execute_range(p, s->hal, s->cursor, end, stats, trace, error)) {
+    if (end == p->sections[COMMANDS].count || execute_range(p, s->hal, s->cursor, end, stats, trace, error, 0)) {
         s->failed = 1;
         return end == p->sections[COMMANDS].count ? fail(error, "missing KV checkpoint") : -1;
     }

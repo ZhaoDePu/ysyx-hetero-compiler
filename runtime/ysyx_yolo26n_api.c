@@ -1,7 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include "yolo26n_post.h"
 #include "hal_reference_c6.h"
-#include "ysyx_rt.h"
+#include "c10_session.h"
 #include "z15_regs.h"
 
 #include <errno.h>
@@ -19,6 +19,9 @@ struct ysyx_yolo26n_ctx {
     ysyx_program_t *program;
     ysyx_hal_t hal;
     int software_reference;
+    ysyx_c10_session_t *resident;
+    int metadata_ready, c10_heads_ready;
+    uint8_t quant[256];
     ysyx_yolo_heads_t heads;
     uint8_t *boxes[YSYX_YOLO_LEVELS];
     uint8_t *scores[YSYX_YOLO_LEVELS];
@@ -109,6 +112,8 @@ ysyx_yolo26n_ctx_t *ysyx_yolo26n_open(const char *yhb_path, int use_mock_backend
     failure = open_buffers(ctx);
     if (failure)
         goto fail;
+    for (unsigned v = 0; v < sizeof(ctx->quant); ++v)
+        ctx->quant[v] = (uint8_t)((127u * v + 127u) / 255u);
     if (use_mock_backend) {
 #ifdef YSYX_WITH_VERILATOR
         if (!ysyx_hal_verilator_open(&ctx->hal, &error))
@@ -140,19 +145,23 @@ static float little_float(const uint8_t *b)
     return result;
 }
 
-static int read_heads(ysyx_yolo26n_ctx_t *ctx)
+static int read_tensor(ysyx_yolo26n_ctx_t *ctx, const char *name, void *data, size_t size)
+{
+    if (ctx->resident)
+        return ysyx_c10_session_read(ctx->resident, name, data, size);
+    return ysyx_read_output(ctx->program, &ctx->hal, name, data, size);
+}
+
+static int read_metadata(ysyx_yolo26n_ctx_t *ctx)
 {
     uint8_t scales[6 * 4];
     uint8_t lut[YSYX_YOLO_LEVELS * 256 * 4];
-    if (ysyx_read_output(ctx->program, &ctx->hal, "c6_head_scales", scales, sizeof(scales))
-            || ysyx_read_output(ctx->program, &ctx->hal, "c6_score_lut", lut, sizeof(lut)))
+    if (read_tensor(ctx, "c6_head_scales", scales, sizeof(scales)) ||
+        read_tensor(ctx, "c6_score_lut", lut, sizeof(lut)))
         return -1;
     for (unsigned level = 0; level < YSYX_YOLO_LEVELS; ++level) {
-        const size_t side = 40u >> level;
         const float scale = little_float(scales + 4 * level);
-        if (!isfinite(scale) || scale <= 0.0f
-                || ysyx_read_output(ctx->program, &ctx->hal, box_names[level], ctx->boxes[level], side * side * 4)
-                || ysyx_read_output(ctx->program, &ctx->hal, score_names[level], ctx->scores[level], side * side * 80))
+        if (!isfinite(scale) || scale <= 0.0f)
             return -1;
         ctx->heads.box_scale[level] = scale;
         for (unsigned i = 0; i < 256; ++i) {
@@ -161,6 +170,23 @@ static int read_heads(ysyx_yolo26n_ctx_t *ctx)
                 return -1;
             ctx->heads.probabilities[level][i] = score;
         }
+    }
+    return 0;
+}
+
+static int read_heads(ysyx_yolo26n_ctx_t *ctx)
+{
+    if (!ctx->metadata_ready) {
+        if (read_metadata(ctx))
+            return -1;
+        ctx->metadata_ready = ysyx_c10_session_static_output(ctx->resident, "c6_head_scales") &&
+                              ysyx_c10_session_static_output(ctx->resident, "c6_score_lut");
+    }
+    for (unsigned level = 0; level < YSYX_YOLO_LEVELS; ++level) {
+        const size_t side = 40u >> level;
+        if (read_tensor(ctx, box_names[level], ctx->boxes[level], side * side * 4) ||
+            read_tensor(ctx, score_names[level], ctx->scores[level], side * side * 80))
+            return -1;
     }
     return 0;
 }
@@ -174,42 +200,66 @@ static double elapsed_ms(const struct timespec *start)
            + (double)(end.tv_nsec - start->tv_nsec) * 1e-6;
 }
 
+static int valid_arguments(const ysyx_yolo26n_ctx_t *ctx, const uint8_t *rgb,
+                           float threshold, const ysyx_det_t *out, int max_dets)
+{
+    return ctx && rgb && threshold >= 0.0f && threshold <= 1.0f &&
+           max_dets >= 0 && (!max_dets || out);
+}
+
+static void quantize_rgb(ysyx_yolo26n_ctx_t *ctx, const uint8_t *rgb)
+{
+    uint8_t *input = ctx->input;
+    const uint8_t *quant = ctx->quant;
+    for (size_t i = 0; i < (size_t)320 * 320; ++i) {
+        input[4 * i] = quant[rgb[3 * i]];
+        input[4 * i + 1u] = quant[rgb[3 * i + 1u]];
+        input[4 * i + 2u] = quant[rgb[3 * i + 2u]];
+        input[4 * i + 3u] = 0;
+    }
+}
+
+static void record_perf(ysyx_perf_t *perf, const ysyx_stats_t *stats, int hardware)
+{
+    if (!perf)
+        return;
+    perf->hardware_counters_valid = hardware;
+    perf->npu_ticks = stats->npu_ticks;
+    perf->gpu_ticks = stats->gpu_ticks;
+    perf->wall_ticks = stats->wall_ticks;
+    perf->overlap_ticks = stats->npu_gpu_overlap_ticks;
+    perf->dma_bytes = stats->dma_bytes;
+    perf->dma_operations = stats->dma_operations;
+    perf->abi_error = stats->abi_error;
+    perf->invalid_dma_descriptors = stats->invalid_dma_descriptors;
+    perf->estimated_ms_at_125_mhz = (double)stats->wall_ticks / 125000.0;
+    perf->estimated_ms_at_164_555_mhz = (double)stats->wall_ticks / 164555.0;
+}
+
 int ysyx_yolo26n_infer_rgb320(ysyx_yolo26n_ctx_t *ctx, const uint8_t *rgb320_hwc,
                             float conf_thresh, ysyx_det_t *out_dets, int max_dets,
                             ysyx_perf_t *perf)
 {
-    if (!ctx || !rgb320_hwc || !(conf_thresh >= 0.0f && conf_thresh <= 1.0f)
-            || max_dets < 0 || (max_dets && !out_dets)) {
+    if (!valid_arguments(ctx, rgb320_hwc, conf_thresh, out_dets, max_dets)) {
         errno = EINVAL;
         return -1;
     }
+    if (ctx->resident) {
+        ysyx_c10_session_close(ctx->resident);
+        ctx->resident = NULL;
+        ctx->metadata_ready = 0;
+    }
+    ctx->c10_heads_ready = 0;
     struct timespec begin = {0, 0};
     if (perf) {
         memset(perf, 0, sizeof(*perf));
         (void)clock_gettime(CLOCK_MONOTONIC, &begin);
     }
-    for (size_t i = 0; i < (size_t)320 * 320; ++i) {
-        for (unsigned c = 0; c < 3; ++c)
-            ctx->input[4 * i + c] = (uint8_t)((127u * rgb320_hwc[3 * i + c] + 127u) / 255u);
-        ctx->input[4 * i + 3] = 0;
-    }
+    quantize_rgb(ctx, rgb320_hwc);
     const ysyx_input_t input = {"images", ctx->input, 320u * 320u * 4u};
     ysyx_stats_t stats = {0};
-    const char *error = NULL;
-    const int status = ysyx_execute(ctx->program, &ctx->hal, &input, 1, &stats, NULL, &error);
-    if (perf) {
-        perf->hardware_counters_valid = !ctx->software_reference;
-        perf->npu_ticks = stats.npu_ticks;
-        perf->gpu_ticks = stats.gpu_ticks;
-        perf->wall_ticks = stats.wall_ticks;
-        perf->overlap_ticks = stats.npu_gpu_overlap_ticks;
-        perf->dma_bytes = stats.dma_bytes;
-        perf->dma_operations = stats.dma_operations;
-        perf->abi_error = stats.abi_error;
-        perf->invalid_dma_descriptors = stats.invalid_dma_descriptors;
-        perf->estimated_ms_at_125_mhz = (double)stats.wall_ticks / 125000.0;
-        perf->estimated_ms_at_164_555_mhz = (double)stats.wall_ticks / 164555.0;
-    }
+    const int status = ysyx_execute(ctx->program, &ctx->hal, &input, 1, &stats, NULL, NULL);
+    record_perf(perf, &stats, !ctx->software_reference);
     if (status || read_heads(ctx)) {
         errno = EIO;
         return -1;
@@ -220,10 +270,78 @@ int ysyx_yolo26n_infer_rgb320(ysyx_yolo26n_ctx_t *ctx, const uint8_t *rgb320_hwc
     return count;
 }
 
+int ysyx_c10_yolo_infer_rgb320(ysyx_yolo26n_ctx_t *ctx, const uint8_t *rgb,
+                              float threshold, ysyx_det_t *dets, int max_dets,
+                              ysyx_perf_t *perf, ysyx_c10_timing_t *timing, double npu_mhz)
+{
+    if (timing)
+        *timing = (ysyx_c10_timing_t){0};
+    if (perf)
+        *perf = (ysyx_perf_t){0};
+    if (ctx)
+        ctx->c10_heads_ready = 0;
+    if (!valid_arguments(ctx, rgb, threshold, dets, max_dets)) {
+        errno = EINVAL;
+        return -1;
+    }
+    struct timespec begin = {0, 0}, quant_begin = {0, 0}, post_begin = {0, 0};
+    (void)clock_gettime(CLOCK_MONOTONIC, &begin);
+    if (!ctx->resident && ysyx_c10_session_open(ctx->program, &ctx->hal, &ctx->resident, NULL)) {
+        errno = EBADMSG;
+        return -1;
+    }
+    (void)clock_gettime(CLOCK_MONOTONIC, &quant_begin);
+    quantize_rgb(ctx, rgb);
+    const double quant_ms = elapsed_ms(&quant_begin);
+    const ysyx_input_t input = {"images", ctx->input, 320u * 320u * 4u};
+    ysyx_c10_timing_t stage;
+    const int run = ysyx_c10_session_run(ctx->resident, &input, 1, NULL, &stage, NULL, NULL);
+    stage.hardware_counters_valid &= !ctx->software_reference;
+    stage.t_capture_preproc_ms = quant_ms;
+    if (stage.hardware_counters_valid && isfinite(npu_mhz) && npu_mhz > 0.0)
+        stage.t_pl_hw_ms = (double)stage.stats.wall_ticks / (npu_mhz * 1000.0);
+    record_perf(perf, &stage.stats, stage.hardware_counters_valid);
+    int count = -1;
+    if (!run) {
+        (void)clock_gettime(CLOCK_MONOTONIC, &post_begin);
+        if (!read_heads(ctx)) {
+            count = ysyx_yolo_decode(&ctx->heads, 320, threshold, dets, max_dets);
+            ctx->c10_heads_ready = count >= 0;
+        } else {
+            errno = EIO;
+        }
+        stage.t_d2h_post_ms = elapsed_ms(&post_begin);
+    } else {
+        errno = EIO;
+    }
+    stage.t_e2e_ms = elapsed_ms(&begin);
+    if (perf)
+        perf->io_and_compute_ms = stage.t_e2e_ms;
+    if (timing)
+        *timing = stage;
+    return count;
+}
+
+int ysyx_c10_yolo_read_heads(const ysyx_yolo26n_ctx_t *ctx, void *data, size_t size)
+{
+    if (!ctx || !ctx->c10_heads_ready || !data || size != YSYX_C10_YOLO_HEAD_BYTES)
+        return -1;
+    uint8_t *write = data;
+    for (unsigned level = 0; level < YSYX_YOLO_LEVELS; ++level) {
+        const size_t side = 40u >> level, cells = side * side;
+        memcpy(write, ctx->boxes[level], cells * 4);
+        write += cells * 4;
+        memcpy(write, ctx->scores[level], cells * YSYX_YOLO_CLASSES);
+        write += cells * YSYX_YOLO_CLASSES;
+    }
+    return 0;
+}
+
 void ysyx_yolo26n_close(ysyx_yolo26n_ctx_t *ctx)
 {
     if (!ctx)
         return;
+    ysyx_c10_session_close(ctx->resident);
     if (ctx->hal.close)
         ctx->hal.close(ctx->hal.ctx);
     ysyx_program_close(ctx->program);

@@ -1,19 +1,58 @@
 #include "yolo26n_post.h"
 
 #include <errno.h>
-#include <stdlib.h>
 
 typedef struct {
     float score;
     int index;
 } item_t;
 
-static int ranked(const void *aa, const void *bb)
+/* Keep the worst retained entry at the root, with the original ID breaking ties. */
+static int better(item_t a, item_t b)
 {
-    const item_t *a = aa, *b = bb;
-    if (a->score != b->score)
-        return a->score > b->score ? -1 : 1;
-    return (a->index > b->index) - (a->index < b->index);
+    return a.score > b.score || (a.score == b.score && a.index < b.index);
+}
+
+static void sift_down(item_t *items, int count, item_t value)
+{
+    int at = 0;
+    for (int child = 1; child < count; child = at * 2 + 1) {
+        if (child + 1 < count && better(items[child], items[child + 1]))
+            ++child;
+        if (!better(value, items[child]))
+            break;
+        items[at] = items[child];
+        at = child;
+    }
+    items[at] = value;
+}
+
+static void retain(item_t *items, int *count, int capacity, item_t value)
+{
+    if (*count == capacity) {
+        if (better(value, items[0]))
+            sift_down(items, *count, value);
+        return;
+    }
+    int at = (*count)++;
+    while (at > 0) {
+        const int parent = (at - 1) / 2;
+        if (!better(items[parent], value))
+            break;
+        items[at] = items[parent];
+        at = parent;
+    }
+    items[at] = value;
+}
+
+static void sort_retained(item_t *items, int count)
+{
+    while (count > 1) {
+        const item_t worst = items[0];
+        --count;
+        sift_down(items, count, items[count]);
+        items[count] = worst;
+    }
 }
 
 static int shape(int size, int *cells, int *side)
@@ -50,14 +89,10 @@ int ysyx_yolo_decode(const ysyx_yolo_heads_t *heads, int size, float threshold,
     if (!max_dets)
         return 0;
     const int k = total < YSYX_YOLO26N_MAX_DETECTIONS ? total : YSYX_YOLO26N_MAX_DETECTIONS;
-    item_t *anchors = malloc((size_t)total * sizeof(*anchors));
-    item_t *pairs = malloc((size_t)k * YSYX_YOLO_CLASSES * sizeof(*pairs));
-    if (!anchors || !pairs) {
-        free(anchors);
-        free(pairs);
-        errno = ENOMEM;
-        return -1;
-    }
+    const int limit = k < max_dets ? k : max_dets;
+    item_t anchors[YSYX_YOLO26N_MAX_DETECTIONS];
+    item_t pairs[YSYX_YOLO26N_MAX_DETECTIONS];
+    int anchors_used = 0, pairs_used = 0;
     int at = 0;
     for (int level = 0; level < YSYX_YOLO_LEVELS; ++level) {
         for (int cell = 0; cell < cells[level]; ++cell) {
@@ -67,24 +102,26 @@ int ysyx_yolo_decode(const ysyx_yolo_heads_t *heads, int size, float threshold,
             for (int cls = 0; cls < YSYX_YOLO_CLASSES; ++cls)
                 if (table[scores[cls]] > best)
                     best = table[scores[cls]];
-            anchors[at] = (item_t){best, at};
+            retain(anchors, &anchors_used, k, (item_t){best, at});
             ++at;
         }
     }
-    qsort(anchors, (size_t)total, sizeof(*anchors), ranked);
-    at = 0;
-    for (int order = 0; order < k; ++order) {
+    sort_retained(anchors, anchors_used);
+    for (int order = 0; order < anchors_used; ++order) {
         int cell = anchors[order].index;
         const int level = level_of(&cell, cells);
         const uint8_t *scores = heads->scores[level] + cell * YSYX_YOLO_CLASSES;
+        const float *table = heads->probabilities[level];
         for (int cls = 0; cls < YSYX_YOLO_CLASSES; ++cls) {
-            pairs[at] = (item_t){heads->probabilities[level][scores[cls]], at};
-            ++at;
+            const float score = table[scores[cls]];
+            if (score >= threshold)
+                retain(pairs, &pairs_used, limit,
+                       (item_t){score, order * YSYX_YOLO_CLASSES + cls});
         }
     }
-    qsort(pairs, (size_t)at, sizeof(*pairs), ranked);
+    sort_retained(pairs, pairs_used);
     int count = 0;
-    while (count < k && count < max_dets && pairs[count].score >= threshold) {
+    while (count < pairs_used) {
         const item_t pair = pairs[count];
         int cell = anchors[pair.index / YSYX_YOLO_CLASSES].index;
         const int level = level_of(&cell, cells);
@@ -99,7 +136,5 @@ int ysyx_yolo_decode(const ysyx_yolo_heads_t *heads, int size, float threshold,
             pair.score, pair.index % YSYX_YOLO_CLASSES
         };
     }
-    free(pairs);
-    free(anchors);
     return count;
 }

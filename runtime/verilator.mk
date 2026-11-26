@@ -26,3 +26,13 @@ $(OUT)/yolo26n_post.o: CFLAGS += -ffp-contract=off
 $(OUT)/ysyx_yolo26n_cli: $(addprefix $(OUT)/,ysyx_yolo26n_cli.o ysyx_yolo26n_api.o yolo26n_post.o ysyx_rt.o hal_linux_uio.o hal_verilator_z15.o) $(RTL_OBJECTS)
 	$(CXX) -pthread $^ -o "$@.tmp"
 	mv -f -- "$@.tmp" "$@"
+
+$(OUT)/c10_resident_rtl.o: tests/c10_resident_rtl.c c10_session_core.h ysyx_rt.h
+	$(CC) $(CFLAGS) -I. -DYSYX_WITH_VERILATOR -c "$<" -o "$@"
+
+$(OUT)/c10_resident_rtl: $(addprefix $(OUT)/,c10_resident_rtl.o ysyx_rt.o hal_verilator_z15.o) $(RTL_OBJECTS)
+	$(CXX) -pthread $^ -o "$@.tmp"
+	mv -f -- "$@.tmp" "$@"
+
+$(OUT)/ysyx_rt.o: c10_session_core.h
+$(OUT)/ysyx_yolo26n_api.o: c10_session.h c10_session_core.h

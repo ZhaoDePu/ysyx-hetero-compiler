@@ -38,3 +38,13 @@ $(OUT)/libysyx_yolo26n.a: $(addprefix $(OUT)/,ysyx_yolo26n_api.o yolo26n_post.o 
 
 $(OUT)/ysyx_yolo26n_cli: $(OUT)/ysyx_yolo26n_cli.o $(OUT)/libysyx_yolo26n.a
 	$(CC) $(LDFLAGS) $^ $(LDLIBS) -o "$@"
+
+$(OUT)/ysyx_rt.o: c10_session_core.h
+$(OUT)/ysyx_yolo26n_api.o: c10_session.h c10_session_core.h
+
+.PHONY: c10-session-check
+c10-session-check: $(OUT)/test-c10-session
+	"$<" ../deploy/z15_board_kit/cases/00-mixed/program.yhb
+
+$(OUT)/test-c10-session: tests/c10_session.c $(OUT)/libysyx_rt.a
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(WARNFLAGS) -I. $(LDFLAGS) $^ $(LDLIBS) -o "$@"

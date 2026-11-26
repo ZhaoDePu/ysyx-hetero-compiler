@@ -12,7 +12,7 @@ from hetero_compiler.yhb import inspect_yhb
 
 
 FORMATS = {"int8": "b", "uint8": "B", "int16": "h", "uint16": "H", "int32": "i", "int64": "q"}
-SOURCES = ("hal_linux_uio.c", "ysyx_rt.c", "ysyx_rt.h", "ysyx_run.c", "z15_regs.h")
+SOURCES = ("hal_linux_uio.c", "ysyx_rt.c", "ysyx_rt.h", "ysyx_run.c", "z15_regs.h", "c10_session_core.h")
 
 
 def export(kit, specs):

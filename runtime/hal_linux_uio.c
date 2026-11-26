@@ -19,6 +19,7 @@ typedef struct {
     int control_fd, dma_fd;
     void *control, *ddr;
     size_t page;
+    int noncached_ddr;
 } linux_hal_t;
 
 static void ordered(void)
@@ -73,7 +74,20 @@ static int ddr_write(void *ctx, uint32_t offset, const void *input, size_t lengt
     if (!allowed_ddr(offset, length))
         return -1;
     volatile uint8_t *ddr = hal->ddr;
-    for (size_t i = 0; i < length; ++i)
+    size_t i = 0;
+    while (i < length && ((offset + i) & 3u)) {
+        ddr[offset + i] = data[i];
+        ++i;
+    }
+    /* Device mappings require aligned accesses. Keep the volatile writes
+       scalar and use memcpy only on the ordinary process buffer. */
+    while (length - i >= sizeof(uint32_t)) {
+        uint32_t word;
+        memcpy(&word, data + i, sizeof(word));
+        *(volatile uint32_t *)(ddr + offset + i) = word;
+        i += sizeof(word);
+    }
+    for (; i < length; ++i)
         ddr[offset + i] = data[i];
     ordered();
     return 0;
@@ -87,7 +101,17 @@ static int ddr_read(void *ctx, uint32_t offset, void *output, size_t length)
         return -1;
     volatile const uint8_t *ddr = hal->ddr;
     ordered();
-    for (size_t i = 0; i < length; ++i)
+    size_t i = 0;
+    while (i < length && ((offset + i) & 3u)) {
+        data[i] = ddr[offset + i];
+        ++i;
+    }
+    while (length - i >= sizeof(uint32_t)) {
+        const uint32_t word = *(volatile const uint32_t *)(ddr + offset + i);
+        memcpy(data + i, &word, sizeof(word));
+        i += sizeof(word);
+    }
+    for (; i < length; ++i)
         data[i] = ddr[offset + i];
     return 0;
 }
@@ -99,6 +123,10 @@ static int cache_sync(void *ctx, uint32_t offset, size_t length, int for_host)
         return -1;
     if (!length)
         return 0;
+    if (hal->noncached_ddr) {
+        ordered();
+        return 0;
+    }
     const size_t start = offset - offset % hal->page;
     const size_t extent = offset - start + length;
     const int flags = MS_SYNC | (for_host ? MS_INVALIDATE : 0);
@@ -182,6 +210,22 @@ static int valid_mapping(const char *uio, uint32_t base, uint32_t length)
            !sysfs_number(uio, "maps/map0/offset", &offset) && offset == 0;
 }
 
+static int physical_generic_uio(const char *device)
+{
+    char path[MAX_PATH], link[MAX_PATH];
+    const int n = snprintf(path, sizeof(path), "/sys/class/uio/%s/device/driver", device + 5);
+    if (n < 0 || (size_t)n >= sizeof(path))
+        return 0;
+    const ssize_t length = readlink(path, link, sizeof(link) - 1u);
+    if (length < 1 || (size_t)length >= sizeof(link) - 1u)
+        return 0;
+    link[length] = 0;
+    const char *name = strrchr(link, '/');
+    /* uio_pdrv_genirq uses UIO_MEM_PHYS for a platform IORESOURCE_MEM
+       map, which the UIO core maps with pgprot_noncached. */
+    return !strcmp(name ? name + 1 : link, "uio_pdrv_genirq");
+}
+
 static int device_path(char output[MAX_PATH], const char *specified, int dma)
 {
     const uint32_t base = dma ? Z15_POOL_BASE : Z15_REG_BASE;
@@ -236,7 +280,7 @@ int ysyx_hal_linux_open(ysyx_hal_t *out, const char *control_uio, const char *dm
         reason = "out of memory opening UIO";
         goto failed;
     }
-    *hal = (linux_hal_t){-1, -1, MAP_FAILED, MAP_FAILED, (size_t)page};
+    *hal = (linux_hal_t){-1, -1, MAP_FAILED, MAP_FAILED, (size_t)page, physical_generic_uio(dma)};
     hal->control_fd = open(control, O_RDWR | O_SYNC | O_CLOEXEC);
     if (hal->control_fd < 0 || flock(hal->control_fd, LOCK_EX | LOCK_NB)) {
         reason = "cannot open or exclusively lock Z15 control UIO";
