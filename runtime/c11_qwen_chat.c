@@ -304,7 +304,7 @@ static int verify_token(session *chat, const options *o)
     const int valid = got && diff < 0 && fgetc(f) == EOF && !ferror(f);
     fclose(f);
     if (!valid) {
-        fprintf(stderr, "Golden verification failed (first mismatching logit %" PRId32 ").\\n", diff);
+        fprintf(stderr, "Golden verification failed (first mismatching logit %" PRId32 ").\n", diff);
         return 1;
     }
     if (chat->device) {
@@ -312,10 +312,10 @@ static int verify_token(session *chat, const options *o)
         if (c11b_z15_stats(chat->device, &s))
             return 1;
         printf("z15 wall=%" PRIu64 " ddr_peak=%" PRIu64 " ERROR=%" PRIu32
-               " invalid_dma=%" PRIu32 "\\n", s.wall_ticks,
+               " invalid_dma=%" PRIu32 "\n", s.wall_ticks,
                c11b_z15_peak_bytes(chat->device), s.abi_error, s.invalid_dma_descriptors);
     }
-    printf("C11B_VERIFY_PASS token=%u logits_bytes=%zu backend=%s\\n",
+    printf("C11B_VERIFY_PASS token=%u logits_bytes=%zu backend=%s\n",
            o->token, QWEN_VOCAB * sizeof(*got), o->backend);
     return 0;
 }
@@ -329,23 +329,23 @@ static int native_start(session *chat, const options *o)
     FILE *state = fopen("/sys/class/fpga_manager/fpga0/state", "r");
     char line[32];
     const int operating = state && fgets(line, sizeof(line), state) &&
-                          (!strcmp(line, "operating\\n") || !strcmp(line, "operating"));
+                          (!strcmp(line, "operating\n") || !strcmp(line, "operating"));
     if (state)
         fclose(state);
     if (!operating) {
-        fputs("Z15 FPGA Manager must be operating before UIO open.\\n", stderr);
+        fputs("Z15 FPGA Manager must be operating before UIO open.\n", stderr);
         return -1;
     }
     const char *why = NULL;
     if (ysyx_hal_linux_open(&chat->hal, NULL, NULL, &why)) {
-        fprintf(stderr, "%s\\n", why ? why : "could not open Z15 UIO");
+        fprintf(stderr, "%s\n", why ? why : "could not open Z15 UIO");
         return -1;
     }
     size_t bytes;
     const uint8_t *data = qwen_reference_image(chat->model, &bytes);
     chat->device = c11b_z15_open(&chat->hal, data, bytes, &why);
     if (!chat->device) {
-        fprintf(stderr, "%s\\n", why ? why : "could not open the Z15 Qwen runtime");
+        fprintf(stderr, "%s\n", why ? why : "could not open the Z15 Qwen runtime");
         return -1;
     }
     return qwen_reference_native(chat->model, c11b_z15_ops(chat->device));
@@ -357,7 +357,7 @@ int main(int argc, char **argv)
     static const char help[] =
 #ifdef YSYX_C11B_NATIVE
          "z15_qwen25_chat --weights FILE --tokenizer FILE [--backend cpu|z15] "
-        "[--mode verify --token-id ID --golden FILE]\\n"
+        "[--mode verify --token-id ID --golden FILE]\n"
         "Chat and bench options: "
 #else
         "ysyx_qwen_chat --weights FILE --tokenizer FILE [--backend sim] "

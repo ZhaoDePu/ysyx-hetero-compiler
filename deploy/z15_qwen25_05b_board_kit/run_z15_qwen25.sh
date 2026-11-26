@@ -21,7 +21,7 @@ case "$backend" in
     *) echo 'Expected --backend cpu|z15.' >&2; exit 2 ;;
 esac
 
-case "@{1:---verify}" in
+case "${1:---verify}" in
     --verify)
         [ "$#" -le 1 ] || exit 2
         (cd "$kit" && sha256sum -c SHA256SUMS.txt)
