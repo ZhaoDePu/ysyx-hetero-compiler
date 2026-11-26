@@ -239,3 +239,27 @@ exact vector fusion with these flags.
 The [deployment guide](deploy/z15_yolo26n_320_kit/README-C8.md) shows the
 clock-selectable CLI. See the [frozen RTL results](reports/c8/m3-yolo26n-rtl.md)
 for the tested clock ratios, exact gates, and the remaining performance gap.
+
+## Phase C9 ICCD benchmark artifacts
+
+The classifier exporter scripts produce a standard Q/DQ ONNX and a
+frozen fixed-point fixture. The C9 runner accepts the fixed-point fixture
+along with the frozen Step 2 Verilator runtime. A3 below uses the same
+licensed model topology and input as the corresponding A0–A2 cases.
+
+    nice -n 10 ionice -c2 -n7 python3 -B -m tools.c9_classifier \
+      --model MODEL_FIXTURE --out CASE_DIR --level A3 \
+      --executor STEP2_125_100_YSYX_RUN --npu-mhz 125 --gpu-mhz 100
+
+Use tools.c9_a0 to measure and combine full GPU-only representative
+operators when the complete A0 frame exceeds the simulator budget. The
+[benchmark method](reports/c9/m2-benchmark-method.md) defines the four
+levels and the [ledger contract](reports/c9/m3-ledger-method.md) defines
+the counter and clock scopes.
+
+    nice -n 10 ionice -c2 -n7 python3 -B -m tools.c9_figures \
+      iccd_master_metrics.json PAPER_DIR
+
+The figures and IEEE booktabs tables use the master ledger as input.
+The matplotlib environment and model and measurement provenance are
+recorded with the C9 delivery.
