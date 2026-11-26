@@ -1,0 +1,4 @@
+prompt,prefill_mean_cosine,prefill_min_cosine,prefill_last_cosine,prefill_top1_matches,prefill_top1_total,prefill_last_top1_equal,decode_top1_matches_free_run,decode_top1_total_free_run,fp32_generated,w4a8_generated
+fpga_zh,0.8328992859764323,0.39163059584928983,0.9017577348021909,28,51,True,4,48,48,48
+array_en,0.8237062856120757,0.39163059584928983,0.8097532412304093,34,55,True,6,48,48,48
+fib_zh,0.8374335867482334,0.39163059584928983,0.8824121975809583,37,57,False,10,48,48,48
