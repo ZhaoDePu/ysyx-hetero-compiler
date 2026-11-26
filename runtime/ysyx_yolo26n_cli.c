@@ -2,6 +2,7 @@
 
 #include <ctype.h>
 #include <errno.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -56,7 +57,7 @@ done:
     return status;
 }
 
-static void print_result(const ysyx_det_t *d, int count, const ysyx_perf_t *p)
+static void print_result(const ysyx_det_t *d, int count, const ysyx_perf_t *p, double npu_mhz)
 {
     printf("{\"detections\":[");
     for (int i = 0; i < count; ++i) {
@@ -68,13 +69,32 @@ static void print_result(const ysyx_det_t *d, int count, const ysyx_perf_t *p)
            "\"overlap_ticks\":%llu,\"dma_bytes\":%llu,\"dma_operations\":%u,"
            "\"abi_error\":%u,\"invalid_dma_descriptors\":%u,"
            "\"hardware_counters_valid\":%s,\"io_and_compute_ms\":%.9g,"
-           "\"estimated_ms_at_125_mhz\":%.9g,\"estimated_ms_at_164_555_mhz\":%.9g}}\n",
+           "\"estimated_ms_at_125_mhz\":%.9g,\"estimated_ms_at_164_555_mhz\":%.9g",
            (unsigned long long)p->wall_ticks, (unsigned long long)p->npu_ticks,
            (unsigned long long)p->gpu_ticks, (unsigned long long)p->overlap_ticks,
            (unsigned long long)p->dma_bytes, p->dma_operations, p->abi_error,
            p->invalid_dma_descriptors, p->hardware_counters_valid ? "true" : "false",
            p->io_and_compute_ms, p->estimated_ms_at_125_mhz,
            p->estimated_ms_at_164_555_mhz);
+    if (npu_mhz > 0.0) {
+        const double ms = (double)p->wall_ticks / 1000.0 / npu_mhz;
+        printf(",\"npu_mhz\":%.15g,\"estimated_ms_at_npu_mhz\":", npu_mhz);
+        if (p->hardware_counters_valid && isfinite(ms))
+            printf("%.9g", ms);
+        else
+            fputs("null", stdout);
+        fputs(",\"estimated_fps_at_125_mhz\":", stdout);
+        if (p->hardware_counters_valid && p->wall_ticks)
+            printf("%.9g", 125000000.0 / (double)p->wall_ticks);
+        else
+            fputs("null", stdout);
+        fputs(",\"estimated_fps_at_npu_mhz\":", stdout);
+        if (p->hardware_counters_valid && p->wall_ticks && isfinite(1000.0 / ms))
+            printf("%.9g", 1000.0 / ms);
+        else
+            fputs("null", stdout);
+    }
+    fputs("}}\n", stdout);
 }
 
 int main(int argc, char **argv)
@@ -82,6 +102,7 @@ int main(int argc, char **argv)
     const char *path = NULL;
     int sim = 0, ppm = 0;
     float threshold = 0.25f;
+    double npu_mhz = 0.0;
     for (int i = 2; i < argc; ++i) {
         if (!strcmp(argv[i], "--sim")) {
             sim = 1;
@@ -93,6 +114,13 @@ int main(int argc, char **argv)
             const char *number = argv[++i];
             threshold = strtof(number, &end);
             if (end == number || *end || !(threshold >= 0.0f && threshold <= 1.0f))
+                goto usage;
+        } else if (!strcmp(argv[i], "--npu-mhz") && i + 1 < argc && npu_mhz == 0.0) {
+            char *end;
+            const char *number = argv[++i];
+            errno = 0;
+            npu_mhz = strtod(number, &end);
+            if (end == number || *end || errno == ERANGE || !isfinite(npu_mhz) || npu_mhz <= 0.0)
                 goto usage;
         } else {
             goto usage;
@@ -119,13 +147,13 @@ int main(int argc, char **argv)
     if (count < 0)
         perror("execute YOLO26n");
     else
-        print_result(detections, count, &perf);
+        print_result(detections, count, &perf, npu_mhz);
     ysyx_yolo26n_close(ctx);
     free(rgb);
     return count < 0 ? 1 : 0;
 
 usage:
-    fprintf(stderr, "usage: %s MODEL.yhb (--rgb RGB320 | --ppm FRAME.ppm) [--conf FLOAT] [--sim]\n",
+    fprintf(stderr, "usage: %s MODEL.yhb (--rgb RGB320 | --ppm FRAME.ppm) [--conf FLOAT] [--npu-mhz MHz] [--sim]\n",
             argv[0]);
     return 2;
 }
