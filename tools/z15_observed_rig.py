@@ -64,7 +64,7 @@ if __name__ == "__main__":
     cli = argparse.ArgumentParser(description=__doc__)
     cli.add_argument("src", type=Path)
     cli.add_argument("dst", type=Path)
-    cli.add_argument("--gpu-clock-ratio", choices=("2:3", "4:5"), default="2:3")
+    cli.add_argument("--gpu-clock-ratio", choices=("2:3", "4:5", "24840:32911", "3:4", "161:221"), default="2:3")
     args = cli.parse_args()
     step, divisor = map(int, args.gpu_clock_ratio.split(":"))
     args.dst.write_text(observe(args.src.read_text(encoding="utf-8"), step, divisor), encoding="utf-8")

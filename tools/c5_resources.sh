@@ -9,12 +9,12 @@ compiler_build_slots() {
     available=$(awk '/^MemAvailable:/ { print $2; exit }' /proc/meminfo)
     if [[ ! "$available" =~ ^[0-9]+$ ]] || (( available < 15*1024*1024 )); then
         compiler_jobs=2
-    elif [[ "$root" == /dev/shm/ysyx_compiler_c6 ]]; then
+    elif [[ "$root" == /dev/shm/ysyx_compiler_c[67] ]]; then
         compiler_jobs=8
     else
         compiler_jobs=4
     fi
-    if [[ "$root" == /dev/shm/ysyx_compiler_c6 ]]; then
+    if [[ "$root" == /dev/shm/ysyx_compiler_c[67] ]]; then
         ulimit -v 3145728
     fi
     export MAKEFLAGS="-j$compiler_jobs"

@@ -7,7 +7,10 @@ root="$compiler_scratch"
 case "${YSYX_Z15_SIM_GPU_RATIO:-2:3}" in
   2:3) ratio=2:3; out="$root/runtime/verilator" ;;
   4:5) ratio=4:5; out="$root/runtime/verilator-125-100" ;;
-  *) echo "supported GPU/NPU clock ratios are 2:3 and 4:5" >&2; exit 2 ;;
+  24840:32911) ratio=24840:32911; out="$root/runtime/verilator-164555-124200" ;;
+  3:4) ratio=3:4; out="$root/runtime/verilator-200-150" ;;
+  161:221) ratio=161:221; out="$root/runtime/verilator-221-161" ;;
+  *) echo "unsupported GPU/NPU clock ratio" >&2; exit 2 ;;
 esac
 build="$root/npu/z15-build"
 src="$root/npu/z15-src"
