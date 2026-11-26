@@ -36,3 +36,10 @@ $(OUT)/c10_resident_rtl: $(addprefix $(OUT)/,c10_resident_rtl.o ysyx_rt.o hal_ve
 
 $(OUT)/ysyx_rt.o: c10_session_core.h
 $(OUT)/ysyx_yolo26n_api.o: c10_session.h c10_session_core.h
+
+$(OUT)/c10_benchmark.o: c10_session.h c10_session_core.h hal_reference_c6.h
+$(OUT)/hal_reference_c6.o: hal_reference_c6.h
+
+$(OUT)/z15_c10_benchmark: $(addprefix $(OUT)/,c10_benchmark.o ysyx_rt.o hal_linux_uio.o hal_reference_c6.o hal_verilator_z15.o) $(RTL_OBJECTS)
+	$(CXX) -pthread $^ -lm -o "$@.tmp"
+	mv -f -- "$@.tmp" "$@"

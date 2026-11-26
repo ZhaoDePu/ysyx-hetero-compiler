@@ -59,3 +59,10 @@ $(OUT)/c10_jpeg.o: c10_jpeg.h c10_jpeg_tables.h
 
 $(OUT)/z15_yolo_live_c10: $(addprefix $(OUT)/,c10_service.o c10_pixels.o c10_v4l2.o c10_jpeg.o libysyx_yolo26n.a)
 	$(CC) $(LDFLAGS) $^ $(LDLIBS) -lm -o "$@"
+
+c10: $(OUT)/z15_c10_benchmark
+
+$(OUT)/c10_benchmark.o: c10_session.h c10_session_core.h hal_reference_c6.h
+
+$(OUT)/z15_c10_benchmark: $(addprefix $(OUT)/,c10_benchmark.o ysyx_rt.o hal_linux_uio.o hal_reference_c6.o)
+	$(CC) $(LDFLAGS) $^ $(LDLIBS) -lm -o "$@"
