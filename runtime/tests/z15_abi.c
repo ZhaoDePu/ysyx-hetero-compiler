@@ -8,7 +8,7 @@ typedef struct {
     uint32_t version, status, error;
     uint32_t counter_reg, phase, ticks, rollovers;
     int seen_status, seen_slot, dma_sync, due_error, inject;
-    unsigned initial_writes, starts, statuses;
+    unsigned initial_writes, starts, statuses, gpu_writes, gpu_starts;
 } model_t;
 
 static int read_reg(void *opaque, uint32_t reg, uint32_t *value)
@@ -60,11 +60,15 @@ static int write_reg(void *opaque, uint32_t reg, uint32_t value)
     if ((reg == Z15_NPU_DIMS || (reg >= Z15_PROGRAM && reg < Z15_PROGRAM + Z15_PROGRAM_BYTES)) &&
         !m->seen_status)
         return -1;
+    if (reg >= Z15_PROGRAM && reg < Z15_PROGRAM + Z15_PROGRAM_BYTES)
+        ++m->gpu_writes;
     if (reg == Z15_CTRL) {
         if ((value & ~Z15_ACTIONS) || !value || (value & (value - 1u)))
             return -1;
         if (value == Z15_START_GPU && !m->seen_slot)
             return -1;
+        if (value == Z15_START_GPU)
+            ++m->gpu_starts;
         m->seen_status = m->seen_slot = m->dma_sync = 0;
         m->due_error = 1;
         ++m->starts;
@@ -139,21 +143,57 @@ static int check(ysyx_program_t *p, const ysyx_input_t *input)
     return 0;
 }
 
+static void *open_fixture(const char *path, ysyx_program_t **p)
+{
+    FILE *f = fopen(path, "rb");
+    if (!f)
+        return NULL;
+    long length = fseek(f, 0, SEEK_END) ? -1 : ftell(f);
+    void *bytes = length > 0 && !fseek(f, 0, SEEK_SET) ? malloc((size_t)length) : NULL;
+    int read_ok = bytes && fread(bytes, 1, (size_t)length, f) == (size_t)length;
+    if (fclose(f) || !read_ok || ysyx_program_open(bytes, (size_t)length, p, NULL)) {
+        free(bytes);
+        return NULL;
+    }
+    return bytes;
+}
+
+static int check_gpu_upload(const char *path, unsigned expected_writes)
+{
+    ysyx_program_t *p = NULL;
+    void *bytes = open_fixture(path, &p);
+    if (!bytes)
+        return 1;
+    model_t m = {.version = Z15_VERSION_VALUE, .status = Z15_LOCKED};
+    const ysyx_hal_t h = {&m, read_reg, write_reg, put_ddr, get_ddr, synchronize, NULL, NULL};
+    char names[24][16];
+    const uint8_t tokens[192] = {0};
+    ysyx_input_t inputs[24];
+    for (unsigned i = 0; i < 24; ++i) {
+        snprintf(names[i], sizeof(names[i]), "c%02u_tokens", i);
+        inputs[i] = (ysyx_input_t){names[i], tokens, sizeof(tokens)};
+    }
+    ysyx_stats_t stats;
+    const char *error = NULL;
+    int rc = ysyx_execute(p, &h, inputs, 24, &stats, NULL, &error);
+    ysyx_program_close(p);
+    free(bytes);
+    if (rc || m.gpu_writes != expected_writes || m.gpu_starts != 384) {
+        fprintf(stderr, "GPU image upload test failed: %u writes, %u launches (%s)\n",
+                m.gpu_writes, m.gpu_starts, error ? error : "bad upload count");
+        return 1;
+    }
+    printf("GPU_IMAGE_UPLOAD_PASS writes=%u launches=%u\n", m.gpu_writes, m.gpu_starts);
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
-    if (argc != 2)
+    if (argc != 2 && argc != 4)
         return 1;
-    FILE *f = fopen(argv[1], "rb");
-    if (!f || fseek(f, 0, SEEK_END))
-        return 1;
-    long length = ftell(f);
-    if (length < 1 || fseek(f, 0, SEEK_SET))
-        return 1;
-    void *bytes = malloc((size_t)length);
-    const char *error = NULL;
     ysyx_program_t *p = NULL;
-    if (!bytes || fread(bytes, 1, (size_t)length, f) != (size_t)length ||
-        fclose(f) || ysyx_program_open(bytes, (size_t)length, &p, &error))
+    void *bytes = open_fixture(argv[1], &p);
+    if (!bytes)
         return 1;
     ysyx_symbol_t symbol;
     const uint8_t data[32] = {0};
@@ -163,5 +203,7 @@ int main(int argc, char **argv)
     int rc = check(p, &input);
     ysyx_program_close(p);
     free(bytes);
-    return rc;
+    if (rc || argc == 2)
+        return rc;
+    return check_gpu_upload(argv[2], (unsigned)strtoul(argv[3], NULL, 10));
 }

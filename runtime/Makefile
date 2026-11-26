@@ -26,7 +26,8 @@ $(OUT)/test-z15-abi: tests/z15_abi.c $(OUT)/libysyx_rt.a
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(WARNFLAGS) -I. $(LDFLAGS) $^ $(LDLIBS) -o "$@"
 
 check: $(OUT)/test-z15-abi
-	"$<" ../deploy/z15_board_kit/cases/00-mixed/program.yhb
+	env -u YSYX_C8_GPU_UPLOAD "$<" ../deploy/z15_board_kit/cases/00-mixed/program.yhb ../deploy/z15_board_kit/cases/51-vpu-attention/program.yhb 1752
+	YSYX_C8_GPU_UPLOAD=always "$<" ../deploy/z15_board_kit/cases/00-mixed/program.yhb ../deploy/z15_board_kit/cases/51-vpu-attention/program.yhb 3504
 
 $(OUT)/yolo26n_post.o $(OUT)/ysyx_yolo26n_api.o $(OUT)/ysyx_yolo26n_cli.o: yolo26n_post.h ../include/ysyx_yolo26n_api.h
 $(OUT)/hal_reference_c6.o $(OUT)/ysyx_yolo26n_api.o: hal_reference_c6.h

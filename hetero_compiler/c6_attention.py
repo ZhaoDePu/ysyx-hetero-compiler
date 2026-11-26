@@ -16,13 +16,15 @@ def _transpose(name, source, destination, rows, cols):
 
 
 def lower_matmul(name, left, right, output, left_shape, right_shape, mul, shift, *,
-                 unsigned_rhs=False, raw_output=False):
+                 unsigned_rhs=False, raw_output=False, rhs_pretransposed=False):
     """Map one batch of dense row-major byte matrices with one output scale."""
     m, k = left_shape[-2:]
-    rk, n = right_shape[-2:]
+    rk, n = right_shape[-2:][::-1] if rhs_pretransposed else right_shape[-2:]
     if (list(left_shape[:-2]) != list(right_shape[:-2]) or k != rk or
             any(not 4 <= dim <= 511 or dim % 4 for dim in (m, n, k))):
         raise ValueError(f"{name}: unsupported native attention matrix shapes")
+    if rhs_pretransposed and not unsigned_rhs:
+        raise ValueError(f"{name}: only unsigned PV accepts pre-transposed B")
     if raw_output and unsigned_rhs:
         raise ValueError(f"{name}: raw QK output requires signed operands")
     batch = prod(left_shape[:-2])
@@ -33,7 +35,7 @@ def lower_matmul(name, left, right, output, left_shape, right_shape, mul, shift,
     b = scratch.reserve(batch * k * n)
     output_width = 4 if raw_output else 1
     c = scratch.reserve(batch * m * n * output_width)
-    operand = scratch.reserve(k * n)
+    operand = scratch.reserve(k * n) if not rhs_pretransposed else None
     if unsigned_rhs:
         result_transposed = scratch.reserve(n * m)
     # NPU consumes unsigned bytes only on A. For V * P^T evaluate P * V^T
@@ -49,8 +51,10 @@ def lower_matmul(name, left, right, output, left_shape, right_shape, mul, shift,
         sb = b.offset + head * k * n
         sc = c.offset + head * m * n * output_width
         if unsigned_rhs:
-            stages.append(_transpose(f"{label}.prob-transpose", sb, operand.offset, k, n))
-            sa, sb, sc = operand.offset, sa, result_transposed.offset
+            if operand is not None:
+                stages.append(_transpose(f"{label}.prob-transpose", sb, operand.offset, k, n))
+                sb = operand.offset
+            sa, sb, sc = sb, sa, result_transposed.offset
         else:
             stages.append(_transpose(f"{label}.pack", sb, operand.offset, k, n))
             sb = operand.offset

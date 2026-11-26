@@ -1,6 +1,6 @@
 """Exact reduction-channel tiling for INT8 Conv with native K above 511."""
 
-from .c6_gpu import PAGE_BYTES, build_gpu_stage, emit_requant
+from .c6_gpu import DATA_WINDOW_BYTES, PAGE_BYTES, build_gpu_stage, emit_requant
 from .c6_memory import ALIGNMENT, HALF_BYTES, Scratch, align_dma
 from .c6_tensor import NativeStage, Tile, Transfer, _halo
 from .npu import Z15_CTRL, Z15_NPU_START, Z15_VPU_START
@@ -20,7 +20,7 @@ def _split(stage_id, a, c, d, h, w, keep, rest):
         (0xC0, 0), (Z15_CTRL, Z15_VPU_START)))
 
 
-def _raw_tile(spec, group_widths, group_weights, group_outputs, input_ddr, bias_ddr, first, rows, index):
+def _raw_tile(spec, group_widths, group_weights, group_outputs, input_ddr, bias_ddr, first, rows, index, finish):
     zone = index % 2
     start, height, local_first = _halo(spec, first, rows)
     m = rows * spec.output_hw[1]
@@ -38,10 +38,17 @@ def _raw_tile(spec, group_widths, group_weights, group_outputs, input_ddr, bias_
         loads.append(Transfer("load", bias_ddr, bias.offset, bias.capacity))
         loads.extend(Transfer("load", ddr_at, buf.offset, buf.capacity)
                      for ddr_at, buf in zip(group_weights, weights))
+    if finish is not None:
+        padding = -scratch.used % PAGE_BYTES
+        if padding:
+            scratch.reserve(padding)
+        partials = [scratch.reserve(4 * m * n) for _ in group_widths]
+        if sum(part.capacity for part in partials) > DATA_WINDOW_BYTES:
+            raise ValueError(f"{spec.name}: partial words exceed the G3 data window")
     a = source.offset + prefix
     remaining = spec.padded_channels
     stages, stores = [], []
-    for group, (channels, b, out_ddr) in enumerate(zip(group_widths, weights, group_outputs)):
+    for group, (channels, b) in enumerate(zip(group_widths, weights)):
         group_name = f"{spec.name}/rows_{first}_{first + rows}/k{group}"
         if channels < remaining:
             rest = remaining - channels
@@ -54,7 +61,7 @@ def _raw_tile(spec, group_widths, group_weights, group_outputs, input_ddr, bias_
             remaining = rest
         else:
             operand = a
-        c = scratch.reserve(4 * m * n)
+        c = scratch.reserve(4 * m * n) if finish is None else partials[group]
         k = channels * spec.kernel ** 2
         flags = (int(group == 0) << 1 | 1 << 9 | int(spec.kernel == 3) << 10 |
                  int(spec.stride == 2) << 11 | int(spec.pad == 1) << 12 | 1 << 13 | 1 << 14)
@@ -63,30 +70,39 @@ def _raw_tile(spec, group_widths, group_weights, group_outputs, input_ddr, bias_
             (0x70, c.offset), (0x74, bias.offset), (0x78, flags),
             (0x7C, height | spec.width << 9 | channels << 18),
             (0x80, local_first | rows << 16), (0x84, 0), (Z15_CTRL, Z15_NPU_START))))
-        stores.append(Transfer("store", out_ddr + first * spec.output_pitch * 4,
-                               c.offset, c.capacity))
+        if finish is None:
+            stores.append(Transfer("store", group_outputs[group] + first * spec.output_pitch * 4,
+                                   c.offset, c.capacity))
+    if finish is not None:
+        extra_loads, extra_stages, store = finish(scratch, first, rows, index, partials)
+        loads.extend(extra_loads)
+        stages.extend(extra_stages)
+        stores.append(store)
     return Tile(zone, tuple(loads), tuple(stages), tuple(stores), scratch.used)
 
 
-def raw_conv_tiles(spec, *, input_ddr, weights_ddr, bias_ddr, partials_ddr):
-    """Emit VPU channel splits and raw INT32 NPU Conv pieces without re-quantizing."""
+def raw_conv_tiles(spec, *, input_ddr, weights_ddr, bias_ddr, partials_ddr=None, finish=None):
+    """Emit raw INT32 NPU Conv pieces and drain them to DDR or a tile-local epilogue."""
     groups = reduction_widths(spec)
-    if not (len(groups) > 1 and len(weights_ddr) == len(partials_ddr) == len(groups)):
-        raise ValueError(f"{spec.name}: expected a coefficient and partial span for each reduction group")
+    if len(groups) < 2 or len(weights_ddr) != len(groups):
+        raise ValueError(f"{spec.name}: expected a coefficient span for each reduction group")
+    if (finish is None) == (partials_ddr is None) or (
+            partials_ddr is not None and len(partials_ddr) != len(groups)):
+        raise ValueError(f"{spec.name}: expected DDR partial spans or a local epilogue")
+    item_bytes = 4 if finish is None else 1
     result = []
     first = 0
     oh, ow = spec.output_hw
     while first < oh:
         rows = min(oh - first, 511 // ow)
         while rows:
-            # Output INT32 transfers, including a short final row group, start
-            # on aligned raster boundaries.
-            if 4 * rows * spec.output_pitch % ALIGNMENT and first + rows < oh:
+            # Intermediate tile boundaries are also aligned DMA boundaries.
+            if item_bytes * rows * spec.output_pitch % ALIGNMENT and first + rows < oh:
                 rows -= 1
                 continue
             try:
                 tile = _raw_tile(spec, groups, weights_ddr, partials_ddr, input_ddr, bias_ddr,
-                                 first, rows, len(result))
+                                 first, rows, len(result), finish)
             except ValueError:
                 rows -= 1
                 continue

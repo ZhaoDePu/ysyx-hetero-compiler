@@ -627,6 +627,9 @@ typedef struct {
     uint32_t pending[2], dma_index;
     uint64_t before[2], dma_start;
     ysyx_stats_t *stats;
+    const uint8_t *gpu_code;
+    size_t gpu_code_bytes;
+    int gpu_upload_always;
 } run_t;
 
 static int read32(const run_t *run, uint32_t reg, uint32_t *value)
@@ -693,13 +696,22 @@ static int wait_gpu_slot(const run_t *run, uint32_t warp)
     return -1;
 }
 
-static int launch_gpu(const run_t *run, const uint8_t *stage, const uint8_t *words)
+static int launch_gpu(run_t *run, const uint8_t *stage, const uint8_t *words)
 {
     if (poll_status(run, 0, Z15_GPU_BUSY))
         return -1;
-    for (uint32_t i = 0; i < get(stage, 4); ++i)
-        if (write32(run, Z15_PROGRAM + 4u * i, get(words, i)))
-            return -1;
+    const uint32_t count = get(stage, 4);
+    const size_t bytes = (size_t)count * 4u;
+    /* Only this execution owns the idle instruction window. Recheck each
+       image and forget the cache before every new frame or KV slice. */
+    if (run->gpu_upload_always || bytes != run->gpu_code_bytes ||
+        memcmp(run->gpu_code, words, bytes)) {
+        for (uint32_t i = 0; i < count; ++i)
+            if (write32(run, Z15_PROGRAM + 4u * i, get(words, i)))
+                return -1;
+        run->gpu_code = words;
+        run->gpu_code_bytes = bytes;
+    }
     const uint8_t *jobs = run->program->sections[DATA].bytes + get(stage, 5);
     uint32_t previous_page = UINT32_MAX;
     for (uint32_t i = 0; i < get(stage, 6); ++i) {
@@ -891,7 +903,10 @@ static int execute_range(const ysyx_program_t *p, const ysyx_hal_t *hal, uint32_
                          uint32_t end, ysyx_stats_t *stats, FILE *trace, const char **error)
 {
     memset(stats, 0, sizeof(*stats));
-    run_t run = {p, hal, trace, {UINT32_MAX, UINT32_MAX}, UINT32_MAX, {0, 0}, 0, stats};
+    const char *gpu_upload = getenv("YSYX_C8_GPU_UPLOAD");
+    run_t run = {.program = p, .hal = hal, .trace = trace,
+                 .pending = {UINT32_MAX, UINT32_MAX}, .dma_index = UINT32_MAX,
+                 .stats = stats, .gpu_upload_always = gpu_upload && !strcmp(gpu_upload, "always")};
     ysyx_stats_t begin = {0};
     if (sample_telemetry(&run, &begin))
         return fail(error, "hardware counter read failed");

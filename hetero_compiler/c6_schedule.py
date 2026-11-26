@@ -8,6 +8,7 @@ from pathlib import Path
 from .c6_gpu import GpuStage
 from .c6_memory import HALF_BYTES
 from .c6_tensor import NativeStage, Transfer
+from .npu import Z15_CTRL, Z15_NPU_START, Z15_VPU_START
 from .yhb import emit_yhb
 
 
@@ -49,15 +50,60 @@ def emit_layer(tiles, program, stages, native, gpu, directory):
     _append_moves(program, tiles[-1].stores)
 
 
+@dataclass(frozen=True)
+class _CrossK:
+    gpu: int
+    epilogues: range
+
+
 @dataclass
 class _Operation:
     zone: int
     resource: str
     payload: Transfer | GpuStage | NativeStage
     dependencies: set[int] = field(default_factory=set)
+    cross_k: _CrossK | None = None
 
 
-def _lanes(layers):
+def _raw_conv(stage):
+    """Identify Conv split or INT32 stages that never touch shared tables."""
+    if not isinstance(stage, NativeStage) or not stage.writes:
+        return False
+    regs = dict(stage.writes)
+    if len(regs) != len(stage.writes):
+        return False
+    if stage.device == "VPU":
+        return (stage.writes[-1] == (Z15_CTRL, Z15_VPU_START) and regs.get(0xBC) == 2
+                and set(regs) <= {Z15_CTRL, 0xA0, 0xA4, 0xA8, 0xAC, 0xB0, 0xB4, 0xB8, 0xBC, 0xC0})
+    flags = regs.get(0x78, 0)
+    return (stage.device == "NPU" and stage.writes[-1] == (Z15_CTRL, Z15_NPU_START)
+            and flags & (1 << 9 | 1 << 13 | 1 << 14) == (1 << 9 | 1 << 13 | 1 << 14)
+            and not flags & (1 << 15 | 1 << 16)
+            and set(regs) <= {Z15_CTRL, 0x60, 0x64, 0x68, 0x6C, 0x70, 0x74, 0x78, 0x7C, 0x80, 0x84})
+
+
+def _requant_epilogue(stage):
+    if not isinstance(stage, NativeStage) or stage.device != "NPU" or not stage.writes:
+        return False
+    regs = dict(stage.writes)
+    flags = regs.get(0x78, 0)
+    required = 1 << 1 | 1 << 2 | 1 << 15 | 1 << 17
+    return (stage.writes[-1] == (Z15_CTRL, Z15_NPU_START)
+            and regs.get(0x60, 0) & 0xFFFF == 1 and regs.get(0x64) == (4 | 16 << 16)
+            and flags & ~(1 << 16) == required)
+
+
+def _fused_reduction(tile, first):
+    """Find the GPU and native tail of a single-page raw/requant tile."""
+    gpu = next((i for i, stage in enumerate(tile.stages) if isinstance(stage, GpuStage)), 0)
+    tail = tile.stages[gpu + 1:]
+    if (gpu and tail and all(map(_raw_conv, tile.stages[:gpu]))
+            and all(map(_requant_epilogue, tail))):
+        return _CrossK(first + gpu, range(first + gpu + 1, first + len(tile.stages)))
+    return None
+
+
+def _lanes(layers, *, stream_overlap=False):
     """Keep tile, scratch operand and global native-table order."""
     operations, pending, native, ddr = [], [deque(), deque()], deque(), []
     for layer in layers:
@@ -66,6 +112,7 @@ def _lanes(layers):
         if any(a.zone == b.zone for a, b in zip(layer, layer[1:])):
             raise ValueError("streaming tiles must alternate Z15 ownership halves")
         tiles = []
+        previous = None
         for tile in layer:
             if not tile.stages or tile.zone not in (0, 1) or not 0 < tile.scratch_bytes <= HALF_BYTES:
                 raise ValueError("invalid overlapping Z15 tile")
@@ -81,7 +128,13 @@ def _lanes(layers):
                 pending[tile.zone].append(index)
                 if unit == "native":
                     native.append(index)
-            tiles.append((range(first, first + len(tile.loads)),
+            stage_first = first + len(tile.loads)
+            reduction = _fused_reduction(tile, stage_first) if stream_overlap else None
+            if previous is not None and reduction is not None:
+                for index in range(stage_first, reduction.gpu):
+                    operations[index].cross_k = previous
+            previous = reduction
+            tiles.append((range(first, stage_first),
                           range(len(operations) - len(tile.stores), len(operations))))
         # Retain the chronological order of all conflicting DDR accesses.
         # C6 prefetches a tile before the previous tile in the same layer is stored.
@@ -113,8 +166,8 @@ def _ddr_dependencies(operations, ddr_order):
             history[page].append(index)
 
 
-def _emit_overlap(layers, program, stages, native, gpu, directory):
-    operations, pending, native_order, ddr_order = _lanes(layers)
+def _emit_overlap(layers, program, stages, native, gpu, directory, *, stream_overlap=False):
+    operations, pending, native_order, ddr_order = _lanes(layers, stream_overlap=stream_overlap)
     _ddr_dependencies(operations, ddr_order)
     finished, running = set(), {}
     # Start native compute before an immediately available GPU launch. The GPU
@@ -130,9 +183,17 @@ def _emit_overlap(layers, program, stages, native, gpu, directory):
                     continue
                 index = chain[0]
                 op = operations[index]
-                if (op.resource != unit or not op.dependencies <= finished
-                        or unit == "native" and native_order[0] != index):
+                if op.resource != unit or not op.dependencies <= finished:
                     continue
+                if unit == "native" and native_order[0] != index:
+                    # Only let the next tile's raw stages pass an epilogue
+                    # blocked on its GPU producer. Both half queues and the
+                    # global order of scale/LUT writers remain intact.
+                    window = op.cross_k
+                    other = pending[1 - zone]
+                    if (window is None or native_order[0] not in window.epilogues
+                            or not other or other[0] != window.gpu):
+                        continue
                 command = op.payload.command() if unit == "dma" else {"type": "launch", "stage": op.payload.id}
                 program.append(command)
                 running[unit] = index
@@ -152,13 +213,16 @@ def _emit_overlap(layers, program, stages, native, gpu, directory):
             # Index the trace by drain order, matching the C99 RTL ledger.
             _record_stage(op.payload, op.zone, stages, native, gpu, directory)
             if unit == "native":
-                native_order.popleft()
+                if native_order[0] == index:
+                    native_order.popleft()
+                else:
+                    native_order.remove(index)
         pending[op.zone].popleft()
         finished.add(index)
 
 
 def emit_program(directory, layers, tensors, inputs, outputs, slots, initial, *,
-                 external_inputs=True, c6=None, overlap=False):
+                 external_inputs=True, c6=None, overlap=False, stream_overlap=False):
     """Write a bundle and let the existing serializer validate every move."""
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
@@ -176,8 +240,8 @@ def emit_program(directory, layers, tensors, inputs, outputs, slots, initial, *,
     layers = tuple(layers)
     peaks = [max((tile.scratch_bytes for layer in layers for tile in layer if tile.zone == half),
                  default=0) for half in (0, 1)]
-    if overlap:
-        _emit_overlap(layers, program, stages, native, gpu, directory)
+    if overlap or stream_overlap:
+        _emit_overlap(layers, program, stages, native, gpu, directory, stream_overlap=stream_overlap)
         # The sum conservatively includes resident constants in preloaded halves.
         scratch_peak = sum(peaks)
     else:
@@ -209,8 +273,8 @@ def emit_program(directory, layers, tensors, inputs, outputs, slots, initial, *,
         "output_bindings": bindings(outputs, False),
     }
     manifest["plan"]["dma_bytes"] = sum(move["bytes"] for move in program if move["type"] == "dma")
-    if overlap:
-        manifest["plan"]["schedule"] = "overlap"
+    if overlap or stream_overlap:
+        manifest["plan"]["schedule"] = "stream_overlap" if stream_overlap else "overlap"
     if c6 is not None:
         manifest["c6"] = c6
     emit_yhb(directory, manifest)

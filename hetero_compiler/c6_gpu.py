@@ -5,6 +5,9 @@ from dataclasses import dataclass
 from .gpu import Program
 
 PAGE_BYTES = 4096
+# On frozen Z15 G3 the page selects a 4 KiB-aligned base. The data address
+# is 18-bit, with the last 16 KiB reserved for four warps' lane stacks.
+DATA_WINDOW_BYTES = (1 << 18) - (4 * 2 * 8 * 256)
 
 
 @dataclass(frozen=True)
@@ -18,7 +21,7 @@ class GpuStage:
         return "GPU"
 
 
-def build_gpu_stage(name, page, elements, kernel, *, index_stride=1):
+def build_gpu_stage(name, page, elements, kernel, *, index_stride=1, warp_skew=False):
     """Emit warp entries with x5 equal to lane + warp start * index_stride."""
     if not 0 <= page < 512 or not 1 <= elements <= PAGE_BYTES:
         raise ValueError(f"{name}: invalid GPU page or element count")
@@ -29,11 +32,13 @@ def build_gpu_stage(name, page, elements, kernel, *, index_stride=1):
         threads = min(elements - first, 16)
         jobs.append({"entry": len(p.words) * 4, "threads": threads, "warp": warp,
                      "gpu_job_reg": page | threads << 16 | warp << 24})
-        p.li(15, first * index_stride)
+        # The warp bases have four clear low bits. A full warp may permute
+        # its lanes with XOR while keeping a short warp's valid lane prefix.
+        p.li(15, first * index_stride + (warp if warp_skew and threads == 16 else 0))
         p.jump("kernel")
     p.label("kernel")
     p.emit(0xCC3022F3)  # Read logical GID into x5.
-    p.arithmetic(5, 5, 15)
+    p.arithmetic(5, 5, 15, f3=4 if warp_skew else 0)
     kernel(p)
     p.emit(0x00100073)  # Completion trap.
     words = tuple(p.image())

@@ -357,10 +357,10 @@ static int gpu_arithmetic(unsigned op, unsigned f7, uint32_t a, uint32_t b, uint
     }
 }
 
-static int gpu_memory(uint8_t *page, uint32_t at, unsigned op, int store, uint32_t *value)
+static int gpu_memory(uint8_t *page, uint32_t bytes, uint32_t at, unsigned op, int store, uint32_t *value)
 {
     const unsigned size = op == 2u ? 4u : op == 1u || op == 5u ? 2u : 1u;
-    if (!extent(at, size, 4096u) || (at & (size - 1u)) || op > 5u || op == 3u ||
+    if (!extent(at, size, bytes) || (at & (size - 1u)) || op > 5u || op == 3u ||
         (store && op > 2u))
         return -1;
     if (store) {
@@ -376,7 +376,7 @@ static int gpu_memory(uint8_t *page, uint32_t at, unsigned op, int store, uint32
     return 0;
 }
 
-static int gpu_lane(const uint32_t *code, uint8_t *page, uint32_t pc, unsigned lane)
+static int gpu_lane(const uint32_t *code, uint8_t *page, uint32_t bytes, uint32_t pc, unsigned lane)
 {
     uint32_t x[32] = {0};
     for (unsigned iterations = 0; iterations < 1000000u; ++iterations) {
@@ -400,13 +400,13 @@ static int gpu_lane(const uint32_t *code, uint8_t *page, uint32_t pc, unsigned l
                 return -1;
             break;
         case 0x03: /* LOAD */
-            if (gpu_memory(page, a + gpu_imm(word >> 20, 12), f3, 0, &value))
+            if (gpu_memory(page, bytes, a + gpu_imm(word >> 20, 12), f3, 0, &value))
                 return -1;
             break;
         case 0x23: { /* STORE */
             uint32_t item = b;
             const uint32_t imm = ((word >> 7) & 31u) | (word >> 25) << 5;
-            if (gpu_memory(page, a + gpu_imm(imm, 12), f3, 1, &item))
+            if (gpu_memory(page, bytes, a + gpu_imm(imm, 12), f3, 1, &item))
                 return -1;
             break;
         }
@@ -449,9 +449,15 @@ static int gpu(c6_reference_t *ref)
     const unsigned page = cfg & 511u, threads = (cfg >> 16) & 255u;
     if (!threads || threads > 16u || cfg & UINT32_C(0xfc00fe00))
         return -1;
-    uint8_t *data = ref->scratch + 4096u * page;
+    const uint32_t offset = 4096u * page;
+    /* G3's 18-bit address is relative to the selected page. Leave the lane
+       stack region unused and reject accesses outside the owned half. */
+    const uint32_t window = (1u << 18) - 4u * 2u * 8u * 256u;
+    const uint32_t remaining = Z15_HALF_BYTES - offset % Z15_HALF_BYTES;
+    const uint32_t bytes = window < remaining ? window : remaining;
+    uint8_t *data = ref->scratch + offset;
     for (unsigned lane = 0; lane < threads; ++lane)
-        if (gpu_lane(ref->code, data, pc, lane))
+        if (gpu_lane(ref->code, data, bytes, pc, lane))
             return -1;
     REG(ref, Z15_GPU_SLOTS) |= 1u << (8u + ((cfg >> 24) & 3u));
     return 0;
