@@ -66,3 +66,12 @@ $(OUT)/c10_benchmark.o: c10_session.h c10_session_core.h hal_reference_c6.h
 
 $(OUT)/z15_c10_benchmark: $(addprefix $(OUT)/,c10_benchmark.o ysyx_rt.o hal_linux_uio.o hal_reference_c6.o)
 	$(CC) $(LDFLAGS) $^ $(LDLIBS) -lm -o "$@"
+
+.PHONY: c11-qwen
+c11-qwen: $(OUT)/ysyx_qwen_chat
+
+$(OUT)/c11_qwen_ref.o $(OUT)/c11_qwen_chat.o: c11_qwen_ref.h
+$(OUT)/c11_qwen_bpe.o $(OUT)/c11_qwen_chat.o: c11_qwen_bpe.h
+
+$(OUT)/ysyx_qwen_chat: $(addprefix $(OUT)/,c11_qwen_chat.o c11_qwen_bpe.o c11_qwen_ref.o)
+	$(CC) $(LDFLAGS) $^ $(LDLIBS) -o "$@"

@@ -32,6 +32,8 @@ struct qwen_reference {
     size_t bytes, layout;
     unsigned context, position;
     matrix embedding;
+    qwen_layer0_rope *capture;
+    qwen_layer0_vectors *vectors;
     block layer[QWEN_LAYERS];
     int32_t *keys, *values, *scores;
     int32_t x[QWEN_HIDDEN], norm[QWEN_HIDDEN], q[QWEN_HIDDEN], mix[QWEN_HIDDEN];
@@ -395,6 +397,35 @@ static void swiglu(int32_t *gate, const int32_t *up, const uint8_t *exp)
     }
 }
 
+static void captured_qk(int32_t output[QWEN_HEADS + QWEN_KV_HEADS][QWEN_HEAD_DIM],
+                        const int32_t *q, const int32_t *k)
+{
+    enum { QUERIES = QWEN_HEADS / QWEN_KV_HEADS };
+    for (unsigned group = 0; group < QWEN_KV_HEADS; ++group) {
+        memcpy(output[group * (QUERIES + 1)], q + group * QUERIES * QWEN_HEAD_DIM,
+               QUERIES * QWEN_HEAD_DIM * sizeof(*q));
+        memcpy(output[group * (QUERIES + 1) + QUERIES], k + group * QWEN_HEAD_DIM,
+               QWEN_HEAD_DIM * sizeof(*k));
+    }
+}
+
+void qwen_reference_capture_rope(qwen_reference *model, qwen_layer0_rope *capture)
+{
+    model->capture = capture;
+}
+
+void qwen_reference_capture_vectors(qwen_reference *model, qwen_layer0_vectors *capture)
+{
+    model->vectors = capture;
+}
+
+static void captured_norm(qwen_layer0_vectors *trace, unsigned unit,
+                          const int32_t *in, const int32_t *out)
+{
+    memcpy(trace->input[unit], in, sizeof(trace->input[unit]));
+    memcpy(trace->norm[unit], out, sizeof(trace->norm[unit]));
+}
+
 const int32_t *qwen_reference_step(qwen_reference *m, unsigned token)
 {
     if (!m || token >= QWEN_VOCAB || m->position >= m->context)
@@ -405,12 +436,20 @@ const int32_t *qwen_reference_step(qwen_reference *m, unsigned token)
     for (unsigned i = 0; i < QWEN_LAYERS; ++i) {
         const block *b = m->layer + i;
         rms(m->x, b->rms_in, m->norm);
+        if (i == 0 && m->vectors)
+            captured_norm(m->vectors, 0, m->x, m->norm);
         quantize(&input, m->norm, QWEN_HIDDEN);
         linear(&b->q, &input, m->q);
         linear(&b->k, &input, m->k);
         linear(&b->v, &input, m->v);
+        if (i == 0 && m->capture)
+            captured_qk(m->capture->before, m->q, m->k);
         rotate(m->q, QWEN_HEADS, rope);
         rotate(m->k, QWEN_KV_HEADS, rope);
+        if (i == 0 && m->capture) {
+            captured_qk(m->capture->after, m->q, m->k);
+            memcpy(m->capture->values, m->v, sizeof(m->v));
+        }
         int32_t *keys = m->keys + (size_t)i * m->context * KV_WIDTH;
         int32_t *values = m->values + (size_t)i * m->context * KV_WIDTH;
         memcpy(keys + (size_t)m->position * KV_WIDTH, m->k, sizeof(m->k));
@@ -422,10 +461,18 @@ const int32_t *qwen_reference_step(qwen_reference *m, unsigned token)
             m->x[d] = bounded((int64_t)m->x[d] + m->norm[d]);
 
         rms(m->x, b->rms_ffn, m->norm);
+        if (i == 0 && m->vectors)
+            captured_norm(m->vectors, 1, m->x, m->norm);
         quantize(&input, m->norm, QWEN_HIDDEN);
         linear(&b->gate, &input, m->gate);
         linear(&b->up, &input, m->up);
+        if (i == 0 && m->vectors) {
+            memcpy(m->vectors->gate, m->gate, sizeof(m->gate));
+            memcpy(m->vectors->up, m->up, sizeof(m->up));
+        }
         swiglu(m->gate, m->up, m->exp);
+        if (i == 0 && m->vectors)
+            memcpy(m->vectors->swiglu, m->gate, sizeof(m->gate));
         quantize(&input, m->gate, QWEN_INTER);
         linear(&b->down, &input, m->norm);
         for (unsigned d = 0; d < QWEN_HIDDEN; ++d)
