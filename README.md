@@ -225,3 +225,17 @@ weights, images and thresholds are used for replay.
       --output "$YSYX_COMPILER_SCRATCH/c7-quant" --modes vpu-raw vpu-raw --calibrate-pv
     nice -n 10 python3 -B -m tools.compile_c6_yolo --quant "$YSYX_COMPILER_SCRATCH/c7-quant" \
       --output "$YSYX_COMPILER_SCRATCH/c7-program" --fast-reduce --fuse-edge-luts --overlap
+
+## Phase C8 YOLO26n candidate
+
+The C8 graph keeps the ABI, YHB1 format and C7 fixed-point outputs. Enable
+wide reduction in the same SRAM half, guarded cross-half streaming and
+exact vector fusion with these flags.
+
+    nice -n 10 python3 -B -m tools.compile_c6_yolo --quant "$C7_ARCHIVE/m2" \
+      --output "$YSYX_COMPILER_SCRATCH/c8-program" --fast-reduce --overlap --fuse-edge-luts \
+      --reduce-in-scratch --stream-overlap --fuse-vector-partitions
+
+The [deployment guide](deploy/z15_yolo26n_320_kit/README-C8.md) shows the
+clock-selectable CLI. See the [frozen RTL results](reports/c8/m3-yolo26n-rtl.md)
+for the tested clock ratios, exact gates, and the remaining performance gap.
