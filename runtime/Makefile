@@ -48,3 +48,14 @@ c10-session-check: $(OUT)/test-c10-session
 
 $(OUT)/test-c10-session: tests/c10_session.c $(OUT)/libysyx_rt.a
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(WARNFLAGS) -I. $(LDFLAGS) $^ $(LDLIBS) -o "$@"
+
+.PHONY: c10
+c10: $(OUT)/z15_yolo_live_c10
+
+$(OUT)/c10_service.o: c10_session.h c10_session_core.h c10_pixels.h c10_v4l2.h
+$(OUT)/c10_v4l2.o: c10_v4l2.h c10_pixels.h
+$(OUT)/c10_pixels.o: c10_pixels.h c10_jpeg.h
+$(OUT)/c10_jpeg.o: c10_jpeg.h c10_jpeg_tables.h
+
+$(OUT)/z15_yolo_live_c10: $(addprefix $(OUT)/,c10_service.o c10_pixels.o c10_v4l2.o c10_jpeg.o libysyx_yolo26n.a)
+	$(CC) $(LDFLAGS) $^ $(LDLIBS) -lm -o "$@"
