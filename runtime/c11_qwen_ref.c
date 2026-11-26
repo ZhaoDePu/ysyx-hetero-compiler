@@ -34,6 +34,11 @@ struct qwen_reference {
     matrix embedding;
     qwen_layer0_rope *capture;
     qwen_layer0_vectors *vectors;
+#ifdef YSYX_C11B_NATIVE
+    int native, native_failed;
+    const c11b_ops *device;
+    uint32_t ks[QWEN_LAYERS], vs[QWEN_LAYERS];
+#endif
     block layer[QWEN_LAYERS];
     int32_t *keys, *values, *scores;
     int32_t x[QWEN_HIDDEN], norm[QWEN_HIDDEN], q[QWEN_HIDDEN], mix[QWEN_HIDDEN];
@@ -175,6 +180,10 @@ qwen_reference *qwen_reference_open(const char *path)
 
 unsigned qwen_reference_context(const qwen_reference *m)
 {
+#ifdef YSYX_C11B_NATIVE
+    if (m && m->native && m->context > C11B_PITCH)
+        return C11B_PITCH;
+#endif
     return m ? m->context : 0;
 }
 
@@ -426,8 +435,16 @@ static void captured_norm(qwen_layer0_vectors *trace, unsigned unit,
     memcpy(trace->norm[unit], out, sizeof(trace->norm[unit]));
 }
 
+#ifdef YSYX_C11B_NATIVE
+#include "c11b_reference.inc"
+#endif
+
 const int32_t *qwen_reference_step(qwen_reference *m, unsigned token)
 {
+#ifdef YSYX_C11B_NATIVE
+    if (m && m->native)
+        return step_native(m, token);
+#endif
     if (!m || token >= QWEN_VOCAB || m->position >= m->context)
         return NULL;
     activation input;

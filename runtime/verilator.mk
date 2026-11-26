@@ -43,3 +43,35 @@ $(OUT)/hal_reference_c6.o: hal_reference_c6.h
 $(OUT)/z15_c10_benchmark: $(addprefix $(OUT)/,c10_benchmark.o ysyx_rt.o hal_linux_uio.o hal_reference_c6.o hal_verilator_z15.o) $(RTL_OBJECTS)
 	$(CXX) -pthread $^ -lm -o "$@.tmp"
 	mv -f -- "$@.tmp" "$@"
+
+$(OUT)/c11b_rope_words.h: ../tools/c11b_emit_rope.py ../hetero_compiler/c11_qwen_rope.py
+	cd .. && python3 -B -m tools.c11b_emit_rope > "$@.tmp"
+	mv -f -- "$@.tmp" "$@"
+
+$(OUT)/c11b_qwen_z15.o: c11b_qwen_z15.c c11b_qwen_ops.h $(OUT)/c11b_rope_words.h
+	$(CC) $(CFLAGS) -I"$(OUT)" -c "$<" -o "$@"
+
+$(OUT)/c11b_qwen_ref.o: c11_qwen_ref.c c11_qwen_ref.h c11b_reference.inc c11b_qwen_ops.h
+	$(CC) $(CFLAGS) -DYSYX_C11B_NATIVE -mavx2 -c "$<" -o "$@"
+
+$(OUT)/c11b_layer0.o: tests/c11b_layer0.c c11_qwen_ref.h c11b_qwen_ops.h
+	$(CC) $(CFLAGS) -DYSYX_C11B_NATIVE -DYSYX_WITH_VERILATOR -I. -c "$<" -o "$@"
+
+$(OUT)/c11b_layer0: $(addprefix $(OUT)/,c11b_layer0.o c11b_qwen_ref.o c11b_qwen_ops.o c11b_qwen_z15.o hal_verilator_z15.o) $(RTL_OBJECTS)
+	$(CXX) -pthread $^ -o "$@.tmp"
+	mv -f -- "$@.tmp" "$@"
+
+$(OUT)/c11b_projection.o: tests/c11b_projection.c c11_qwen_ref.h c11b_qwen_ops.h
+	$(CC) $(CFLAGS) -DYSYX_C11B_NATIVE -I. -c "$<" -o "$@"
+
+$(OUT)/c11b_full.o: tests/c11b_full.c c11_qwen_ref.h c11b_qwen_ops.h
+	$(CC) $(CFLAGS) -DYSYX_C11B_NATIVE -I. -c "$<" -o "$@"
+
+C11B_RTL := $(addprefix $(OUT)/,c11b_qwen_ref.o c11b_qwen_ops.o c11b_qwen_z15.o hal_verilator_z15.o) $(RTL_OBJECTS)
+$(OUT)/c11b_projection: $(OUT)/c11b_projection.o $(C11B_RTL)
+	$(CXX) -pthread $^ -o "$@.tmp"
+	mv -f -- "$@.tmp" "$@"
+
+$(OUT)/c11b_full: $(OUT)/c11b_full.o $(C11B_RTL)
+	$(CXX) -pthread $^ -o "$@.tmp"
+	mv -f -- "$@.tmp" "$@"

@@ -20,10 +20,11 @@ PROMPTS = (
 )
 
 
-def official(model, tokens, steps):
+def official(model, tokens, steps, min_steps=0):
     import torch
 
-    eos = set(model.generation_config.eos_token_id)
+    eos_cfg = model.generation_config.eos_token_id
+    eos = set(eos_cfg) if isinstance(eos_cfg, list) else {eos_cfg}
     ids = torch.tensor([tokens], dtype=torch.long)
     with torch.inference_mode():
         first = model(ids, use_cache=True)
@@ -32,6 +33,9 @@ def official(model, tokens, steps):
         last = first.logits[:, -1, :]
         generated = []
         for step in range(steps):
+            if step < min_steps:
+                last = last.clone()
+                last[:, list(eos)] = -torch.inf
             token = last.argmax(dim=-1, keepdim=True)
             found = int(token.item())
             generated.append(found)
@@ -78,7 +82,7 @@ def run(args):
         tokens = tok.apply_chat_template([{"role": "user", "content": prompt}],
                                          tokenize=True, add_generation_prompt=True)
         start = time.perf_counter()
-        official_logits, raw = official(model, tokens, args.steps)
+        official_logits, raw = official(model, tokens, args.steps, args.min_new_tokens)
         official_elapsed = time.perf_counter() - start
         print(f"{label}: W4A8 C99 greedy generation", flush=True)
         seed = args.scratch / f"{label}.tokens"
@@ -87,7 +91,8 @@ def run(args):
         start = time.perf_counter()
         process = subprocess.run([str(args.reference), str(args.weights), str(seed),
                                   str(args.steps), str(trace)], text=True, check=True,
-                                 stdout=subprocess.PIPE)
+                                 stdout=subprocess.PIPE,
+                                 env={**os.environ, "YSYX_QWEN_MIN_NEW_TOKENS": str(args.min_new_tokens)})
         fixed_elapsed = time.perf_counter() - start
         fixed_tokens = [int(value) for value in process.stdout.split()]
         fixed_logits = np.memmap(trace, dtype="<i4", mode="r", shape=(len(tokens), VOCAB))
@@ -110,7 +115,8 @@ def run(args):
         (args.out / "dialogue.json").write_text(json.dumps({
             "revision": REVISION, "torch": torch.__version__, "transformers": transformers.__version__,
             "fp32_execution": "Official BF16 checkpoint values loaded as FP32",
-            "w4a8_execution": "C99 fixed Q16 state and Q24 W4 scales",
+            "w4a8_execution": args.contract,
+            "min_new_tokens": args.min_new_tokens,
             "prompts": dataset,
         }, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
@@ -127,7 +133,11 @@ def main():
         parser.add_argument("--" + flag, type=Path, required=True)
     parser.add_argument("--steps", type=int, default=48, choices=range(32, 49))
     parser.add_argument("--threads", type=int, default=4, choices=range(1, 9))
+    parser.add_argument("--min-new-tokens", type=int, default=0)
+    parser.add_argument("--contract", default="C99 fixed Q16 state and Q24 W4 scales")
     args = parser.parse_args()
+    if not 0 <= args.min_new_tokens <= args.steps:
+        parser.error("minimum generation length must fit the decode budget")
     os.environ["HF_HUB_OFFLINE"] = "1"
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
     run(args)

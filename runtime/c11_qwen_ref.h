@@ -34,4 +34,20 @@ void qwen_reference_capture_rope(qwen_reference *model, qwen_layer0_rope *captur
 void qwen_reference_capture_vectors(qwen_reference *model, qwen_layer0_vectors *capture);
 void qwen_reference_close(qwen_reference *reference);
 
+#ifdef YSYX_C11B_NATIVE
+#include "c11b_qwen_ops.h"
+
+typedef struct {
+    int32_t hidden[QWEN_HIDDEN];
+    int8_t keys[C11B_PITCH * C11B_KV_WIDTH], values[C11B_PITCH * C11B_KV_WIDTH];
+} c11b_layer0;
+
+int qwen_reference_native(qwen_reference *, const c11b_ops *);
+const uint8_t *qwen_reference_image(const qwen_reference *, size_t *bytes);
+int qwen_reference_advance(qwen_reference *, unsigned);
+int qwen_reference_step_layer0(qwen_reference *, unsigned, c11b_layer0 *);
+int qwen_reference_projection(qwen_reference *, const uint8_t *, unsigned, unsigned,
+                              const int8_t *, int32_t *);
+#endif
+
 #endif

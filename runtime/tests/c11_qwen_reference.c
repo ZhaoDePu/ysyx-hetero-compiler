@@ -5,11 +5,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-static unsigned greedy(const int32_t *logits)
+static unsigned greedy(const int32_t *logits, int suppress_eos)
 {
     unsigned best = 0;
     for (unsigned i = 1; i < QWEN_VOCAB; ++i)
-        if (logits[i] > logits[best])
+        if ((!suppress_eos || (i != 151643 && i != 151645)) && logits[i] > logits[best])
             best = i;
     return best;
 }
@@ -31,7 +31,7 @@ static int save_projection(const qwen_reference *model, const char *path)
 }
 
 static int generate(qwen_reference *model, FILE *input, FILE *gold, unsigned steps,
-                    const char *projection)
+                    const char *projection, unsigned min_steps)
 {
     const int32_t *logits = NULL;
     unsigned token;
@@ -46,7 +46,7 @@ static int generate(qwen_reference *model, FILE *input, FILE *gold, unsigned ste
     if (!logits || ferror(input) || fflush(gold) || (projection && save_projection(model, projection)))
         return -1;
     for (unsigned i = 0; i < steps; ++i) {
-        unsigned best = greedy(logits);
+        unsigned best = greedy(logits, i < min_steps);
         printf("%u\n", best);
         if (best == 151645 || best == 151643 || i + 1 == steps)
             break;
@@ -68,10 +68,21 @@ int main(int argc, char **argv)
     unsigned long steps = strtoul(argv[3], &end, 10);
     if (errno || *end || !steps || steps > 2048)
         return 2;
+    const char *minimum = getenv("YSYX_QWEN_MIN_NEW_TOKENS");
+    unsigned long min_steps = minimum ? strtoul(minimum, &end, 10) : 0;
+    if (minimum && (*end || min_steps > steps))
+        return 2;
     qwen_reference *model = qwen_reference_open(argv[1]);
     FILE *input = fopen(argv[2], "r");
     FILE *output = fopen(argv[4], "wb");
-    int failed = !model || !input || !output || generate(model, input, output, (unsigned)steps, argc == 6 ? argv[5] : NULL);
+#ifdef YSYX_C11B_NATIVE
+    int failed = qwen_reference_native(model, NULL);
+#else
+    int failed = 0;
+#endif
+    if (!failed)
+        failed = !model || !input || !output || generate(model, input, output, (unsigned)steps,
+                                                         argc == 6 ? argv[5] : NULL, (unsigned)min_steps);
     if (input)
         fclose(input);
     if (output && fclose(output))

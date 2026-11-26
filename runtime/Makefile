@@ -75,3 +75,22 @@ $(OUT)/c11_qwen_bpe.o $(OUT)/c11_qwen_chat.o: c11_qwen_bpe.h
 
 $(OUT)/ysyx_qwen_chat: $(addprefix $(OUT)/,c11_qwen_chat.o c11_qwen_bpe.o c11_qwen_ref.o)
 	$(CC) $(LDFLAGS) $^ $(LDLIBS) -o "$@"
+
+.PHONY: c11b-qwen
+c11b-qwen: $(OUT)/z15_qwen25_chat
+
+$(OUT)/c11b_rope_words.h: ../tools/c11b_emit_rope.py ../hetero_compiler/c11_qwen_rope.py | $(OUT)
+	cd .. && python3 -B -m tools.c11b_emit_rope > "$@.tmp"
+	mv -f -- "$@.tmp" "$@"
+
+$(OUT)/c11b_qwen_z15.o: c11b_qwen_z15.c c11b_qwen_ops.h $(OUT)/c11b_rope_words.h
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(WARNFLAGS) -I"$(OUT)" -c "$<" -o "$@"
+
+$(OUT)/c11b_qwen_ref.o: c11_qwen_ref.c c11_qwen_ref.h c11b_reference.inc c11b_qwen_ops.h | $(OUT)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(WARNFLAGS) -DYSYX_C11B_NATIVE -c "$<" -o "$@"
+
+$(OUT)/c11b_qwen_chat.o: c11_qwen_chat.c c11_qwen_ref.h c11_qwen_bpe.h c11b_qwen_ops.h | $(OUT)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(WARNFLAGS) -DYSYX_C11B_NATIVE -c "$<" -o "$@"
+
+$(OUT)/z15_qwen25_chat: $(addprefix $(OUT)/,c11b_qwen_chat.o c11b_qwen_ref.o c11_qwen_bpe.o c11b_qwen_ops.o c11b_qwen_z15.o hal_linux_uio.o)
+	$(CC) $(LDFLAGS) $^ $(LDLIBS) -o "$@"
