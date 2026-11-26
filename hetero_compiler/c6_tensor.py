@@ -51,7 +51,8 @@ class Conv:
     def __post_init__(self):
         if (any(type(dim) is not int or not 1 <= dim <= 511 for dim in
                 (self.height, self.width, self.output_channels))
-                or type(self.input_channels) is not int or not 1 <= self.input_channels <= 1023
+                or type(self.input_channels) is not int
+                or not 1 <= self.input_channels <= (1528 if self.kernel == 1 else 1023)
                 or self.kernel not in (1, 3) or self.stride not in (1, 2)
                 or self.pad not in (0, 1) or min(self.output_hw) < 1):
             raise ValueError(f"{self.name}: unsupported native Conv geometry")

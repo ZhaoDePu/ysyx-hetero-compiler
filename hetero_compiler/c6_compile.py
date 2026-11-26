@@ -351,7 +351,8 @@ def fuse_conv_edge_luts(graph):
 
 
 def prepare_graph(graph, constants, *, selected=None, lowerers=None, fast_reduce=False,
-                  reduce_bank_skew=False, reduce_in_scratch=False):
+                  reduce_bank_skew=False, reduce_in_scratch=False, classifier=False,
+                  reuse_ddr=True):
     """Resolve graph boundaries and return physical layer jobs with DDR liveness."""
     tensors = layouts(graph)
     active = [node for node in graph["nodes"] if node["device"] != "PS" and
@@ -399,7 +400,7 @@ def prepare_graph(graph, constants, *, selected=None, lowerers=None, fast_reduce
                       first, last_use[name]) for name, first in producers.items()]
     c6 = {}
     aliases, const_outputs = {}, {}
-    if selected is None:
+    if selected is None and not classifier:
         aliases, metadata, const_outputs, c6 = _head_contract(graph, tensors, constants, ps, outputs)
         initial.update(metadata)
     persistent = [Lifetime(name, len(data), 0, 0) for name, data in initial.items()]
@@ -409,6 +410,8 @@ def prepare_graph(graph, constants, *, selected=None, lowerers=None, fast_reduce
         (life for life in lives if life.name in public), base=weights_end)
     working = [life for life in lives if life.name not in public]
     working += [Lifetime(name, *lifetime) for name, lifetime in auxiliary.items() if name not in initial]
+    if not reuse_ddr:
+        working = [Lifetime(life.name, life.size, 0, 0) for life in working]
     workspace, peak = reserve_ddr(working, base=frames_end)
     slots = weights | frames | workspace
     layer_groups = [make(slots) for make in launchers]
@@ -431,11 +434,12 @@ def prepare_graph(graph, constants, *, selected=None, lowerers=None, fast_reduce
 
 def compile_graph(directory, graph, constants, *, lowerers=None, selected=None, seeded=None,
                   fast_reduce=False, overlap=False, reduce_bank_skew=False, reduce_in_scratch=False,
-                  stream_overlap=False):
+                  stream_overlap=False, classifier=False, reuse_ddr=True):
     """Write a guarded legacy-compatible YHB1 bundle with C6 DDR/scratch jobs."""
     tensors, inputs, outputs, slots, initial, layers, const_outputs, c6 = prepare_graph(
         graph, constants, selected=selected, lowerers=lowerers, fast_reduce=fast_reduce,
-        reduce_bank_skew=reduce_bank_skew, reduce_in_scratch=reduce_in_scratch)
+        reduce_bank_skew=reduce_bank_skew, reduce_in_scratch=reduce_in_scratch,
+        classifier=classifier, reuse_ddr=reuse_ddr)
     if seeded is not None:
         if set(seeded) != set(inputs):
             raise ValueError("replay seed tensors must exactly match compiled input symbols")

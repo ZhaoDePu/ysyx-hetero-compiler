@@ -326,7 +326,11 @@ static int gpu_arithmetic(unsigned op, unsigned f7, uint32_t a, uint32_t b, uint
         switch (op) {
         case 0: *answer = a * b; return 0;
         case 1: *answer = (uint32_t)asr((int64_t)signed32(a) * signed32(b), 32); return 0;
+        /* Use a widened numerator so INT32_MIN / -1 wraps to RV32
+           without causing signed host overflow. */
+        case 4: *answer = b ? (uint32_t)((int64_t)signed32(a) / signed32(b)) : UINT32_MAX; return 0;
         case 5: *answer = b ? a / b : UINT32_MAX; return 0;
+        case 6: *answer = b ? (uint32_t)((int64_t)signed32(a) % signed32(b)) : a; return 0;
         case 7: *answer = b ? a % b : a; return 0;
         default: return -1;
         }
@@ -399,6 +403,17 @@ static int gpu_lane(const uint32_t *code, uint8_t *page, uint32_t bytes, uint32_
             if (gpu_arithmetic(f3, f7, a, b, &value))
                 return -1;
             break;
+        case 0x2b: { /* G3 DOT4: signed B, signed or unsigned A. */
+            if (f7 || (f3 != 1u && f3 != 2u))
+                return -1;
+            int32_t sum = 0;
+            for (unsigned i = 0; i < 32; i += 8) {
+                const uint8_t first = (uint8_t)(a >> i), second = (uint8_t)(b >> i);
+                sum += (f3 == 1u ? signed8(first) : (int32_t)first) * signed8(second);
+            }
+            value = (uint32_t)sum;
+            break;
+        }
         case 0x03: /* LOAD */
             if (gpu_memory(page, bytes, a + gpu_imm(word >> 20, 12), f3, 0, &value))
                 return -1;
