@@ -5,6 +5,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#ifdef VALENCE_C13_EMULATED
+void *c13_emulator_open(qwen_reference *, unsigned);
+void c13_emulator_close(void *);
+#endif
+
 static unsigned greedy(const int32_t *logits, int suppress_eos)
 {
     unsigned best = 0;
@@ -87,6 +92,15 @@ int main(int argc, char **argv)
     if (!failed && !c12_qwen_mixed(model))
         failed = qwen_reference_native(model, NULL);
 #endif
+#ifdef VALENCE_C13_EMULATED
+    void *emulator = NULL;
+    const char *setting = getenv("VALENCE_C13_CPU_OPS");
+    if (!failed && setting) {
+        unsigned long ops = strtoul(setting, &end, 10);
+        if (!*setting || *end || ops > 7 || !(emulator = c13_emulator_open(model, (unsigned)ops)))
+            failed = 1;
+    }
+#endif
     if (!failed)
         failed = !model || !input || !output || generate(model, input, output, (unsigned)steps,
                                                          argc == 6 ? argv[5] : NULL, (unsigned)min_steps);
@@ -94,6 +108,9 @@ int main(int argc, char **argv)
         fclose(input);
     if (output && fclose(output))
         failed = 1;
+#ifdef VALENCE_C13_EMULATED
+    c13_emulator_close(emulator);
+#endif
     qwen_reference_close(model);
     if (failed)
         fputs("C11 reference could not read the weight image, tokens, or output\n", stderr);

@@ -84,13 +84,13 @@ $(OUT)/c11b_rope_words.h: ../tools/c11b_emit_rope.py ../hetero_compiler/c11_qwen
 	cd .. && python3 -B -m tools.c11b_emit_rope > "$@.tmp"
 	mv -f -- "$@.tmp" "$@"
 
-$(OUT)/c11b_qwen_z15.o: c11b_qwen_z15.c c11b_qwen_ops.h c12_qwen_ref.h $(OUT)/c11b_rope_words.h
+$(OUT)/c11b_qwen_z15.o: c11b_qwen_z15.c c11b_qwen_ops.h c12_qwen_ref.h c13_qwen.h $(OUT)/c11b_rope_words.h
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(WARNFLAGS) -I"$(OUT)" -c "$<" -o "$@"
 
-$(OUT)/c11b_qwen_ref.o: c11_qwen_ref.c c11_qwen_ref.h c12_qwen_ref.h c12_qwen_cache.h c11b_reference.inc c11b_qwen_ops.h | $(OUT)
+$(OUT)/c11b_qwen_ref.o: c11_qwen_ref.c c11_qwen_ref.h c12_qwen_ref.h c13_qwen.h c12_qwen_cache.h c11b_reference.inc c11b_qwen_ops.h | $(OUT)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(WARNFLAGS) -DYSYX_C11B_NATIVE -c "$<" -o "$@"
 
-$(OUT)/c11b_qwen_chat.o: c11_qwen_chat.c c11_qwen_ref.h c12_qwen_ref.h c11_qwen_bpe.h c11b_qwen_ops.h | $(OUT)
+$(OUT)/c11b_qwen_chat.o: c11_qwen_chat.c c11_qwen_ref.h c12_qwen_ref.h c13_qwen.h c11_qwen_bpe.h c11b_qwen_ops.h | $(OUT)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(WARNFLAGS) -DYSYX_C11B_NATIVE -c "$<" -o "$@"
 
 $(OUT)/z15_qwen25_chat: $(addprefix $(OUT)/,c11b_qwen_chat.o c11b_qwen_ref.o c11_qwen_bpe.o c11b_qwen_ops.o c11b_qwen_z15.o hal_linux_uio.o)
@@ -106,3 +106,19 @@ $(OUT)/test-c12-cache: tests/c12_qwen_cache.c c12_qwen_cache.h | $(OUT)
 
 $(OUT)/test-c12-turbo: tests/c12_qwen_turbo.c $(addprefix $(OUT)/,c11b_qwen_ref.o c11b_qwen_ops.o c11b_qwen_z15.o)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(WARNFLAGS) -DYSYX_C11B_NATIVE -I. $^ $(LDFLAGS) $(LDLIBS) -o "$@"
+
+.PHONY: c13-qwen
+c13-qwen: $(OUT)/z15_qwen25_chat_c13
+
+$(OUT)/c13_gpu_words.h: c13_qwen_kernels.c c13_qwen_layout.h ../tools/c13_emit_gpu.py | $(OUT)
+	python3 -B ../tools/c13_emit_gpu.py --source c13_qwen_kernels.c --scratch "$(OUT)" > "$@.tmp"
+	mv -f -- "$@.tmp" "$@"
+
+$(OUT)/c13_qwen_z15.o: c11b_qwen_z15.c c13_qwen_z15.inc c13_qwen.h c13_qwen_layout.h $(OUT)/c11b_rope_words.h $(OUT)/c13_gpu_words.h
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(WARNFLAGS) -DYSYX_C11B_NATIVE -DYSYX_C13_PL -I"$(OUT)" -c "$<" -o "$@"
+
+$(OUT)/c13_qwen_chat.o: c11_qwen_chat.c c13_qwen.h c11_qwen_bpe.h | $(OUT)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(WARNFLAGS) -DYSYX_C11B_NATIVE -DYSYX_C13_PL -c "$<" -o "$@"
+
+$(OUT)/z15_qwen25_chat_c13: $(addprefix $(OUT)/,c13_qwen_chat.o c11b_qwen_ref.o c11_qwen_bpe.o c11b_qwen_ops.o c13_qwen_z15.o hal_linux_uio.o)
+	$(CC) $(LDFLAGS) $^ $(LDLIBS) -o "$@"

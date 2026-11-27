@@ -1,5 +1,5 @@
 /* Replay real autoregressive input against a separate C99 reference. */
-#include "c12_qwen_ref.h"
+#include "c13_qwen.h"
 
 #include <inttypes.h>
 #include <stdio.h>
@@ -17,10 +17,14 @@ static unsigned greedy(const int32_t *scores)
 
 static int replay_step(qwen_reference *gold, qwen_reference *sim, c11b_z15 *dev,
                        unsigned pos, unsigned id, unsigned layer, int is_decode,
-                       int check_head, unsigned *next)
+                       int check_head, unsigned seed, unsigned *next)
 {
     c12_qwen_capture reference = {0}, observed = {0};
     ysyx_stats_t before, after;
+#ifdef YSYX_C13_PL
+    c13_io io_before, io_after;
+    c13_z15_io(dev, &io_before);
+#endif
     if (c12_qwen_capture_layer(gold, layer, &reference) ||
         c12_qwen_capture_layer(sim, layer, &observed) ||
         c11b_z15_stats(dev, &before))
@@ -37,6 +41,17 @@ static int replay_step(qwen_reference *gold, qwen_reference *sim, c11b_z15 *dev,
         return -1;
     }
     *next = greedy(got);
+#ifdef YSYX_C13_PL
+    if (pos < seed) {
+        if (c13_z15_seed_kv(dev, layer, pos, observed.cache, observed.cache_bytes))
+            return -1;
+        printf("C13_HOST_SEEDED layer=%u pos=%u token=%u cache=%zu\n",
+               layer, pos, id, observed.cache_bytes);
+        return fflush(stdout);
+    }
+#else
+    (void)seed;
+#endif
     printf("C12_STEP layer=%u pos=%u token=%u next=%u phase=%s hidden=%zu cache=%zu "
            "logits=%zu head_npu=%d wall=%" PRIu64 " npu=%" PRIu64 " gpu=%" PRIu64
            " dma=%" PRIu64 " npu_gpu_overlap=%" PRIu64 " compute_dma_overlap=%" PRIu64
@@ -50,36 +65,56 @@ static int replay_step(qwen_reference *gold, qwen_reference *sim, c11b_z15 *dev,
            after.observed.dma_compute_overlap_ticks - before.observed.dma_compute_overlap_ticks,
            after.dma_bytes - before.dma_bytes, c11b_z15_peak_bytes(dev),
            after.abi_error, after.invalid_dma_descriptors);
+#ifdef YSYX_C13_PL
+    c13_z15_io(dev, &io_after);
+    printf("C13_IO layer=%u pos=%u reads=%" PRIu64 " writes=%" PRIu64
+           " read_bytes=%" PRIu64 " write_bytes=%" PRIu64 " cache_reserved=%" PRIu64
+           " gpu_launches=%" PRIu64 " dma_desc=%u vpu=0\n",
+           layer, pos, io_after.host_reads - io_before.host_reads,
+           io_after.host_writes - io_before.host_writes, io_after.read_bytes - io_before.read_bytes,
+           io_after.write_bytes - io_before.write_bytes, io_after.cache_reserved,
+           io_after.gpu_launches - io_before.gpu_launches, after.dma_operations - before.dma_operations);
+#endif
     return fflush(stdout);
 }
 
 static int replay(qwen_reference *gold, qwen_reference *sim, c11b_z15 *dev,
-                  FILE *tokens, unsigned layer, unsigned decode, int check_head)
+                  FILE *tokens, unsigned layer, unsigned decode, int check_head, unsigned seed)
 {
     unsigned pos = 0, id, next = 0;
     for (int n; (n = fscanf(tokens, "%u", &id)) != EOF; ++pos) {
-        if (n != 1 || replay_step(gold, sim, dev, pos, id, layer, 0, check_head, &next))
+        if (n != 1 || replay_step(gold, sim, dev, pos, id, layer, 0, check_head, seed, &next))
             return -1;
     }
-    if (!pos || ferror(tokens))
+    if (!pos || pos < seed || ferror(tokens))
         return -1;
     for (unsigned step = 0; step < decode; ++step) {
-        if (replay_step(gold, sim, dev, pos + step, next, layer, 1, check_head, &next))
+        if (replay_step(gold, sim, dev, pos + step, next, layer, 1, check_head, seed, &next))
             return -1;
     }
+#ifdef YSYX_C13_PL
+    printf("C13_RTL_PASS layer=%u prefill=%u host_seeded=%u decode=%u head_npu=%d\n",
+           layer, pos - seed, seed, decode, check_head);
+#else
     printf("C12_RTL_PASS layer=%u prefill=%u decode=%u head_npu=%d\n",
            layer, pos, decode, check_head);
+#endif
     return 0;
 }
 
 int main(int argc, char **argv)
 {
-    if (argc != 7) {
+#ifdef YSYX_C13_PL
+    const unsigned num_args = 8;
+#else
+    const unsigned num_args = 7;
+#endif
+    if ((unsigned)argc != num_args) {
         fputs("Usage: c12_qwen_rtl WEIGHTS TOKEN_IDS KV_BITS LAYER DECODE_STEPS HEAD_ON_NPU\n", stderr);
         return 2;
     }
-    unsigned params[4];
-    for (unsigned i = 0; i < 4; ++i) {
+    unsigned params[5];
+    for (unsigned i = 0; i < num_args - 3; ++i) {
         char *end;
         unsigned long parsed = strtoul(argv[3 + i], &end, 10);
         if (!argv[3 + i][0] || *end || parsed > 2048)
@@ -106,9 +141,25 @@ int main(int argc, char **argv)
     uint32_t mask = UINT32_C(1) << layer;
     if (head)
         mask |= UINT32_C(1) << QWEN_LAYERS;
+#ifdef YSYX_C13_PL
+    const unsigned ops = params[4];
+    if (!dev || (ops ? c13_z15_attach(rtl, dev, mask, ops) : c12_z15_attach(rtl, dev, mask)))
+#else
     if (!dev || c12_z15_attach(rtl, dev, mask))
+#endif
         goto done;
-    rc = replay(cpu, rtl, dev, ids, layer, decode, head) != 0;
+    unsigned seed = 0;
+#ifdef YSYX_C13_PL
+    const char *value = getenv("VALENCE_C13_TEST_SEED");
+    if (value) {
+        char *end;
+        unsigned long parsed = strtoul(value, &end, 10);
+        if (!*value || *end || parsed > 2048 || c13_qwen_replay_from(rtl, (unsigned)parsed))
+            goto done;
+        seed = (unsigned)parsed;
+    }
+#endif
+    rc = replay(cpu, rtl, dev, ids, layer, decode, head, seed) != 0;
 done:
     if (rc)
         fprintf(stderr, "C12 frozen replay failed: %s\n", error ? error : "check inputs and AXI log");

@@ -1,6 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 #include "c11_qwen_ref.h"
-#include "c12_qwen_ref.h"
+#include "c13_qwen.h"
 #include "c12_qwen_cache.h"
 
 #include <fcntl.h>
@@ -35,6 +35,9 @@ struct qwen_reference {
     unsigned context, position, group, protection, kv_bits, grouped_a8, kv4_outliers;
     uint8_t *packed_kv;
     c12_qwen_device c12_device;
+    c13_qwen_device c13_device;
+    uint32_t c13_device_layers;
+    unsigned c13_first_device_pos;
     c12_qwen_capture *c12_capture;
     unsigned c12_layer;
     uint32_t c12_hardware_layers;
@@ -524,7 +527,8 @@ static void captured_norm(qwen_layer0_vectors *trace, unsigned unit,
 
 int c12_qwen_cache_bits(qwen_reference *m, unsigned bits)
 {
-    if (!m || !m->kv_bits || m->position || (bits != 4 && bits != 8))
+    if (!m || !m->kv_bits || m->position || (bits != 4 && bits != 8) ||
+        (bits != 8 && m->c13_device.attention))
         return -1;
     const size_t bytes = (size_t)QWEN_LAYERS * m->context * 2 * QWEN_KV_HEADS *
                          c12_cache_record_size(bits, m->kv4_outliers);
@@ -626,10 +630,16 @@ int c12_qwen_set_device(qwen_reference *m, const c12_qwen_device *ops, uint32_t 
     return 0;
 }
 
+static int uses_z15_layer(const qwen_reference *m, unsigned layer)
+{
+    return m->position >= m->c13_first_device_pos &&
+           (m->c12_hardware_layers & (UINT32_C(1) << layer));
+}
+
 static int project_q16(qwen_reference *m, const matrix *mat, const activation *input,
                        int32_t *output, unsigned layer)
 {
-    if (!(m->c12_hardware_layers & (UINT32_C(1) << layer))) {
+    if (!uses_z15_layer(m, layer)) {
         linear(mat, input, output);
         return 0;
     }
@@ -668,6 +678,38 @@ static int project_q16(qwen_reference *m, const matrix *mat, const activation *i
     return 0;
 }
 
+unsigned c13_qwen_kv_bits(const qwen_reference *m)
+{
+    return m ? m->kv_bits : 0;
+}
+
+int c13_qwen_set_device(qwen_reference *m, const c13_qwen_device *ops, uint32_t layers)
+{
+    if (!m || !ops || m->position || !m->kv_bits || !layers ||
+        (layers >> (QWEN_LAYERS + 1)) || (ops->attention && m->kv_bits != 8))
+        return -1;
+    m->c13_device = *ops;
+    m->c13_device_layers = layers;
+    return 0;
+}
+
+int c13_qwen_replay_from(qwen_reference *m, unsigned first)
+{
+    if (!m || m->position || !m->c13_device.attention || first >= m->context)
+        return -1;
+    m->c13_first_device_pos = first;
+    return 0;
+}
+
+static int c13_norm(qwen_reference *m, const uint8_t *gamma, unsigned layer)
+{
+    if (m->position >= m->c13_first_device_pos && m->c13_device.rms &&
+        (m->c13_device_layers & (UINT32_C(1) << layer)))
+        return m->c13_device.rms(m->c13_device.ctx, m->x, gamma, m->norm);
+    rms(m->x, gamma, m->norm);
+    return 0;
+}
+
 int c12_qwen_capture_layer(qwen_reference *m, unsigned layer, c12_qwen_capture *capture)
 {
     if (!m || !m->kv_bits || layer >= QWEN_LAYERS)
@@ -679,7 +721,7 @@ int c12_qwen_capture_layer(qwen_reference *m, unsigned layer, c12_qwen_capture *
 
 static int add_residual(qwen_reference *m, unsigned layer)
 {
-    if (m->c12_device.residual && (m->c12_hardware_layers & (UINT32_C(1) << layer)))
+    if (m->c12_device.residual && uses_z15_layer(m, layer))
         return m->c12_device.residual(m->c12_device.ctx, m->x, m->norm);
     for (unsigned d = 0; d < QWEN_HIDDEN; ++d)
         m->x[d] = bounded((int64_t)m->x[d] + m->norm[d]);
@@ -695,7 +737,8 @@ static const int32_t *process_q16(qwen_reference *m, unsigned token, int logits)
     const uint8_t *rope = m->rope + (size_t)m->position * QWEN_HEAD_DIM * 4;
     for (unsigned i = 0; i < QWEN_LAYERS; ++i) {
         const block *b = m->layer + i;
-        rms(m->x, b->rms_in, m->norm);
+        if (c13_norm(m, b->rms_in, i))
+            return NULL;
         if (i == 0 && m->vectors)
             captured_norm(m->vectors, 0, m->x, m->norm);
         quantize_q16(m, &input, m->norm, QWEN_HIDDEN);
@@ -705,7 +748,7 @@ static const int32_t *process_q16(qwen_reference *m, unsigned token, int logits)
             return NULL;
         if (i == 0 && m->capture)
             captured_qk(m->capture->before, m->q, m->k);
-        if (m->c12_hardware_layers & (UINT32_C(1) << i)) {
+        if (uses_z15_layer(m, i)) {
             if (m->c12_device.rope(m->c12_device.ctx, m->q, m->k, rope))
                 return NULL;
         } else {
@@ -716,24 +759,36 @@ static const int32_t *process_q16(qwen_reference *m, unsigned token, int logits)
             captured_qk(m->capture->after, m->q, m->k);
             memcpy(m->capture->values, m->v, sizeof(m->v));
         }
-        int32_t *keys = m->keys;
-        int32_t *values = m->values;
-        if (m->kv_bits) {
-            store_cache(m, i);
+        const int offload = m->position >= m->c13_first_device_pos &&
+                            (m->c13_device_layers & (UINT32_C(1) << i));
+        if (offload && m->c13_device.attention) {
+            c12_qwen_capture *capture = m->c12_layer == i ? m->c12_capture : NULL;
+            if (m->c13_device.attention(m->c13_device.ctx, i, m->position, m->q, m->k,
+                                       m->v, m->exp, m->mix, capture ? capture->cache : NULL))
+                return NULL;
+            if (capture)
+                capture->cache_bytes = 2 * QWEN_KV_HEADS * (QWEN_HEAD_DIM + 4);
         } else {
-            keys += (size_t)i * m->context * KV_WIDTH;
-            values += (size_t)i * m->context * KV_WIDTH;
-            memcpy(keys + (size_t)m->position * KV_WIDTH, m->k, sizeof(m->k));
-            memcpy(values + (size_t)m->position * KV_WIDTH, m->v, sizeof(m->v));
+            int32_t *keys = m->keys;
+            int32_t *values = m->values;
+            if (m->kv_bits) {
+                store_cache(m, i);
+            } else {
+                keys += (size_t)i * m->context * KV_WIDTH;
+                values += (size_t)i * m->context * KV_WIDTH;
+                memcpy(keys + (size_t)m->position * KV_WIDTH, m->k, sizeof(m->k));
+                memcpy(values + (size_t)m->position * KV_WIDTH, m->v, sizeof(m->v));
+            }
+            causal_attention(m, keys, values);
         }
-        causal_attention(m, keys, values);
         quantize_q16(m, &input, m->mix, QWEN_HIDDEN);
         if (project_q16(m, &b->o, &input, m->norm, i))
             return NULL;
         if (add_residual(m, i))
             return NULL;
 
-        rms(m->x, b->rms_ffn, m->norm);
+        if (c13_norm(m, b->rms_ffn, i))
+            return NULL;
         if (i == 0 && m->vectors)
             captured_norm(m->vectors, 1, m->x, m->norm);
         quantize_q16(m, &input, m->norm, QWEN_HIDDEN);
@@ -744,7 +799,12 @@ static const int32_t *process_q16(qwen_reference *m, unsigned token, int logits)
             memcpy(m->vectors->gate, m->gate, sizeof(m->gate));
             memcpy(m->vectors->up, m->up, sizeof(m->up));
         }
-        swiglu(m->gate, m->up, m->exp);
+        if (offload && m->c13_device.swiglu) {
+            if (m->c13_device.swiglu(m->c13_device.ctx, m->gate, m->up, m->exp))
+                return NULL;
+        } else {
+            swiglu(m->gate, m->up, m->exp);
+        }
         if (i == 0 && m->vectors)
             memcpy(m->vectors->swiglu, m->gate, sizeof(m->gate));
         quantize_q16(m, &input, m->gate, QWEN_INTER);
@@ -756,7 +816,8 @@ static const int32_t *process_q16(qwen_reference *m, unsigned token, int logits)
             memcpy(m->c12_capture->hidden, m->x, sizeof(m->x));
     }
     if (logits) {
-        rms(m->x, m->rms, m->norm);
+        if (c13_norm(m, m->rms, QWEN_LAYERS))
+            return NULL;
         quantize_q16(m, &input, m->norm, QWEN_HIDDEN);
         if (project_q16(m, &m->embedding, &input, m->logits, QWEN_LAYERS))
             return NULL;

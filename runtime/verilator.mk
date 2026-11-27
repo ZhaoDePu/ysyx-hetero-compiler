@@ -48,10 +48,10 @@ $(OUT)/c11b_rope_words.h: ../tools/c11b_emit_rope.py ../hetero_compiler/c11_qwen
 	cd .. && python3 -B -m tools.c11b_emit_rope > "$@.tmp"
 	mv -f -- "$@.tmp" "$@"
 
-$(OUT)/c11b_qwen_z15.o: c11b_qwen_z15.c c11b_qwen_ops.h c12_qwen_ref.h $(OUT)/c11b_rope_words.h
+$(OUT)/c11b_qwen_z15.o: c11b_qwen_z15.c c11b_qwen_ops.h c12_qwen_ref.h c13_qwen.h $(OUT)/c11b_rope_words.h
 	$(CC) $(CFLAGS) -I"$(OUT)" -c "$<" -o "$@"
 
-$(OUT)/c11b_qwen_ref.o: c11_qwen_ref.c c11_qwen_ref.h c12_qwen_ref.h c12_qwen_cache.h c11b_reference.inc c11b_qwen_ops.h
+$(OUT)/c11b_qwen_ref.o: c11_qwen_ref.c c11_qwen_ref.h c12_qwen_ref.h c13_qwen.h c12_qwen_cache.h c11b_reference.inc c11b_qwen_ops.h
 	$(CC) $(CFLAGS) -DYSYX_C11B_NATIVE -mavx2 -c "$<" -o "$@"
 
 $(OUT)/c11b_layer0.o: tests/c11b_layer0.c c11_qwen_ref.h c11b_qwen_ops.h
@@ -77,9 +77,30 @@ $(OUT)/c11b_full: $(OUT)/c11b_full.o $(C11B_RTL)
 	mv -f -- "$@.tmp" "$@"
 
 
-$(OUT)/c12_qwen_rtl.o: tests/c12_qwen_rtl.c c12_qwen_ref.h c11b_qwen_ops.h
+$(OUT)/c12_qwen_rtl.o: tests/c12_qwen_rtl.c c12_qwen_ref.h c13_qwen.h c11b_qwen_ops.h
 	$(CC) $(CFLAGS) -DYSYX_C11B_NATIVE -I. -c "$<" -o "$@"
 
 $(OUT)/c12_qwen_rtl: $(OUT)/c12_qwen_rtl.o $(C11B_RTL)
+	$(CXX) -pthread $^ -o "$@.tmp"
+	mv -f -- "$@.tmp" "$@"
+
+$(OUT)/c13_gpu_words.h: c13_qwen_kernels.c c13_qwen_layout.h ../tools/c13_emit_gpu.py
+	python3 -B ../tools/c13_emit_gpu.py --source c13_qwen_kernels.c --scratch "$(OUT)" > "$@.tmp"
+	mv -f -- "$@.tmp" "$@"
+
+$(OUT)/c13_qwen_z15.o: c11b_qwen_z15.c c13_qwen_z15.inc c13_qwen.h c13_qwen_layout.h $(OUT)/c11b_rope_words.h $(OUT)/c13_gpu_words.h
+	$(CC) $(CFLAGS) -DYSYX_C11B_NATIVE -DYSYX_C13_PL -I"$(OUT)" -c "$<" -o "$@"
+
+$(OUT)/c13_qwen_rtl.o: tests/c12_qwen_rtl.c c13_qwen.h
+	$(CC) $(CFLAGS) -DYSYX_C11B_NATIVE -DYSYX_C13_PL -I. -c "$<" -o "$@"
+
+$(OUT)/c13_qwen_rtl: $(OUT)/c13_qwen_rtl.o $(OUT)/c13_qwen_z15.o $(filter-out $(OUT)/c11b_qwen_z15.o,$(C11B_RTL))
+	$(CXX) -pthread $^ -o "$@.tmp"
+	mv -f -- "$@.tmp" "$@"
+
+$(OUT)/c13_test_ops.o: tests/c13_qwen_ops.c c13_qwen.h c13_qwen_layout.h c12_qwen_cache.h
+	$(CC) $(CFLAGS) -DYSYX_C11B_NATIVE -DYSYX_C13_PL -I. -c "$<" -o "$@"
+
+$(OUT)/c13_test_ops: $(OUT)/c13_test_ops.o $(OUT)/c13_qwen_z15.o $(filter-out $(OUT)/c11b_qwen_z15.o,$(C11B_RTL))
 	$(CXX) -pthread $^ -o "$@.tmp"
 	mv -f -- "$@.tmp" "$@"

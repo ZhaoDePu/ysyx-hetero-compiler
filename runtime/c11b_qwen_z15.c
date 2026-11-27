@@ -1,7 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include "c11b_qwen_ops.h"
 
-#include "c12_qwen_ref.h"
+#include "c13_qwen.h"
 #include "z15_regs.h"
 
 #include <sched.h>
@@ -35,6 +35,10 @@ struct c11b_z15 {
     uint32_t dma_moves;
     int failed, rope_resident, residual_resident, pipeline, turbo;
     int8_t *expanded;
+    c13_io io;
+#ifdef YSYX_C13_PL
+    int c13_resident, c13_exp_resident;
+#endif
 };
 
 static int bad(void *ctx)
@@ -113,6 +117,8 @@ static int host_write(c11b_z15 *d, unsigned where, const void *data, size_t byte
         d->failed = 1;
         return -1;
     }
+    ++d->io.host_writes;
+    d->io.write_bytes += bytes;
     if ((uint64_t)where + bytes > d->ddr_peak)
         d->ddr_peak = (uint64_t)where + bytes;
     return 0;
@@ -126,6 +132,8 @@ static int host_read(c11b_z15 *d, unsigned where, void *data, size_t bytes)
         d->failed = 1;
         return -1;
     }
+    ++d->io.host_reads;
+    d->io.read_bytes += bytes;
     return 0;
 }
 
@@ -325,8 +333,8 @@ static int swiglu_hw(void *ctx, const int8_t *gate, const int8_t *up, const int8
            download(d, C, buf + VECTOR_OUTPUT, result, QWEN_INTER);
 }
 
-static int launch_warps(c11b_z15 *d, unsigned offset, const uint32_t *code, size_t length,
-                        const uint32_t pc[4], int *resident)
+static int launch_gpu_jobs(c11b_z15 *d, unsigned offset, const uint32_t *code, size_t length,
+                           const uint32_t *pc, unsigned warps, unsigned threads, int *resident)
 {
     if (ready(d, 0, Z15_GPU_BUSY))
         return -1;
@@ -336,7 +344,7 @@ static int launch_warps(c11b_z15 *d, unsigned offset, const uint32_t *code, size
                 return -1;
         *resident = 1;
     }
-    for (unsigned warp = 0; warp < 4; ++warp) {
+    for (unsigned warp = 0; warp < warps; ++warp) {
         unsigned i = 0;
         uint32_t slots;
         do {
@@ -346,11 +354,17 @@ static int launch_warps(c11b_z15 *d, unsigned offset, const uint32_t *code, size
                 return -1;
         } while (slots & (Z15_GPU_PENDING | 1u << warp));
         if (wr(d, Z15_GPU_PC, offset + pc[warp]) ||
-            wr(d, Z15_GPU_JOB, warp << 24 | 16u << 16) ||
+            wr(d, Z15_GPU_JOB, warp << 24 | threads << 16) ||
             action(d, Z15_START_GPU))
             return -1;
     }
     return ready(d, Z15_GPU_DONE, Z15_GPU_BUSY);
+}
+
+static int launch_warps(c11b_z15 *d, unsigned offset, const uint32_t *code, size_t length,
+                        const uint32_t pc[4], int *resident)
+{
+    return launch_gpu_jobs(d, offset, code, length, pc, 4, 16, resident);
 }
 
 static int rope_hw(void *ctx, int32_t *q, int32_t *k, const uint8_t *trig)
@@ -544,3 +558,13 @@ int c12_z15_enable_turbo(c11b_z15 *d)
     d->turbo = 1;
     return 0;
 }
+
+
+void c13_z15_io(const c11b_z15 *d, c13_io *output)
+{
+    *output = d->io;
+}
+
+#ifdef YSYX_C13_PL
+#include "c13_qwen_z15.inc"
+#endif

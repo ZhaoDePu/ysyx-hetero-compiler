@@ -1,6 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 #include "c11_qwen_bpe.h"
-#include "c12_qwen_ref.h"
+#include "c13_qwen.h"
 
 #include <errno.h>
 #include <inttypes.h>
@@ -22,6 +22,9 @@ typedef struct {
     const char *weights, *tokenizer, *mode, *backend, *csv, *plain, *chat, *prompt;
     unsigned steps, kv_bits;
     int turbo, trace_steps;
+#ifdef YSYX_C13_PL
+    unsigned pl_ops;
+#endif
 #ifdef YSYX_C11B_NATIVE
     const char *golden;
     unsigned token;
@@ -230,6 +233,20 @@ static int parse(options *o, int argc, char **argv)
         else if (!strcmp(key, "--encode")) o->plain = value;
         else if (!strcmp(key, "--encode-chat")) o->chat = value;
 #ifdef YSYX_C11B_NATIVE
+#ifdef YSYX_C13_PL
+        else if (!strcmp(key, "--pl-ops")) {
+            if (!strcmp(value, "c12"))
+                o->pl_ops = 0;
+            else if (!strcmp(value, "rms"))
+                o->pl_ops = C13_RMS;
+            else if (!strcmp(value, "swiglu"))
+                o->pl_ops = C13_RMS | C13_SWIGLU;
+            else if (!strcmp(value, "all"))
+                o->pl_ops = C13_ACCUMULATE;
+            else
+                return -1;
+        }
+#endif
         else if (!strcmp(key, "--mmio-profile")) {
             if (strcmp(value, "v1") && strcmp(value, "turbo"))
                 return -1;
@@ -369,6 +386,12 @@ static int verify_token(session *chat, const options *o)
 static int native_start(session *chat, const options *o)
 {
     int mixed = c12_qwen_mixed(chat->model);
+#ifdef YSYX_C13_PL
+    if (o->pl_ops && (!mixed || strcmp(o->backend, "z15"))) {
+        fputs("C13 GPU operations require the mixed model and the z15 backend.\n", stderr);
+        return -1;
+    }
+#endif
     if (o->kv_bits && c12_qwen_cache_bits(chat->model, o->kv_bits))
         return -1;
     if (!strcmp(o->backend, "cpu"))
@@ -399,6 +422,13 @@ static int native_start(session *chat, const options *o)
         fputs("The selected Turbo image did not report MMIO extension 0x0c0c0101.\n", stderr);
         return -1;
     }
+#ifdef YSYX_C13_PL
+    if (o->pl_ops) {
+        fputs("Valence C13 candidate: GPU nonlinearities selected. Projection requantization stays on the host.\n", stderr);
+        return c13_z15_attach(chat->model, chat->device,
+                              (UINT32_C(1) << (QWEN_LAYERS + 1)) - 1, o->pl_ops);
+    }
+#endif
     if (mixed) {
         fputs("Valence C12: NPU projections, GPU RoPE/residual and host Q16 nonlinearities.\n", stderr);
         return c12_z15_attach(chat->model, chat->device, (UINT32_C(1) << (QWEN_LAYERS + 1)) - 1);
@@ -413,6 +443,9 @@ int main(int argc, char **argv)
 #ifdef YSYX_C11B_NATIVE
          "z15_qwen25_chat --weights FILE --tokenizer FILE [--backend cpu|z15] "
         "[--kv-bits 4|8 (C12 default: 8)] [--mmio-profile v1|turbo] [--mode verify --token-id ID --golden FILE]\n"
+#ifdef YSYX_C13_PL
+        "[--pl-ops c12|rms|swiglu|all]\n"
+#endif
         "Chat and bench options: "
 #else
         "ysyx_qwen_chat --weights FILE --tokenizer FILE [--backend sim] "
