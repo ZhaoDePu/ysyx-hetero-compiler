@@ -2,7 +2,8 @@ import unittest
 
 import numpy as np
 
-from hetero_compiler.c14_spatial import pack_spatial_weights, row_plan, spatial_tiles
+from hetero_compiler.c14_conv import can_chain_conv
+from hetero_compiler.c14_spatial import pack_spatial_weights, row_plan, spatial_tiles, split_1x1
 from hetero_compiler.c6_memory import HALF_BYTES
 from hetero_compiler.c6_tensor import Conv
 
@@ -29,8 +30,7 @@ class SpatialTest(unittest.TestCase):
 
     def test_512_input_channels_use_split_gemm(self):
         spec = Conv("512cin", 10, 10, 512, 256, 1, 1, 0)
-        from hetero_compiler.c14_spatial import split_1x1
-
+        self.assertFalse(can_chain_conv(Conv("narrow", 10, 10, 512, 16, 1, 1, 0)))
         self.assertTrue(split_1x1(spec))
         w = np.zeros((1, 1, 512, 256), dtype=np.int8)
         packed, blocks = pack_spatial_weights(spec, w, np.zeros(256, dtype=np.int32))

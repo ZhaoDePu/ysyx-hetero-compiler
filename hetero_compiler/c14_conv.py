@@ -18,7 +18,8 @@ def can_chain_conv(spec):
     scratch = (align_dma(4 * n) + align_dma(spec.height * spec.input_pitch) +
                align_dma(oh * spec.output_pitch) +
                sum(align_dma(n * depth) for depth in chain_depths(spec.depth)))
-    return 511 < spec.depth <= 8192 and width <= 16 and n <= 16 and scratch <= HALF_BYTES
+    return (511 < spec.depth <= 8192 and spec.input_channels <= 511 and oh <= 511
+            and width <= 16 and n <= 16 and scratch <= HALF_BYTES)
 
 
 def chain_depths(k):

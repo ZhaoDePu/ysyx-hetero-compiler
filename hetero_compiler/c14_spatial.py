@@ -36,7 +36,9 @@ def _regions(spec, first, rows, weight_bytes, zone):
     _, ow = spec.output_hw
     out_pitch = spec.output_pitch
     max_w = min(16, ow)
-    _, orig_rows, _, crop_rows = _extents(spec, first, rows)
+    _, orig_rows, roi, crop_rows = _extents(spec, first, rows)
+    if orig_rows > 511 or crop_rows > 511 or (not crop_rows and roi + rows > 511):
+        raise ValueError(f"{spec.name}: shape or slice exceeds the nine-bit geometry fields")
     ci = spec.padded_channels
     crop_pitch = ((max_w - 1) * spec.stride + spec.kernel) * ci
     scratch = Scratch(zone)
