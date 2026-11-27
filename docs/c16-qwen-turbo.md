@@ -8,6 +8,8 @@ read paths retain their formats.
 
 Q, K and V use one staged activation and disjoint DDR result slices. The
 Valence-TC projects all three before the runtime reads any of the slices.
+Gate and Up likewise share one submission for both legacy grouped and
+Block-16 projections.
 The resident LM head uses the original group stride in DDR, which removes
 the per-panel host gather and enlarges a submission to 16,384 vocab rows.
 The host still applies the same Q24 epilogue. Exact Q16 RoPE and residual

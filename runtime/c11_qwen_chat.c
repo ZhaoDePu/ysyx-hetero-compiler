@@ -308,7 +308,7 @@ static int parse(options *o, int argc, char **argv)
                 return -1;
             o->trace_steps = !strcmp(value, "on");
         }
-        else if (!strcmp(key, "--max-new-tokens")) {
+        else if (!strcmp(key, "--max-new-tokens") || !strcmp(key, "--min-new-tokens")) {
             char *end;
             errno = 0;
             unsigned long n = strtoul(value, &end, 10);

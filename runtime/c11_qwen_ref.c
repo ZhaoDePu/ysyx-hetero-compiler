@@ -876,6 +876,34 @@ static int project_parallel(qwen_reference *m, const activation *input, unsigned
     return 0;
 }
 
+static int project_gate_up(qwen_reference *m, const block *b, const activation *input, unsigned layer)
+{
+    if (!(m->c12_hardware_layers & (UINT32_C(1) << layer)) || !m->c12_device.project_parallel)
+        return project_q16(m, &b->gate, input, m->gate, layer) ||
+               project_q16(m, &b->up, input, m->up, layer);
+    const matrix *const mat[] = {&b->gate, &b->up};
+    int32_t *const out[] = {m->gate, m->up};
+    if (!mat[0]->permutation && !mat[1]->permutation)
+        return project_parallel(m, input, layer, mat, out, 2);
+    if (!m->c12_device.project_block16_pair || !mat[0]->permutation || !mat[1]->permutation)
+        return project_q16(m, mat[0], input, out[0], layer) ||
+               project_q16(m, mat[1], input, out[1], layer);
+    uint64_t units[2][QWEN_INTER / 16];
+    uint16_t coefficients[2][2 * (QWEN_INTER / 16) * (QWEN_HIDDEN / 64)];
+    int32_t accum[2][QWEN_INTER];
+    valence_block16_projection jobs[2];
+    for (unsigned i = 0; i < 2; ++i) {
+        block16_coefficients(mat[i], input, units[i], coefficients[i]);
+        jobs[i] = (valence_block16_projection){mat[i]->packed, mat[i]->fine, coefficients[i],
+                                              accum[i], mat[i]->outputs};
+    }
+    if (m->c12_device.project_block16_pair(m->c12_device.ctx, jobs, m->group, input->a8))
+        return -1;
+    for (unsigned i = 0; i < 2; ++i)
+        block16_finish(mat[i], accum[i], units[i], out[i]);
+    return 0;
+}
+
 int c12_qwen_capture_layer(qwen_reference *m, unsigned layer, c12_qwen_capture *capture)
 {
     if (!m || !m->kv_bits || layer >= QWEN_LAYERS)
@@ -958,8 +986,7 @@ static const int32_t *process_q16(qwen_reference *m, unsigned token, int logits)
         if (i == 0 && m->vectors)
             captured_norm(m->vectors, 1, m->x, m->norm);
         quantize_q16(m, &input, m->norm, QWEN_HIDDEN);
-        if (project_q16(m, &b->gate, &input, m->gate, i) ||
-            project_q16(m, &b->up, &input, m->up, i))
+        if (project_gate_up(m, b, &input, i))
             return NULL;
         if (i == 0 && m->vectors) {
             memcpy(m->vectors->gate, m->gate, sizeof(m->gate));

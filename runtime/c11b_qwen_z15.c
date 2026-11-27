@@ -523,14 +523,13 @@ static int project_block16_rows(void *ctx, const uint8_t *packed, const uint8_t 
 
 /* One activation and one contiguous W4 window per scratch half. Only the
    completed INT32 projection travels back to the host. */
-int c11b_z15_project_block16(void *ctx, const uint8_t *packed, const uint8_t *fine,
+static int schedule_block16(c11b_z15 *d, const uint8_t *packed, const uint8_t *fine,
                             unsigned n, unsigned k,
-                           unsigned group, const int8_t *a8, const uint16_t *coeff, int32_t *out)
+                           unsigned group, const uint16_t *coeff, unsigned output, int staged)
 {
     enum { WIDTH = 16, C_BASE = 0xf8000, CONTINUE = 1u << 18, DEFER = 1u << 19,
            GROUP_SCALE = 4u };
-    c11b_z15 *d = ctx;
-    if (!d || !packed || !a8 || !coeff || !out || d->target != VALENCE_P17 || !n || n > MAX_OUTPUT || n % WIDTH ||
+    if (!d || !packed || !coeff || d->target != VALENCE_P17 || !n || n > MAX_OUTPUT || n % WIDTH ||
         k != QWEN_HIDDEN || (group != 64 && group != 128) || k % group)
         return -1;
     const unsigned group_count = k / group;
@@ -539,7 +538,6 @@ int c11b_z15_project_block16(void *ctx, const uint8_t *packed, const uint8_t *fi
     const unsigned max_panels = (C_BASE - NPU_B) / (panel_bytes * passes);
     const unsigned count = n / WIDTH;
     const unsigned stage = d->ring;
-    const unsigned output = stage + GEMM_OUTPUT;
     const uintptr_t image = (uintptr_t)d->resident_image;
     const size_t bytes = (size_t)n * k / 2;
     unsigned weights[2];
@@ -550,11 +548,9 @@ int c11b_z15_project_block16(void *ctx, const uint8_t *packed, const uint8_t *fi
         if (image && address >= image && !(offset & 31u) &&
             offset <= d->resident_bytes && bytes <= d->resident_bytes - offset)
             weights[pass] = (unsigned)offset;
-        else if (host_write(d, weights[pass], base, bytes))
+        else if (staged || host_write(d, weights[pass], base, bytes))
             return -1;
     }
-    if (host_write(d, stage, a8, k))
-        return -1;
 
     unsigned half = 0;
     for (unsigned first = 0; first < count; first += max_panels, half ^= Z15_HALF_BYTES) {
@@ -589,7 +585,45 @@ int c11b_z15_project_block16(void *ctx, const uint8_t *packed, const uint8_t *fi
         if (dma(d, output + first * WIDTH * 4, half + C_BASE, panels * WIDTH * 4, 1))
             return -1;
     }
-    return host_read(d, output, out, (size_t)n * sizeof(*out));
+    return 0;
+}
+
+int c11b_z15_project_block16(void *ctx, const uint8_t *packed, const uint8_t *fine,
+                            unsigned n, unsigned k, unsigned group, const int8_t *a8,
+                            const uint16_t *coeff, int32_t *out)
+{
+    c11b_z15 *d = ctx;
+    if (!d || !a8 || !out || k != QWEN_HIDDEN || d->target != VALENCE_P17)
+        return -1;
+    const unsigned output = d->ring + GEMM_OUTPUT;
+    return host_write(d, d->ring, a8, k) ||
+           schedule_block16(d, packed, fine, n, k, group, coeff, output, 0) ||
+           host_read(d, output, out, n * sizeof(*out)) ? -1 : 0;
+}
+
+static int project_block16_pair(void *ctx, const valence_block16_projection *jobs,
+                                unsigned group, const int8_t *a8)
+{
+    c11b_z15 *d = ctx;
+    const unsigned base = d->ring + GEMM_OUTPUT;
+    unsigned output = base;
+    if (host_write(d, d->ring, a8, QWEN_HIDDEN))
+        return -1;
+    for (unsigned i = 0; i < 2; ++i) {
+        const valence_block16_projection *job = jobs + i;
+        if (schedule_block16(d, job->packed, job->fine, job->channels, QWEN_HIDDEN,
+                             group, job->coefficients, output, 1))
+            return -1;
+        output += job->channels * 4u;
+    }
+    output = base;
+    for (unsigned i = 0; i < 2; ++i) {
+        const unsigned bytes = jobs[i].channels * 4u;
+        if (host_read(d, output, jobs[i].partials, bytes))
+            return -1;
+        output += bytes;
+    }
+    return 0;
 }
 
 static int project(void *ctx, const uint8_t *packed, unsigned n, unsigned k,
@@ -925,6 +959,7 @@ int c12_z15_attach(qwen_reference *m, c11b_z15 *d, uint32_t layers)
         ops.project_head = project_head;
         ops.project_rows = project_rows;
         ops.project_block16_rows = project_block16_rows;
+        ops.project_block16_pair = project_block16_pair;
         ops.rope = NULL;
         ops.residual = NULL;
     }

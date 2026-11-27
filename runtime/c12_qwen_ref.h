@@ -16,6 +16,13 @@ typedef struct {
     unsigned rows, bits;
 } valence_raw_projection;
 
+typedef struct {
+    const uint8_t *packed, *fine;
+    const uint16_t *coefficients;
+    int32_t *partials;
+    unsigned channels;
+} valence_block16_projection;
+
 enum { C16_HEAD_PANEL = 16384, C16_PREFILL_ROWS = 16, C16_GROUPED_COLS = 496 };
 
 typedef struct {
@@ -34,6 +41,7 @@ typedef struct {
                         unsigned, const int8_t *, int32_t *);
     int (*project_block16_rows)(void *, const uint8_t *, const uint8_t *, unsigned, unsigned, unsigned,
                                 const int8_t *, int32_t *);
+    int (*project_block16_pair)(void *, const valence_block16_projection *, unsigned, const int8_t *);
 } c12_qwen_device;
 
 const int32_t *c16_qwen_prefill(qwen_reference *, const uint32_t *, unsigned);
