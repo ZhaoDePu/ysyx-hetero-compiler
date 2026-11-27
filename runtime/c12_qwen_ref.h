@@ -51,6 +51,7 @@ int c12_qwen_cache_bits(qwen_reference *, unsigned);
 /* Bit 0..23 selects hardware layers, bit 24 selects the tied LM head. */
 int c12_qwen_set_device(qwen_reference *, const c12_qwen_device *, uint32_t layers);
 int c12_qwen_capture_layer(qwen_reference *, unsigned, c12_qwen_capture *);
+int c16_qwen_capture_prefill(qwen_reference *, unsigned layer, c12_qwen_capture *, unsigned count);
 
 #ifdef YSYX_C11B_NATIVE
 int c12_z15_attach(qwen_reference *, c11b_z15 *, uint32_t layers);

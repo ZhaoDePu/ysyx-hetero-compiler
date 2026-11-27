@@ -33,9 +33,9 @@ int main(int argc, char **argv)
     ysyx_hal_t hal = {0};
     c11b_z15 *device = NULL;
     int failed = 1;
-    c12_qwen_capture want = {0}, actual = {0};
-    if (!cpu || !rtl || c12_qwen_capture_layer(cpu, (unsigned)layer, &want) ||
-        c12_qwen_capture_layer(rtl, (unsigned)layer, &actual) ||
+    c12_qwen_capture want[MAX_TOKENS] = {0}, actual[MAX_TOKENS] = {0};
+    if (!cpu || !rtl || c16_qwen_capture_prefill(cpu, (unsigned)layer, want, count) ||
+        c16_qwen_capture_prefill(rtl, (unsigned)layer, actual, count) ||
         ysyx_hal_verilator_open(&hal, &error))
         goto done;
     size_t bytes;
@@ -51,18 +51,25 @@ int main(int argc, char **argv)
     const int32_t *got = c16_qwen_prefill(rtl, input, count);
     if (!golden || !got || c11b_z15_stats(device, &after))
         goto done;
-    if (want.cache_bytes != actual.cache_bytes ||
-        memcmp(want.cache, actual.cache, want.cache_bytes) ||
-        memcmp(want.hidden, actual.hidden, sizeof(want.hidden)) ||
-        memcmp(golden, got, QWEN_VOCAB * sizeof(*got))) {
-        error = "prefill KV, hidden or logits mismatch";
+    size_t cache_bytes = 0;
+    for (unsigned i = 0; i < count; ++i) {
+        if (!want[i].cache_bytes || want[i].cache_bytes != actual[i].cache_bytes ||
+            memcmp(want[i].cache, actual[i].cache, want[i].cache_bytes) ||
+            memcmp(want[i].hidden, actual[i].hidden, sizeof(want[i].hidden))) {
+            error = "prefill KV or hidden mismatch";
+            goto done;
+        }
+        cache_bytes += want[i].cache_bytes;
+    }
+    if (memcmp(golden, got, QWEN_VOCAB * sizeof(*got))) {
+        error = "prefill final logits mismatch";
         goto done;
     }
     const z15_cmdq_stats qa = c11b_z15_queue_stats(device);
     printf("C16_PREFILL_PASS layer=%lu tokens=%u hidden=%zu kv=%zu logits=%zu wall=%" PRIu64
            " npu=%" PRIu64 " dma_bytes=%" PRIu64 " starts=%" PRIu64 " commands=%" PRIu64
            " error=%" PRIu32 " slverr=0 invalid_dma=%" PRIu32 "\n",
-           layer, count, sizeof(want.hidden), want.cache_bytes, QWEN_VOCAB * sizeof(*got),
+           layer, count, count * sizeof(want[0].hidden), cache_bytes, QWEN_VOCAB * sizeof(*got),
            after.wall_ticks - before.wall_ticks, after.npu_ticks - before.npu_ticks,
            after.dma_bytes - before.dma_bytes, qa.starts - qb.starts, qa.commands - qb.commands,
            after.abi_error, after.invalid_dma_descriptors);

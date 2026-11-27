@@ -38,7 +38,8 @@ struct qwen_reference {
     int block16;
     uint8_t *packed_kv;
     c12_qwen_device c12_device;
-    c12_qwen_capture *c12_capture;
+    c12_qwen_capture *c12_capture, *prefill_trace;
+    unsigned trace_start, trace_count;
     unsigned c12_layer;
     uint32_t c12_hardware_layers;
     int32_t *c12_partials;
@@ -739,6 +740,14 @@ static void unpack_cache(const qwen_reference *m, const uint8_t *record, int32_t
             head[i] = shift_cache(head[i], (int)(exponents[i] ^ 128u) - 128);
 }
 
+static c12_qwen_capture *prefill_capture(qwen_reference *m, unsigned layer, unsigned position)
+{
+    if (!m->prefill_trace || layer != m->c12_layer || position < m->trace_start ||
+        position - m->trace_start >= m->trace_count)
+        return NULL;
+    return m->prefill_trace + position - m->trace_start;
+}
+
 static void store_cache(qwen_reference *m, unsigned layer, unsigned unpack_from)
 {
     const size_t head_bytes = c12_cache_record_size(m->kv_bits, m->kv4_outliers);
@@ -757,6 +766,11 @@ static void store_cache(qwen_reference *m, unsigned layer, unsigned unpack_from)
     if (m->c12_capture && m->c12_layer == layer) {
         memcpy(m->c12_capture->cache, record, slot);
         m->c12_capture->cache_bytes = slot;
+    }
+    c12_qwen_capture *capture = prefill_capture(m, layer, m->position);
+    if (capture) {
+        memcpy(capture->cache, record, slot);
+        capture->cache_bytes = slot;
     }
     for (unsigned pos = unpack_from; pos <= m->position; ++pos) {
         const uint8_t *p = start + pos * slot;
@@ -913,6 +927,17 @@ int c12_qwen_capture_layer(qwen_reference *m, unsigned layer, c12_qwen_capture *
     return 0;
 }
 
+int c16_qwen_capture_prefill(qwen_reference *m, unsigned layer, c12_qwen_capture *trace, unsigned count)
+{
+    if (!m || !m->kv_bits || layer >= QWEN_LAYERS || !trace || !count || count > m->context - m->position)
+        return -1;
+    m->c12_layer = layer;
+    m->prefill_trace = trace;
+    m->trace_start = m->position;
+    m->trace_count = count;
+    return 0;
+}
+
 static int add_residual(qwen_reference *m, unsigned layer)
 {
     if (m->c12_device.residual && (m->c12_hardware_layers & (UINT32_C(1) << layer)))
@@ -1002,6 +1027,9 @@ static const int32_t *process_q16(qwen_reference *m, unsigned token, int logits)
             return NULL;
         if (m->c12_capture && m->c12_layer == i)
             memcpy(m->c12_capture->hidden, m->x, sizeof(m->x));
+        c12_qwen_capture *capture = prefill_capture(m, i, m->position);
+        if (capture)
+            memcpy(capture->hidden, m->x, sizeof(m->x));
     }
     if (logits && emit_logits(m, &input))
         return NULL;
@@ -1147,6 +1175,11 @@ static int prefill_tile(qwen_reference *m, prefill_work *work, const uint32_t *t
                 work->state[row][d] = bounded((int64_t)work->state[row][d] + (work->norm + row * QWEN_HIDDEN)[d]);
         if (m->c12_capture && m->c12_layer == i)
             memcpy(m->c12_capture->hidden, work->state[rows - 1], sizeof(m->x));
+        for (unsigned row = 0; row < rows; ++row) {
+            c12_qwen_capture *capture = prefill_capture(m, i, start + row);
+            if (capture)
+                memcpy(capture->hidden, work->state[row], sizeof(m->x));
+        }
     }
     memcpy(m->x, work->state[rows - 1], sizeof(m->x));
     m->position = start + rows;
