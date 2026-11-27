@@ -24,6 +24,7 @@ typedef struct {
     int turbo, trace_steps;
 #ifdef YSYX_C11B_NATIVE
     const char *golden;
+    valence_target target;
     unsigned token;
     int token_given;
 #endif
@@ -136,6 +137,7 @@ static int turn(session *chat, const char *prompt, const options *o, FILE *csv)
         const double step_start = o->trace_steps ? seconds() : 0;
 #ifdef YSYX_C11B_NATIVE
         ysyx_stats_t token_before;
+        const valence_submission_stats submit_before = c11b_z15_submission_stats(chat->device);
         if (o->trace_steps && chat->device && c11b_z15_stats(chat->device, &token_before))
             return -1;
 #endif
@@ -161,6 +163,16 @@ static int turn(session *chat, const char *prompt, const options *o, FILE *csv)
                         token_after.gpu_ticks - token_before.gpu_ticks,
                         token_after.dma_bytes - token_before.dma_bytes,
                         token_after.npu_gpu_overlap_ticks - token_before.npu_gpu_overlap_ticks);
+                const valence_submission_stats submit_after = c11b_z15_submission_stats(chat->device);
+                fprintf(stderr, " batches=%" PRIu64 " descriptor_words=%" PRIu64
+                        " mmio_writes=%" PRIu64 " doorbells=%" PRIu64 " host_writes=%" PRIu64
+                        " host_reads=%" PRIu64,
+                        submit_after.batches - submit_before.batches,
+                        submit_after.descriptor_words - submit_before.descriptor_words,
+                        submit_after.mmio_writes - submit_before.mmio_writes,
+                        submit_after.doorbells - submit_before.doorbells,
+                        submit_after.host_writes - submit_before.host_writes,
+                        submit_after.host_reads - submit_before.host_reads);
             }
 #endif
             fputc('\n', stderr);
@@ -230,6 +242,11 @@ static int parse(options *o, int argc, char **argv)
         else if (!strcmp(key, "--encode")) o->plain = value;
         else if (!strcmp(key, "--encode-chat")) o->chat = value;
 #ifdef YSYX_C11B_NATIVE
+        else if (!strcmp(key, "--target")) {
+            if (strcmp(value, "step2") && strcmp(value, "p17"))
+                return -1;
+            o->target = !strcmp(value, "p17") ? VALENCE_P17 : VALENCE_STEP2;
+        }
         else if (!strcmp(key, "--mmio-profile")) {
             if (strcmp(value, "v1") && strcmp(value, "turbo"))
                 return -1;
@@ -274,6 +291,7 @@ static int parse(options *o, int argc, char **argv)
            (strcmp(o->backend, "cpu") && strcmp(o->backend, "z15")) ||
            (encode && !strcmp(o->backend, "z15")) ||
            (o->turbo && strcmp(o->backend, "z15")) ||
+           (o->target == VALENCE_P17 && (o->turbo || strcmp(o->backend, "z15"))) ||
            (!strcmp(o->mode, "verify") ? !o->golden || !o->token_given || encode || o->csv
              : (strcmp(o->mode, "chat") && strcmp(o->mode, "bench")) || o->golden || o->token_given);
 #else
@@ -390,7 +408,7 @@ static int native_start(session *chat, const options *o)
     }
     size_t bytes;
     const uint8_t *data = qwen_reference_image(chat->model, &bytes);
-    chat->device = c11b_z15_open(&chat->hal, data, bytes, &why);
+    chat->device = c11b_z15_open_target(&chat->hal, data, bytes, o->target, &why);
     if (!chat->device) {
         fprintf(stderr, "%s\n", why ? why : "could not open the Z15 Qwen runtime");
         return -1;
@@ -400,7 +418,9 @@ static int native_start(session *chat, const options *o)
         return -1;
     }
     if (mixed) {
-        fputs("Valence C12: NPU projections, GPU RoPE/residual and host Q16 nonlinearities.\n", stderr);
+        fputs(o->target == VALENCE_P17
+              ? "Valence P17: packed W4/INT8 TC projections, SC RoPE/residual, host Q16 nonlinearities.\n"
+              : "Valence C12: NPU projections, GPU RoPE/residual and host Q16 nonlinearities.\n", stderr);
         return c12_z15_attach(chat->model, chat->device, (UINT32_C(1) << (QWEN_LAYERS + 1)) - 1);
     }
     return qwen_reference_native(chat->model, c11b_z15_ops(chat->device));
@@ -412,7 +432,7 @@ int main(int argc, char **argv)
     static const char help[] =
 #ifdef YSYX_C11B_NATIVE
          "z15_qwen25_chat --weights FILE --tokenizer FILE [--backend cpu|z15] "
-        "[--kv-bits 4|8 (C12 default: 8)] [--mmio-profile v1|turbo] [--mode verify --token-id ID --golden FILE]\n"
+        "[--kv-bits 4|8 (C12 default: 8)] [--target step2|p17] [--mmio-profile v1|turbo] [--mode verify --token-id ID --golden FILE]\n"
         "Chat and bench options: "
 #else
         "ysyx_qwen_chat --weights FILE --tokenizer FILE [--backend sim] "

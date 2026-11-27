@@ -222,10 +222,12 @@ def _emit_overlap(layers, program, stages, native, gpu, directory, *, stream_ove
 
 
 def emit_program(directory, layers, tensors, inputs, outputs, slots, initial, *,
-                 external_inputs=True, c6=None, overlap=False, stream_overlap=False):
+                 external_inputs=True, c6=None, overlap=False, stream_overlap=False, rtl_only=False):
     """Write a bundle and let the existing serializer validate every move."""
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
+    if rtl_only and (directory / "program.yhb").exists():
+        raise ValueError("use a separate output directory for Phase 17 RTL replay")
     image = directory / "ddr_initial.bin"
     peak = max((slot.offset + slot.capacity for slot in slots.values()), default=0)
     with image.open("wb") as stream:
@@ -277,7 +279,10 @@ def emit_program(directory, layers, tensors, inputs, outputs, slots, initial, *,
         manifest["plan"]["schedule"] = "stream_overlap" if stream_overlap else "overlap"
     if c6 is not None:
         manifest["c6"] = c6
-    emit_yhb(directory, manifest)
+    if rtl_only:
+        manifest["rtl_target"] = "p17"
+    else:
+        emit_yhb(directory, manifest)
     (directory / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     return manifest
 

@@ -10,7 +10,7 @@ def substitute(source, old, new):
     return source.replace(old, new)
 
 
-def observe(source, gpu_step=2, gpu_divisor=3):
+def observe(source, gpu_step=2, gpu_divisor=3, *, p17=False):
     if not 0 < gpu_step < gpu_divisor:
         raise ValueError("expected GPU/NPU clock ratio between zero and one")
     result = substitute(source, '#include "Vz15_bd_axi_shell.h"',
@@ -26,9 +26,10 @@ def observe(source, gpu_step=2, gpu_divisor=3):
     uint64_t c3_read_bytes=0,c3_write_bytes=0;
     uint64_t c4_occupancy[8]={};
     uint64_t c4_read_overlap_beats=0,c4_write_overlap_beats=0;""")
-    result = substitute(result, "        gpu_phase+=2;",
+    old_step, old_divisor = (3, 4) if p17 else (2, 3)
+    result = substitute(result, f"        gpu_phase+={old_step};",
                         f"        const bool was_gpu_high=dut.clk_gpu;\n        gpu_phase+={gpu_step};")
-    result = substitute(result, "if(gpu_phase>=3) { gpu_phase-=3;",
+    result = substitute(result, f"if(gpu_phase>={old_divisor}) {{ gpu_phase-={old_divisor};",
                         f"if(gpu_phase>={gpu_divisor}) {{ gpu_phase-={gpu_divisor};")
     result = substitute(result, "        context.timeInc(1);\n        dut.eval();",
                         """        context.timeInc(1);
@@ -36,11 +37,12 @@ def observe(source, gpu_step=2, gpu_divisor=3):
         if(!was_gpu_high && dut.clk_gpu && dut.aresetn &&
            dut.rootp->z15_bd_axi_shell__DOT__implementation__DOT__gpu_busy)
             ++c2_gpu_clock;""")
-    result = substitute(result, "            --read_left; ar_st+=32; read_hold=false;",
+    read_counter = "ddr_read_bytes+=32; " if p17 else ""
+    result = substitute(result, f"            {read_counter}--read_left; ar_st+=32; read_hold=false;",
                         """            c3_read_bytes+=32;
             c4_read_overlap_beats+=dut.rootp->z15_bd_axi_shell__DOT__implementation__DOT__gpu_busy ||
                                    dut.rootp->z15_bd_axi_shell__DOT__implementation__DOT__npu_busy;
-            --read_left; ar_st+=32; read_hold=false;""")
+            """ + read_counter + "--read_left; ar_st+=32; read_hold=false;")
     result = substitute(result, "            require(write_left!=0,\"W with no AW\");",
                         """            require(write_left!=0,"W with no AW");
             c4_write_overlap_beats+=dut.rootp->z15_bd_axi_shell__DOT__implementation__DOT__gpu_busy ||
@@ -89,9 +91,10 @@ if __name__ == "__main__":
     cli.add_argument("dst", type=Path)
     cli.add_argument("--gpu-clock-ratio", choices=("2:3", "4:5", "24840:32911", "3:4", "161:221"), default="2:3")
     cli.add_argument("--paged-ddr", action="store_true")
+    cli.add_argument("--p17", action="store_true", help="instrument the pinned Phase 17 board rig")
     args = cli.parse_args()
     step, divisor = map(int, args.gpu_clock_ratio.split(":"))
-    instrumented = observe(args.src.read_text(encoding="utf-8"), step, divisor)
+    instrumented = observe(args.src.read_text(encoding="utf-8"), step, divisor, p17=args.p17)
     if args.paged_ddr:
         instrumented = "#include <array>\n#include <memory>\n#include <vector>\n" + paged_ddr(instrumented)
     args.dst.write_text(instrumented, encoding="utf-8")

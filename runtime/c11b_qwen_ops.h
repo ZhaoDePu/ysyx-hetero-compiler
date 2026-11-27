@@ -20,6 +20,18 @@ typedef struct c11b_z15 c11b_z15;
 
 c11b_z15 *c11b_z15_open(const ysyx_hal_t *, const uint8_t *image, size_t,
                        const char **error);
+typedef enum { VALENCE_STEP2, VALENCE_P17 } valence_target;
+
+typedef struct {
+    uint64_t batches, descriptor_words, mmio_writes, doorbells, host_reads, host_writes;
+} valence_submission_stats;
+
+c11b_z15 *c11b_z15_open_target(const ysyx_hal_t *, const uint8_t *, size_t,
+                              valence_target, const char **);
+int c11b_z15_project_grouped(void *, const uint8_t *, unsigned n, unsigned k,
+                            unsigned group, unsigned bits, const int8_t *, int32_t *);
+valence_submission_stats c11b_z15_submission_stats(const c11b_z15 *);
+
 const c11b_ops *c11b_z15_ops(c11b_z15 *);
 void c11b_z15_close(c11b_z15 *);
 void c11b_z15_pipeline(c11b_z15 *, int enable);

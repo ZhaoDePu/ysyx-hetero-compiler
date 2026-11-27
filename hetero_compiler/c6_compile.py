@@ -10,6 +10,7 @@ from .c6_attention import lower_matmul, lower_q23_softmax, lower_vpu_softmax, lo
 from .c6_depthwise import depthwise_tiles, depthwise_weights, depthwise_widths
 from .c6_layout import plan_layout
 from .c6_memory import Lifetime, reserve_ddr
+from .c14_conv import can_chain_conv, chain_tiles, pack_chain_weights
 from .c6_reduce_conv import combine_tiles, raw_conv_tiles, reduction_widths
 from .c6_schedule import emit_program
 from .c6_tensor import Conv, conv_tiles, pack_weights
@@ -87,7 +88,7 @@ class _Preparation:
         return name
 
 
-def _conv(node, ctx, *, fast_reduce=False, reduce_bank_skew=False, reduce_in_scratch=False):
+def _conv(node, ctx, *, fast_reduce=False, reduce_bank_skew=False, reduce_in_scratch=False, target="step2"):
     name, attrs = node["id"], node["attrs"]
     src, dst = node["inputs"][0], node["outputs"][0]
     a, c = ctx.tensors[src], ctx.tensors[dst]
@@ -137,6 +138,17 @@ def _conv(node, ctx, *, fast_reduce=False, reduce_bank_skew=False, reduce_in_scr
             return (conv_tiles(spec, input_ddr=slots[src].offset, output_ddr=slots[dst].offset,
                                weights_ddr=slots[b_name].offset, bias_ddr=slots[bias_name].offset,
                                mul=mul, shift=shift, lut=lut),)
+
+        return schedule
+
+    if target == "p17" and can_chain_conv(spec):
+        b_names = [ctx.constant(f"{name}/@chain{index}", block)
+                   for index, block in enumerate(pack_chain_weights(spec, weights))]
+
+        def schedule(slots):
+            return (chain_tiles(spec, input_ddr=slots[src].offset, output_ddr=slots[dst].offset,
+                                weights_ddr=[slots[b].offset for b in b_names],
+                                bias_ddr=slots[bias_name].offset, mul=mul, shift=shift, lut=lut),)
 
         return schedule
 
@@ -352,8 +364,10 @@ def fuse_conv_edge_luts(graph):
 
 def prepare_graph(graph, constants, *, selected=None, lowerers=None, fast_reduce=False,
                   reduce_bank_skew=False, reduce_in_scratch=False, classifier=False,
-                  reuse_ddr=True):
+                  reuse_ddr=True, target="step2"):
     """Resolve graph boundaries and return physical layer jobs with DDR liveness."""
+    if target not in {"step2", "p17"}:
+        raise ValueError(f"unknown Z15 RTL target {target}")
     tensors = layouts(graph)
     active = [node for node in graph["nodes"] if node["device"] != "PS" and
               (selected is None or node["id"] in selected)]
@@ -376,7 +390,7 @@ def prepare_graph(graph, constants, *, selected=None, lowerers=None, fast_reduce
 
     def conv(node, context):
         return _conv(node, context, fast_reduce=fast_reduce or reduce_bank_skew or reduce_in_scratch,
-                     reduce_bank_skew=reduce_bank_skew, reduce_in_scratch=reduce_in_scratch)
+                     reduce_bank_skew=reduce_bank_skew, reduce_in_scratch=reduce_in_scratch, target=target)
 
     lower = {**dict.fromkeys(_VECTOR_OPS, _vector), "Conv": conv, "Reshape": _layout,
              "Transpose": _layout, "MatMul": _matrix, "Q23Softmax": _matrix, "VpuSoftmax": _matrix, "C7LogSoftmax": _matrix,
@@ -434,12 +448,12 @@ def prepare_graph(graph, constants, *, selected=None, lowerers=None, fast_reduce
 
 def compile_graph(directory, graph, constants, *, lowerers=None, selected=None, seeded=None,
                   fast_reduce=False, overlap=False, reduce_bank_skew=False, reduce_in_scratch=False,
-                  stream_overlap=False, classifier=False, reuse_ddr=True):
-    """Write a guarded legacy-compatible YHB1 bundle with C6 DDR/scratch jobs."""
+                  stream_overlap=False, classifier=False, reuse_ddr=True, target="step2"):
+    """Write a Step 2 YHB1 bundle or a Phase 17 RTL replay manifest."""
     tensors, inputs, outputs, slots, initial, layers, const_outputs, c6 = prepare_graph(
         graph, constants, selected=selected, lowerers=lowerers, fast_reduce=fast_reduce,
         reduce_bank_skew=reduce_bank_skew, reduce_in_scratch=reduce_in_scratch,
-        classifier=classifier, reuse_ddr=reuse_ddr)
+        classifier=classifier, reuse_ddr=reuse_ddr, target=target)
     if seeded is not None:
         if set(seeded) != set(inputs):
             raise ValueError("replay seed tensors must exactly match compiled input symbols")
@@ -452,5 +466,6 @@ def compile_graph(directory, graph, constants, *, lowerers=None, selected=None, 
         yhb_tensors.update({alias: yhb_tensors[source] for alias, source in aliases.items()})
         yhb_tensors.update(const_outputs)
     manifest = emit_program(directory, layers, yhb_tensors, inputs, outputs, slots, initial,
-                            external_inputs=seeded is None, c6=c6, overlap=overlap, stream_overlap=stream_overlap)
+                            external_inputs=seeded is None, c6=c6, overlap=overlap,
+                            stream_overlap=stream_overlap, rtl_only=target == "p17")
     return manifest, tensors, initial

@@ -22,10 +22,17 @@ enum {
     AQ = 0x1000, AV = 0x1200, AS = 0xd0000, AP = 0xd0400, AO = 0xd0800,
     POLL = 16777216, V3_VERSION = 0x0120, V3_DMA_CYCLES = 0x0100,
     V3_DMA_COMPUTE = 0x0108, V3_DMA_TRANSACTIONS = 0x0110,
-    V3_ACTIVATION_PACKED = 0x1800
+    V3_ACTIVATION_PACKED = 0x1800,
+    P17_WEIGHT_CONFIG = 0xd0, P17_KV_CONFIG = 0xd4, P17_SIGNED_W4 = 1
 };
 
 typedef struct { uint32_t reg, value; } word;
+
+typedef struct {
+    const word *words;
+    size_t count;
+    uint32_t action;
+} valence_cmd_batch_t;
 
 struct c11b_z15 {
     const ysyx_hal_t *hal;
@@ -35,6 +42,12 @@ struct c11b_z15 {
     uint32_t dma_moves;
     int failed, rope_resident, residual_resident, pipeline, turbo;
     int8_t *expanded;
+    valence_target target;
+    const uint8_t *resident_image;
+    size_t resident_bytes;
+    valence_submission_stats submissions;
+    uint32_t config_values[P17_WEIGHT_CONFIG / 4 + 1];
+    uint8_t config_known[P17_WEIGHT_CONFIG / 4 + 1];
 };
 
 static int bad(void *ctx)
@@ -57,6 +70,11 @@ static int wr(c11b_z15 *d, uint32_t reg, uint32_t x)
         d->failed = 1;
         return -1;
     }
+    if (d->target == VALENCE_P17 && reg <= P17_WEIGHT_CONFIG) {
+        d->config_known[reg / 4] = 1;
+        d->config_values[reg / 4] = x;
+    }
+    ++d->submissions.mmio_writes;
     return 0;
 }
 
@@ -72,7 +90,10 @@ static int error_reg(c11b_z15 *d)
 
 static int action(c11b_z15 *d, unsigned bit)
 {
-    return wr(d, Z15_CTRL, bit) || error_reg(d);
+    if (wr(d, Z15_CTRL, bit))
+        return -1;
+    ++d->submissions.doorbells;
+    return error_reg(d);
 }
 
 static int ready(c11b_z15 *d, unsigned require, unsigned busy)
@@ -113,6 +134,7 @@ static int host_write(c11b_z15 *d, unsigned where, const void *data, size_t byte
         d->failed = 1;
         return -1;
     }
+    ++d->submissions.host_writes;
     if ((uint64_t)where + bytes > d->ddr_peak)
         d->ddr_peak = (uint64_t)where + bytes;
     return 0;
@@ -126,7 +148,25 @@ static int host_read(c11b_z15 *d, unsigned where, void *data, size_t bytes)
         d->failed = 1;
         return -1;
     }
+    ++d->submissions.host_reads;
     return 0;
+}
+
+static int submit_batch(c11b_z15 *d, const valence_cmd_batch_t *batch)
+{
+    /* Callers pass only passive DMA and GEMM descriptor registers.
+       Table writes, program writes and doorbells always reach MMIO. */
+    ++d->submissions.batches;
+    d->submissions.descriptor_words += batch->count;
+    for (size_t i = 0; i < batch->count; ++i) {
+        const word w = batch->words[i];
+        const unsigned slot = w.reg / 4;
+        if (d->target == VALENCE_P17 && d->config_known[slot] && d->config_values[slot] == w.value)
+            continue;
+        if (wr(d, w.reg, w.value))
+            return -1;
+    }
+    return action(d, batch->action);
 }
 
 static int dma_begin(c11b_z15 *d, unsigned offset, unsigned sram, unsigned bytes, int store)
@@ -137,12 +177,14 @@ static int dma_begin(c11b_z15 *d, unsigned offset, unsigned sram, unsigned bytes
         d->failed = 1;
         return -1;
     }
+    const word desc[] = {
+        {Z15_DMA_BASE, Z15_POOL_BASE}, {Z15_DMA_OFFSET, offset}, {Z15_DMA_SCRATCH, sram},
+        {Z15_DMA_BYTES, bytes}, {Z15_DMA_FLAGS, 2u | (unsigned)store}
+    };
+    const valence_cmd_batch_t batch = {desc, sizeof(desc) / sizeof(desc[0]), Z15_START_DMA};
     if (ready(d, 0, Z15_DMA_BUSY) ||
         d->hal->cache_sync(d->hal->ctx, offset, bytes, YSYX_SYNC_FOR_DEVICE) ||
-        wr(d, Z15_DMA_BASE, Z15_POOL_BASE) ||
-        wr(d, Z15_DMA_OFFSET, offset) || wr(d, Z15_DMA_SCRATCH, sram) ||
-        wr(d, Z15_DMA_BYTES, bytes) || wr(d, Z15_DMA_FLAGS, 2u | (unsigned)store) ||
-        action(d, Z15_START_DMA))
+        submit_batch(d, &batch))
         return -1;
     d->dma_bytes += bytes;
     ++d->dma_moves;
@@ -174,16 +216,17 @@ static int config(c11b_z15 *d, const word *words, size_t count)
     return 0;
 }
 
-static int gemm(c11b_z15 *d, unsigned base, unsigned n, unsigned group)
+static int gemm(c11b_z15 *d, unsigned base, unsigned n, unsigned group, unsigned packed_w4)
 {
     const word desc[] = {
         {Z15_NPU_DIMS, 1 | n << 16}, {Z15_NPU_K, group | group << 16},
         {Z15_NPU_A, base + NPU_A}, {Z15_NPU_B, base + NPU_B}, {Z15_NPU_C, base + NPU_C},
         {Z15_NPU_BIAS, 0}, {Z15_NPU_FLAGS, 0}, {Z15_NPU_SHAPE, 0},
-        {Z15_NPU_SLICE, 0}, {Z15_NPU_PARTIAL, 0}
+        {Z15_NPU_SLICE, 0}, {Z15_NPU_PARTIAL, 0}, {P17_WEIGHT_CONFIG, packed_w4}
     };
-    return ready(d, 0, Z15_NPU_BUSY) || config(d, desc, sizeof(desc) / sizeof(desc[0])) ||
-           action(d, Z15_START_NPU);
+    const valence_cmd_batch_t batch = {desc, sizeof(desc) / sizeof(desc[0]) -
+                                      (d->target == VALENCE_STEP2), Z15_START_NPU};
+    return ready(d, 0, Z15_NPU_BUSY) || submit_batch(d, &batch);
 }
 
 static void widen(int8_t *out, const uint8_t *packed, size_t count)
@@ -208,10 +251,10 @@ static tile tensor_tile(unsigned ordinal, unsigned channels)
     return (tile){group * channels + column, group, width, (ordinal & 1u) * Z15_HALF_BYTES};
 }
 
-static int prepare_tile(c11b_z15 *d, unsigned a, unsigned b, tile t, unsigned group)
+static int prepare_tile(c11b_z15 *d, unsigned a, unsigned b, tile t, unsigned group, unsigned row_bytes)
 {
     return dma(d, a + t.group * group, t.sram + NPU_A, group, 0) ||
-           dma(d, b + t.block * group, t.sram + NPU_B, t.width * group, 0);
+           dma(d, b + t.block * row_bytes, t.sram + NPU_B, t.width * row_bytes, 0);
 }
 
 static int store_tile(c11b_z15 *d, unsigned output, tile t)
@@ -219,39 +262,52 @@ static int store_tile(c11b_z15 *d, unsigned output, tile t)
     return dma(d, output + t.block * 4u, t.sram + NPU_C, t.width * 4u, 1);
 }
 
-static int project_grouped(void *ctx, const uint8_t *packed, unsigned n, unsigned k,
+int c11b_z15_project_grouped(void *ctx, const uint8_t *packed, unsigned n, unsigned k,
                            unsigned group, unsigned bits, const int8_t *a8, int32_t *result)
 {
     c11b_z15 *d = ctx;
-    if (!n || n > MAX_OUTPUT || (n & 15u) || (k != QWEN_HIDDEN && k != QWEN_INTER) ||
+    if (!d || !packed || !a8 || !result || !n || n > MAX_OUTPUT || (n & 15u) || (k != QWEN_HIDDEN && k != QWEN_INTER) ||
         (size_t)n * k > MAX_EXPANDED || (group != 64 && group != 128) ||
-        (bits != 4 && bits != 8))
+        k % group || (bits != 4 && bits != 8))
         return -1;
     const unsigned stage = d->ring;
-    const unsigned base_weight = stage + EXPANDED;
+    unsigned base_weight = stage + EXPANDED;
     const unsigned base_result = stage + GEMM_OUTPUT;
     const void *weights = packed;
-    if (bits == 4) {
+    const unsigned packed_w4 = d->target == VALENCE_P17 && bits == 4 ? P17_SIGNED_W4 : 0;
+    const unsigned row_bytes = packed_w4 ? group / 2 : group;
+    if (bits == 4 && !packed_w4) {
         widen(d->expanded, packed, (size_t)n * k / 2);
         weights = d->expanded;
         d->expanded_bytes += (size_t)n * k;
     }
-    if (host_write(d, base_weight, weights, (size_t)n * k) ||
-        host_write(d, stage, a8, k))
+    const size_t weight_bytes = (size_t)n * (k / group) * row_bytes;
+    const uintptr_t image_base = (uintptr_t)d->resident_image;
+    const uintptr_t address = (uintptr_t)packed;
+    const uintptr_t offset = address - image_base;
+    if (d->target == VALENCE_P17 && image_base && address >= image_base && !(offset & 31u) &&
+        offset <= d->resident_bytes && weight_bytes <= d->resident_bytes - offset)
+        base_weight = (unsigned)offset;
+    else if (host_write(d, base_weight, weights, weight_bytes))
+        return -1;
+    if (host_write(d, stage, a8, k))
         return -1;
     const unsigned count = (k / group) * ((n + PANEL - 1) / PANEL);
     tile previous = tensor_tile(0, n);
-    if (prepare_tile(d, stage, base_weight, previous, group) || gemm(d, previous.sram, previous.width, group))
+    if (prepare_tile(d, stage, base_weight, previous, group, row_bytes) ||
+        gemm(d, previous.sram, previous.width, group, packed_w4))
         return -1;
     for (unsigned ordinal = 1; ordinal < count; ++ordinal) {
         const tile next = tensor_tile(ordinal, n);
         if (d->pipeline) {
-            if (prepare_tile(d, stage, base_weight, next, group) || ready(d, Z15_NPU_DONE, Z15_NPU_BUSY) ||
-                gemm(d, next.sram, next.width, group) || store_tile(d, base_result, previous))
+            if (prepare_tile(d, stage, base_weight, next, group, row_bytes) ||
+                ready(d, Z15_NPU_DONE, Z15_NPU_BUSY) || gemm(d, next.sram, next.width, group, packed_w4) ||
+                store_tile(d, base_result, previous))
                 return -1;
         } else {
             if (ready(d, Z15_NPU_DONE, Z15_NPU_BUSY) || store_tile(d, base_result, previous) ||
-                prepare_tile(d, stage, base_weight, next, group) || gemm(d, next.sram, next.width, group))
+                prepare_tile(d, stage, base_weight, next, group, row_bytes) ||
+                gemm(d, next.sram, next.width, group, packed_w4))
                 return -1;
         }
         previous = next;
@@ -264,7 +320,7 @@ static int project_grouped(void *ctx, const uint8_t *packed, unsigned n, unsigne
 static int project(void *ctx, const uint8_t *packed, unsigned n, unsigned k,
                    const int8_t *a8, int32_t *result)
 {
-    return project_grouped(ctx, packed, n, k, QWEN_GROUP, 4, a8, result);
+    return c11b_z15_project_grouped(ctx, packed, n, k, QWEN_GROUP, 4, a8, result);
 }
 
 static int ew(c11b_z15 *d, unsigned a, unsigned b, unsigned c, unsigned length,
@@ -440,31 +496,52 @@ static int attention_hw(void *ctx, unsigned layer, unsigned pos, const int8_t *q
     return 0;
 }
 
-c11b_z15 *c11b_z15_open(const ysyx_hal_t *hal, const uint8_t *image, size_t count,
-                       const char **error)
+c11b_z15 *c11b_z15_open_target(const ysyx_hal_t *hal, const uint8_t *image, size_t count,
+                              valence_target target, const char **error)
 {
-    if (!hal || !image || !count || count > Z15_POOL_SIZE - RING - 32 || !hal->mmio_read32 ||
+    if ((target != VALENCE_STEP2 && target != VALENCE_P17) || !image || !count ||
+        count > Z15_POOL_SIZE - RING - 32 || !hal || !hal->mmio_read32 ||
         !hal->mmio_write32 || !hal->ddr_write || !hal->ddr_read || !hal->cache_sync)
         return NULL;
     c11b_z15 *d = calloc(1, sizeof(*d));
     if (!d)
         return NULL;
-    d->expanded = malloc(MAX_EXPANDED);
+    d->target = target;
+    if (target == VALENCE_STEP2)
+        d->expanded = malloc(MAX_EXPANDED);
     d->hal = hal;
     d->pipeline = 1;
     d->ring = ((unsigned)count + 31u) & ~31u;
     d->ops = (c11b_ops){d, project, rms_hw, rope_hw, attention_hw, swiglu_hw, bad};
     uint32_t magic, version;
-    if (!d->expanded || rd(d, Z15_MAGIC, &magic) || magic != Z15_MAGIC_VALUE ||
+    if ((target == VALENCE_STEP2 && !d->expanded) ||
+        rd(d, Z15_MAGIC, &magic) || magic != Z15_MAGIC_VALUE ||
         rd(d, Z15_VERSION, &version) || (version & Z15_VERSION_COMPAT_MASK) != Z15_VERSION_VALUE ||
         ready(d, 0, Z15_GPU_BUSY | Z15_DMA_BUSY | Z15_NPU_BUSY) ||
+        (target == VALENCE_P17 && (wr(d, P17_WEIGHT_CONFIG, 0) ||
+                                  wr(d, P17_KV_CONFIG, 0) || error_reg(d))) ||
         (!hal->observe && host_write(d, 0, image, count))) {
         if (error)
             *error = "Qwen allocation, Z15 ABI, or DDR initialization failed";
         c11b_z15_close(d);
         return NULL;
     }
+    if (target == VALENCE_P17 && !hal->observe) {
+        d->resident_image = image;
+        d->resident_bytes = count;
+    }
     return d;
+}
+
+c11b_z15 *c11b_z15_open(const ysyx_hal_t *hal, const uint8_t *image, size_t count,
+                       const char **error)
+{
+    return c11b_z15_open_target(hal, image, count, VALENCE_STEP2, error);
+}
+
+valence_submission_stats c11b_z15_submission_stats(const c11b_z15 *d)
+{
+    return d ? d->submissions : (valence_submission_stats){0};
 }
 
 const c11b_ops *c11b_z15_ops(c11b_z15 *d)
@@ -531,14 +608,14 @@ int c12_z15_attach(qwen_reference *m, c11b_z15 *d, uint32_t layers)
 {
     if (!d)
         return -1;
-    c12_qwen_device ops = {d, project_grouped, rope_hw, residual_q16};
+    c12_qwen_device ops = {d, c11b_z15_project_grouped, rope_hw, residual_q16};
     return c12_qwen_set_device(m, &ops, layers);
 }
 
 int c12_z15_enable_turbo(c11b_z15 *d)
 {
     uint32_t version;
-    if (!d || ready(d, 0, Z15_GPU_BUSY | Z15_DMA_BUSY | Z15_NPU_BUSY) ||
+    if (!d || d->target != VALENCE_STEP2 || ready(d, 0, Z15_GPU_BUSY | Z15_DMA_BUSY | Z15_NPU_BUSY) ||
         rd(d, V3_VERSION, &version) || version != UINT32_C(0x0c0c0101) || error_reg(d))
         return -1;
     d->turbo = 1;

@@ -106,3 +106,10 @@ $(OUT)/test-c12-cache: tests/c12_qwen_cache.c c12_qwen_cache.h | $(OUT)
 
 $(OUT)/test-c12-turbo: tests/c12_qwen_turbo.c $(addprefix $(OUT)/,c11b_qwen_ref.o c11b_qwen_ops.o c11b_qwen_z15.o)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(WARNFLAGS) -DYSYX_C11B_NATIVE -I. $^ $(LDFLAGS) $(LDLIBS) -o "$@"
+
+.PHONY: c14-check
+c14-check: $(OUT)/test-c14-projection
+	"$(OUT)/test-c14-projection"
+
+$(OUT)/test-c14-projection: tests/c14_p17_projection.c $(addprefix $(OUT)/,c11b_qwen_ref.o c11b_qwen_ops.o c11b_qwen_z15.o)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(WARNFLAGS) -I. $^ $(LDFLAGS) $(LDLIBS) -o "$@"

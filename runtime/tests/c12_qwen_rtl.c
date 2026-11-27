@@ -74,8 +74,11 @@ static int replay(qwen_reference *gold, qwen_reference *sim, c11b_z15 *dev,
 
 int main(int argc, char **argv)
 {
-    if (argc != 7) {
-        fputs("Usage: c12_qwen_rtl WEIGHTS TOKEN_IDS KV_BITS LAYER DECODE_STEPS HEAD_ON_NPU\n", stderr);
+    valence_target target = VALENCE_STEP2;
+    if (argc == 8 && !strcmp(argv[7], "p17"))
+        target = VALENCE_P17;
+    else if (argc != 7) {
+        fputs("Usage: c12_qwen_rtl WEIGHTS TOKEN_IDS KV_BITS LAYER DECODE_STEPS HEAD_ON_NPU [p17]\n", stderr);
         return 2;
     }
     unsigned params[4];
@@ -102,7 +105,7 @@ int main(int argc, char **argv)
         goto done;
     size_t length;
     const uint8_t *image = qwen_reference_image(rtl, &length);
-    dev = c11b_z15_open(&hal, image, length, &error);
+    dev = c11b_z15_open_target(&hal, image, length, target, &error);
     uint32_t mask = UINT32_C(1) << layer;
     if (head)
         mask |= UINT32_C(1) << QWEN_LAYERS;
