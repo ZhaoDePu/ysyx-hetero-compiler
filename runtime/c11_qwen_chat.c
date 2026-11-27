@@ -2,6 +2,9 @@
 #include "c11_qwen_bpe.h"
 #include "z15_exec_option.h"
 #include "c12_qwen_ref.h"
+#ifdef YSYX_C11B_NATIVE
+#include "hal_reference_c6.h"
+#endif
 
 #include <errno.h>
 #include <inttypes.h>
@@ -21,6 +24,7 @@ static const char *const bench_prompts[] = {
 
 typedef struct {
     const char *weights, *tokenizer, *mode, *backend, *csv, *plain, *chat, *prompt;
+    const char *logits_path;
     unsigned steps, kv_bits;
     int turbo, trace_steps;
 #ifdef YSYX_C11B_NATIVE
@@ -34,6 +38,7 @@ typedef struct {
 typedef struct {
     qwen_reference *model;
     qwen_bpe *bpe;
+    FILE *logits_dump;
     unsigned position;
     unsigned turn, records;
 #ifdef YSYX_C11B_NATIVE
@@ -72,8 +77,24 @@ static unsigned best(const int32_t *logits)
 static const int32_t *step(session *chat, unsigned id)
 {
     const int32_t *result = qwen_reference_step(chat->model, id);
-    if (result)
+    if (result) {
         ++chat->position;
+        if (chat->logits_dump) {
+            uint8_t block[4096];
+            for (unsigned first = 0; first < QWEN_VOCAB; first += sizeof(block) / 4) {
+                unsigned count = QWEN_VOCAB - first;
+                if (count > sizeof(block) / 4)
+                    count = sizeof(block) / 4;
+                for (unsigned j = 0; j < count; ++j) {
+                    const uint32_t value = (uint32_t)result[first + j];
+                    for (unsigned i = 0; i < 4; ++i)
+                        block[j * 4 + i] = (uint8_t)(value >> (8 * i));
+                }
+                if (fwrite(block, 4, count, chat->logits_dump) != count)
+                    return NULL;
+            }
+        }
+    }
     return result;
 }
 
@@ -190,7 +211,7 @@ static int turn(session *chat, const char *prompt, const options *o, FILE *csv)
     const char *backend = "software_reference";
 #ifdef YSYX_C11B_NATIVE
     if (chat->device)
-        backend = "z15";
+        backend = o->backend;
 #endif
     fprintf(stderr, "prefill %.3f ms, decode %.3f tok/s (%u tokens, %s)\n",
             prefill * 1000, rate, generated, backend);
@@ -208,9 +229,9 @@ static int turn(session *chat, const char *prompt, const options *o, FILE *csv)
         const uint64_t wall = after.wall_ticks - before.wall_ticks;
         const uint64_t dma = after.dma_bytes - before.dma_bytes;
         const uint64_t peak = c11b_z15_peak_bytes(chat->device);
-        fprintf(stderr, "z15 wall=%" PRIu64 " npu_attn=%" PRIu64 " vpu=%" PRIu64
+        fprintf(stderr, "%s wall=%" PRIu64 " npu_attn=%" PRIu64 " vpu=%" PRIu64
                 " gpu=%" PRIu64 " dma_bytes=%" PRIu64 " ddr_high_water=%" PRIu64 " ERROR=%" PRIu32 "\n",
-                wall, npu, vpu, gpu, dma, peak, after.abi_error);
+                backend, wall, npu, vpu, gpu, dma, peak, after.abi_error);
         if (csv && fprintf(csv, ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64
                            ",%" PRIu64 ",%" PRIu64 ",%" PRIu32,
                            wall, npu, vpu, gpu, dma, peak, after.abi_error) < 0)
@@ -239,6 +260,7 @@ static int parse(options *o, int argc, char **argv)
         else if (!strcmp(key, "--mode")) o->mode = value;
         else if (!strcmp(key, "--backend")) o->backend = value;
         else if (!strcmp(key, "--csv")) o->csv = value;
+        else if (!strcmp(key, "--dump-logits")) o->logits_path = value;
         else if (!strcmp(key, "--prompt")) o->prompt = value;
         else if (!strcmp(key, "--encode")) o->plain = value;
         else if (!strcmp(key, "--encode-chat")) o->chat = value;
@@ -289,10 +311,12 @@ static int parse(options *o, int argc, char **argv)
     return !o->tokenizer || encode > 1 || (!encode && !o->weights) ||
            (o->prompt && (encode || strcmp(o->mode, "chat"))) ||
 #ifdef YSYX_C11B_NATIVE
-           (strcmp(o->backend, "cpu") && strcmp(o->backend, "z15")) ||
+           (strcmp(o->backend, "cpu") && strcmp(o->backend, "z15") &&
+            strcmp(o->backend, "cmdq-reference")) ||
+           (!strcmp(o->backend, "cmdq-reference") && (o->target != VALENCE_P17 || encode)) ||
            (encode && !strcmp(o->backend, "z15")) ||
            (o->turbo && strcmp(o->backend, "z15")) ||
-           (o->target == VALENCE_P17 && (o->turbo || strcmp(o->backend, "z15"))) ||
+           (o->target == VALENCE_P17 && (o->turbo || !strcmp(o->backend, "cpu"))) ||
            (!strcmp(o->mode, "verify") ? !o->golden || !o->token_given || encode || o->csv
              : (strcmp(o->mode, "chat") && strcmp(o->mode, "bench")) || o->golden || o->token_given);
 #else
@@ -392,20 +416,27 @@ static int native_start(session *chat, const options *o)
         return -1;
     if (!strcmp(o->backend, "cpu"))
         return mixed ? 0 : qwen_reference_native(chat->model, NULL);
-    FILE *state = fopen("/sys/class/fpga_manager/fpga0/state", "r");
-    char line[32];
-    const int operating = state && fgets(line, sizeof(line), state) &&
-                          (!strcmp(line, "operating\n") || !strcmp(line, "operating"));
-    if (state)
-        fclose(state);
-    if (!operating) {
-        fputs("Z15 FPGA Manager must be operating before UIO open.\n", stderr);
-        return -1;
-    }
     const char *why = NULL;
-    if (ysyx_hal_linux_open(&chat->hal, NULL, NULL, &why)) {
-        fprintf(stderr, "%s\n", why ? why : "could not open Z15 UIO");
-        return -1;
+    if (!strcmp(o->backend, "cmdq-reference")) {
+        const char *mode = getenv("YSYX_EXEC_MODE");
+        if (!mixed || (mode && !strcmp(mode, "mmio")) ||
+            ysyx_hal_reference_cmdq_open(&chat->hal, &why))
+            return -1;
+    } else {
+        FILE *state = fopen("/sys/class/fpga_manager/fpga0/state", "r");
+        char line[32];
+        const int operating = state && fgets(line, sizeof(line), state) &&
+                              (!strcmp(line, "operating\n") || !strcmp(line, "operating"));
+        if (state)
+            fclose(state);
+        if (!operating) {
+            fputs("Z15 FPGA Manager must be operating before UIO open.\n", stderr);
+            return -1;
+        }
+        if (ysyx_hal_linux_open(&chat->hal, NULL, NULL, &why)) {
+            fprintf(stderr, "%s\n", why ? why : "could not open Z15 UIO");
+            return -1;
+        }
     }
     size_t bytes;
     const uint8_t *data = qwen_reference_image(chat->model, &bytes);
@@ -434,13 +465,13 @@ int main(int argc, char **argv)
         return 2;
     static const char help[] =
 #ifdef YSYX_C11B_NATIVE
-         "z15_qwen25_chat --weights FILE --tokenizer FILE [--backend cpu|z15] "
+         "z15_qwen25_chat --weights FILE --tokenizer FILE [--backend cpu|z15|cmdq-reference] "
         "[--kv-bits 4|8 (C12 default: 8)] [--target step2|p17] [--exec-mode auto|cmdq|mmio] [--exec-stats] [--mmio-profile v1|turbo] [--mode verify --token-id ID --golden FILE]\n"
         "Chat and bench options: "
 #else
         "ysyx_qwen_chat --weights FILE --tokenizer FILE [--backend sim] "
 #endif
-        "[--mode chat|bench] [--prompt TEXT] [--max-new-tokens N] [--trace-steps on|off] [--csv FILE]\n"
+        "[--mode chat|bench] [--prompt TEXT] [--max-new-tokens N] [--trace-steps on|off] [--csv FILE] [--dump-logits FILE]\n"
         "--tokenizer FILE --encode TEXT|--encode-chat PROMPT\n";
     options o;
     if (argc == 2 && !strcmp(argv[1], "--help")) {
@@ -475,7 +506,8 @@ int main(int argc, char **argv)
     } else {
         chat.model = qwen_reference_open(o.weights);
         FILE *csv = o.csv ? fopen(o.csv, "w") : NULL;
-        if (!chat.model || (o.csv && !csv)) {
+        chat.logits_dump = o.logits_path ? fopen(o.logits_path, "wb") : NULL;
+        if (!chat.model || (o.csv && !csv) || (o.logits_path && !chat.logits_dump)) {
             fputs("Cannot open Qwen weights or CSV output.\n", stderr);
             rc = 1;
 #ifdef YSYX_C11B_NATIVE
@@ -495,6 +527,8 @@ int main(int argc, char **argv)
             rc = run_console(&chat, &o, csv) != 0;
         }
         if (csv && fclose(csv))
+            rc = 1;
+        if (chat.logits_dump && fclose(chat.logits_dump))
             rc = 1;
     }
 #ifdef YSYX_C11B_NATIVE

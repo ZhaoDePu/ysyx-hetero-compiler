@@ -63,3 +63,17 @@ same case, frequency profile and frame count and use --exec-mode mmio or
 --target p17 and store the unchanged YHP1 program as program.yhp next
 to the case's io.tsv. The on-board C10 service accepts --target p17
 with the unchanged C14 model file.
+
+## Complete Qwen CLI reference replay
+
+The native chat CLI accepts --backend cmdq-reference --target p17. This
+offline mode executes the same command recorder and DDR descriptors as Z15.
+The functional HAL interprets the scalar programs and computes packed W4
+dot products, including Phase 17 ties-to-even scaling, before retiring
+commands. Its counters do not represent RTL timing.
+
+Use --mode bench --trace-steps on --dump-logits FILE to run the three
+built-in ChatML prompts. The dump contains each full result vector in
+little-endian Q16, starting with the last prefill vector and continuing
+through the scores used for greedy decode. The CPU backend accepts the
+same dump option for byte comparisons.

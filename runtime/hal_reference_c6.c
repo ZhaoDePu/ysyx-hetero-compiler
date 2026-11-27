@@ -86,11 +86,48 @@ static int32_t dot(const uint8_t *a, const uint8_t *b, unsigned n, int unsigned_
     return sum;
 }
 
+static int32_t dot_w4(const uint8_t *a, const uint8_t *b, unsigned n, int unsigned_a,
+                      unsigned quant)
+{
+    static const int8_t signed_nibble[16] = {0, 1, 2, 3, 4, 5, 6, 7, -8, -7, -6, -5, -4, -3, -2, -1};
+    if (quant & 2u) {
+        const int zero = (quant >> 3) & 15u;
+        int32_t sum = 0;
+        for (unsigned i = 0; i < n; ++i) {
+            const int w = ((b[i / 2u] >> (4u * (i & 1u))) & 15u) - zero;
+            sum += (unsigned_a ? (int)a[i] : signed8(a[i])) * w;
+        }
+        return sum;
+    }
+    int32_t sum = 0;
+    unsigned i = 0;
+    for (; i + 1 < n; i += 2) {
+        const uint8_t w = b[i / 2u];
+        sum += (unsigned_a ? (int)a[i] : signed8(a[i])) * signed_nibble[w & 15u];
+        sum += (unsigned_a ? (int)a[i+1] : signed8(a[i+1])) * signed_nibble[w >> 4];
+    }
+    if (i < n)
+        sum += (unsigned_a ? (int)a[i] : signed8(a[i])) * signed_nibble[b[i / 2u] & 15u];
+    return sum;
+}
+
+static int32_t group_scaled(int32_t dot, unsigned scale)
+{
+    const int32_t product = dot * (int32_t)scale;
+    const unsigned abs_product = (unsigned)(product < 0 ? -product : product);
+    const unsigned fraction = abs_product & 255u, whole = abs_product >> 8;
+    const int32_t rounded = (int32_t)(whole + (fraction > 128u || (fraction == 128u && (whole & 1u))));
+    return product < 0 ? -rounded : rounded;
+}
+
 static int tensor(c6_reference_t *ref)
 {
     const uint32_t dims = REG(ref, Z15_NPU_DIMS), depth = REG(ref, Z15_NPU_K);
     const unsigned m = dims & 511u, n = (dims >> 16) & 511u, k = depth & 511u;
+    const unsigned quant = ref->phase17 ? REG(ref, 0xd0u) : 0;
+    const unsigned w4 = quant & 1u, group_scale = quant & 4u, scale = quant >> 7;
     const unsigned kstride = rounded_word(k);
+    const unsigned weight_stride = w4 ? 4u * ((k + 7u) / 8u) : kstride;
     const uint32_t a = REG(ref, Z15_NPU_A), b = REG(ref, Z15_NPU_B), c = REG(ref, Z15_NPU_C);
     const uint32_t bias = REG(ref, Z15_NPU_BIAS), flags = REG(ref, Z15_NPU_FLAGS);
     const unsigned half = a >> 20, packed = (flags >> 17) & 1u;
@@ -106,7 +143,10 @@ static int tensor(c6_reference_t *ref)
     const int defer = ref->phase17 && (flags & (1u << 19));
     const int chain = keep || defer;
     const unsigned offset = chain ? REG(ref, Z15_NPU_PARTIAL) : 0;
-    const uint32_t format = flags & 0x7e01u;
+    if ((conv && w4) || (group_scale && (!w4 || (flags & 2u) || m > 16 || n > 16 ||
+                                        (k != 64 && k != 128) || (depth >> 16) != k || scale > 256u)))
+        return -1;
+    const uint32_t format = (flags & 0x7e01u) | (group_scale ? 1u << 20 : 0u);
     if (chain && (m > 16 || n > 16 || ((offset | k) & 3u) ||
         (keep ? (!ref->chain.held || (flags & 2u) || ref->chain.dims != dims ||
                 ref->chain.c != c || ref->chain.format != format ||
@@ -132,7 +172,7 @@ static int tensor(c6_reference_t *ref)
         input_size = (size_t)height * (size_t)width * cstride;
     }
     if (!m || !n || !k || half > 1u || !scratch_span(a, input_size, half) ||
-        !scratch_span(b, n * kstride, half) || !scratch_span(c, m * output_stride, half) ||
+        !scratch_span(b, n * weight_stride, half) || !scratch_span(c, m * output_stride, half) ||
         ((flags & 2u) && !scratch_span(bias, 4u * n, half)))
         return -1;
     ref->chain.dims = dims;
@@ -148,7 +188,7 @@ static int tensor(c6_reference_t *ref)
         const int x = conv ? (int)(row % ow) * stride - pad : 0;
         uint8_t *out = ref->scratch + c + row * output_stride;
         for (unsigned col = 0; col < n; ++col) {
-            const uint8_t *weight = ref->scratch + b + col * kstride;
+            const uint8_t *weight = ref->scratch + b + col * weight_stride;
             uint32_t sum = keep ? ref->chain.sums[row][col] :
                  flags & 2u ? read_word(ref->scratch + bias + 4u * col) : 0;
             if (conv) {
@@ -168,6 +208,9 @@ static int tensor(c6_reference_t *ref)
                                                  end - begin, (int)unsigned_a);
                     }
                 }
+            } else if (w4) {
+                const int32_t value = dot_w4(ref->scratch + a + row * kstride, weight, k, (int)unsigned_a, quant);
+                sum += (uint32_t)(group_scale ? group_scaled(value, scale) : value);
             } else {
                 sum += (uint32_t)dot(ref->scratch + a + row * kstride, weight, k, (int)unsigned_a);
             }
@@ -837,4 +880,20 @@ int ysyx_hal_reference_p17_open(ysyx_hal_t *hal, const char **error)
 void ysyx_hal_reference_cmdq_fault(const ysyx_hal_t *hal)
 {
     ((c6_reference_t *)hal->ctx)->queue.inject_fetch_fault = 1;
+}
+
+static void untimed(void *opaque, ysyx_observation_t *stats)
+{
+    (void)opaque;
+    *stats = (ysyx_observation_t){0};
+}
+
+int ysyx_hal_reference_cmdq_open(ysyx_hal_t *hal, const char **error)
+{
+    if (ysyx_hal_reference_p17_open(hal, error))
+        return -1;
+    ((c6_reference_t *)hal->ctx)->phase18 = 1;
+    /* Queue waits advance the functional model on status reads. */
+    hal->observe = untimed;
+    return 0;
 }

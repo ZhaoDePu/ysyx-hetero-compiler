@@ -25,3 +25,8 @@ MMIO 和 CMDQ，把 CSV 和执行日志写入指定目录。
 C14 双帧用例可以复用 C10 YOLO 用例中的 bus、zidane 输入、黄金检测头
 和 io.tsv，并使用 C14 的 program.yhp。切换固件时重启运行时会话，以便
 重新探测扩展寄存器和装载常驻资产。
+
+C15 正式封板接受 C14 混合精度路径的层内切批。Qwen 首个 Decode
+在无词表头场景实测每层 14 次 START。可在离线机器用
+--backend cmdq-reference --target p17 配合 --dump-logits 验证相同
+CMDQ 序列和完整 logits。参考后端的周期字段不用于上板性能估算。
