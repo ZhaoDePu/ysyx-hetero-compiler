@@ -292,6 +292,19 @@ def emit_rtl_control(directory, manifest, initial, expected):
     directory = Path(directory).resolve()
     slots = manifest["plan"]["allocations"]
     lines = ["- 0 0"]
+
+    incremental = manifest.get("rtl_target") == "p17"
+    cached = {}
+    def emit_word(reg, value):
+        # Engine descriptor registers and GPU words retain their values.
+        # Table data and all CTRL actions always follow the recorded order.
+        passive = 0x60 <= reg <= 0xc0 or 0x4000 <= reg < 0x8000
+        if incremental and passive and cached.get(reg) == value:
+            return
+        lines.append(f"write {reg} {value}")
+        if incremental and passive:
+            cached[reg] = value
+
     for directive, seed in (("ddr_put", initial), ("compare_ddr", expected)):
         if directive == "compare_ddr":
             stages = {stage["stage"]: stage for stage in manifest["backends"]["npu"]["commands"]}
@@ -303,11 +316,12 @@ def emit_rtl_control(directory, manifest, initial, expected):
                     if name in gpu:
                         stage = gpu[name]
                         for index, word in enumerate((directory / stage["hex"]).read_text().splitlines()):
-                            lines.append(f"write {0x4000 + 4 * index} {int(word, 16)}")
+                            emit_word(0x4000 + 4 * index, int(word, 16))
                         lines.extend(f"submit_gpu {job['entry']} {job['gpu_job_reg']}" for job in stage["jobs"])
                     else:
                         stage = stages[name]
-                        lines.extend(f"write {reg} {value}" for reg, value in stage["writes"])
+                        for reg, value in stage["writes"]:
+                            emit_word(reg, value)
                 elif kind == "fence":
                     name = command["wait_for"]
                     lines.append(f"{'wait_gpu' if name in gpu else 'wait_npu'} {name}")

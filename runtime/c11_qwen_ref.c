@@ -20,8 +20,8 @@ enum {
 };
 
 typedef struct {
-    const uint8_t *packed, *scale, *bias;
-    unsigned inputs, outputs, group, bits;
+    const uint8_t *packed, *scale, *bias, *permutation, *equalizer, *fine;
+    unsigned inputs, outputs, group, bits, panel_major;
 } matrix;
 
 typedef struct {
@@ -33,6 +33,7 @@ struct qwen_reference {
     const uint8_t *image, *rms, *rope, *exp, *kv_scale;
     size_t bytes, layout;
     unsigned context, position, group, protection, kv_bits, grouped_a8, kv4_outliers;
+    int block16;
     uint8_t *packed_kv;
     c12_qwen_device c12_device;
     c12_qwen_capture *c12_capture;
@@ -102,7 +103,29 @@ static int read_matrix(qwen_reference *model, matrix *mat, unsigned outputs,
     mat->packed = extent(model, weights * bits / 8);
     mat->scale = extent(model, weights / mat->group * 4);
     mat->bias = bias ? extent(model, outputs * 4u) : NULL;
-    return !mat->packed || !mat->scale || (bias && !mat->bias);
+    if (!mat->packed || !mat->scale || (bias && !mat->bias))
+        return -1;
+    const size_t scale_extent = weights / mat->group * 4;
+    if (model->block16 && bits == 4 &&
+        (model->block16 != 4 || u32(mat->scale + scale_extent - 4) == UINT32_C(0xb1600014))) {
+        if (inputs != QWEN_HIDDEN || outputs != QWEN_INTER || bias || outputs % 16)
+            return -1;
+        const size_t scale_bytes = 4u * (inputs / mat->group) * (outputs / 16);
+        mat->permutation = mat->scale + scale_bytes;
+        mat->panel_major = model->block16 >= 2;
+        mat->equalizer = mat->permutation + outputs * 4u;
+        uint8_t seen[QWEN_INTER] = {0};
+        for (unsigned i = 0; i < outputs; ++i) {
+            const uint32_t row = u32(mat->permutation + i * 4u);
+            const uint32_t gain = u32(mat->equalizer + i * 4u);
+            if (row >= outputs || seen[row]++ || !gain || gain > 16u * QWEN_Q16)
+                return -1;
+        }
+        for (size_t i = 0; i < scale_bytes; i += 4)
+            if (!u32(mat->scale + i) || u32(mat->scale + i) > STATE_BOUND)
+                return -1;
+    }
+    return 0;
 }
 
 static int read_layout(qwen_reference *m)
@@ -115,11 +138,21 @@ static int read_layout(qwen_reference *m)
     };
     if (m->bytes < 64 || u32(m->image + 8) != 1)
         return -1;
-    const int mixed = !memcmp(m->image, mixed_magic, sizeof(mixed_magic));
+    static const uint8_t block16_magic[8] = {'Y','S','Q','C','1','4',0,0};
+    static const uint8_t panel_magic[8] = {'Y','S','Q','C','1','4','P',0};
+    static const uint8_t residual_magic[8] = {'Y','S','Q','C','1','4','D',0};
+    static const uint8_t hybrid_magic[8] = {'Y','S','Q','C','1','4','H',0};
+    m->block16 = !memcmp(m->image, hybrid_magic, sizeof(hybrid_magic)) ? 4 :
+                 !memcmp(m->image, residual_magic, sizeof(residual_magic)) ? 3 :
+                 !memcmp(m->image, panel_magic, sizeof(panel_magic)) ? 2 :
+                 !memcmp(m->image, block16_magic, sizeof(block16_magic));
+    const int mixed = m->block16 || !memcmp(m->image, mixed_magic, sizeof(mixed_magic));
     m->group = u32(m->image + 12);
     const unsigned policy = u32(m->image + 48);
     if (mixed) {
         if ((m->group != 64 && m->group != 128) || (policy & ~63u))
+            return -1;
+        if (m->block16 && (policy & 15u) != 15u)
             return -1;
         m->protection = policy & 7u;
         m->grouped_a8 = !!(policy & 8u);
@@ -168,6 +201,17 @@ static int read_layout(qwen_reference *m)
             if (m->kv_scale[i] > 8 && m->kv_scale[i] < 248)
                 return -1;
     }
+    if (m->block16 >= 3) {
+        for (unsigned i = 0; i < QWEN_LAYERS; ++i) {
+            matrix *layers[] = {&m->layer[i].gate, &m->layer[i].up};
+            for (unsigned x = 0; x < 2; ++x)
+                if (layers[x]->permutation) {
+                    layers[x]->fine = extent(m, (size_t)QWEN_HIDDEN * QWEN_INTER / 2);
+                    if (!layers[x]->fine)
+                        return -1;
+                }
+        }
+    }
     if (!m->rms || !m->rope || !m->exp || ((m->layout + 63u) & ~(size_t)63) != m->bytes ||
         u32(m->exp) != Q24)
         return -1;
@@ -183,7 +227,7 @@ qwen_reference *qwen_reference_open(const char *path)
     int fd = open(path, O_RDONLY);
     if (fd < 0)
         return NULL;
-    if (fstat(fd, &info) || info.st_size <= 0 || info.st_size > 480 * 1024 * 1024) {
+    if (fstat(fd, &info) || info.st_size <= 0 || info.st_size > 502 * 1024 * 1024) {
         close(fd);
         return NULL;
     }
@@ -350,6 +394,79 @@ static int group_dot(const uint8_t *w, const int8_t *a, unsigned group,
     }
     return dot;
 #endif
+}
+
+static int64_t round_even(int64_t value, uint64_t divisor)
+{
+    const uint64_t magnitude = value < 0 ? (uint64_t)-value : (uint64_t)value;
+    const uint64_t q = magnitude / divisor, r = magnitude % divisor;
+    const int64_t result = (int64_t)(q + (r > divisor - r || (r == divisor - r && (q & 1))));
+    return value < 0 ? -result : result;
+}
+
+static int linear_block16(const matrix *mat, const activation *input, int32_t *out,
+                          const c12_qwen_device *device)
+{
+    const unsigned groups = mat->inputs / mat->group;
+    const unsigned panels = mat->outputs / 16;
+    const unsigned row_bytes = mat->group / 2;
+    uint64_t units[QWEN_INTER / 16];
+    const unsigned passes = mat->fine ? 2 : 1;
+    uint16_t coeffs[2 * (QWEN_INTER / 16) * (QWEN_HIDDEN / 64)];
+    int32_t accum[QWEN_INTER];
+    for (unsigned panel = 0; panel < panels; ++panel) {
+        uint64_t gain[QWEN_HIDDEN / 64], unit = 1;
+        for (unsigned g = 0; g < groups; ++g) {
+            const size_t at = (size_t)g * panels + panel;
+            gain[g] = (uint64_t)u32(mat->scale + at * 4u) * (uint32_t)input->groups[g];
+            while (unit < gain[g])
+                unit <<= 1;
+        }
+        units[panel] = unit;
+        for (unsigned g = 0; g < groups; ++g) {
+            const unsigned at = (panel * groups + g) * passes;
+            coeffs[at] = (uint16_t)round_even((int64_t)(gain[g] << 8), unit);
+            if (passes == 2)
+                coeffs[at + 1] = (uint16_t)round_even((int64_t)(gain[g] << 4), unit);
+        }
+    }
+
+    if (device && device->project_block16 && mat->panel_major) {
+        if (device->project_block16(device->ctx, mat->packed, mat->fine, mat->outputs, mat->inputs,
+                                    mat->group, input->a8, coeffs, accum))
+            return -1;
+    } else {
+        int sums[QWEN_HIDDEN / 64] = {0};
+        memset(accum, 0, (size_t)mat->outputs * sizeof(*accum));
+        for (unsigned g = 0; g < groups; ++g)
+            for (unsigned k = 0; k < mat->group; ++k)
+                sums[g] += input->a8[g * mat->group + k];
+        for (unsigned panel = 0; panel < panels; ++panel)
+            for (unsigned g = 0; g < groups; ++g) {
+                const size_t index = mat->panel_major ? (size_t)panel * groups + g : (size_t)g * panels + panel;
+                const int8_t *x = input->a8 + g * mat->group;
+                for (unsigned pass = 0; pass < passes; ++pass) {
+                    const uint8_t *w = (pass ? mat->fine : mat->packed) + index * 16 * row_bytes;
+                    const unsigned coefficient = coeffs[(panel * groups + g) * passes + pass];
+                    for (unsigned lane = 0; lane < 16; ++lane) {
+                        const int dot = group_dot(w + lane * row_bytes, x, mat->group, 4, sums[g]);
+                        accum[panel * 16 + lane] += (int32_t)round_even((int64_t)dot * coefficient, 256);
+                    }
+                }
+            }
+    }
+    const uint64_t fixed_units = UINT64_C(1) << 40;
+    for (unsigned physical = 0; physical < mat->outputs; ++physical) {
+        const uint64_t unit = units[physical / 16];
+        const unsigned logical = u32(mat->permutation + 4u * physical);
+        const uint32_t equalizer = u32(mat->equalizer + 4u * physical);
+        const int64_t product = (int64_t)accum[physical] * equalizer;
+        const int64_t value = unit <= fixed_units
+            ? round_even(product, fixed_units / unit)
+            : product * (int64_t)(unit / fixed_units);
+        out[logical] = bounded(value);
+    }
+    return 0;
 }
 
 static void linear(const matrix *mat, const activation *input, int32_t *out)
@@ -537,6 +654,11 @@ int c12_qwen_cache_bits(qwen_reference *m, unsigned bits)
     return 0;
 }
 
+int c14_qwen_block16(const qwen_reference *m)
+{
+    return m ? m->block16 : 0;
+}
+
 int c12_qwen_mixed(const qwen_reference *m)
 {
     return m && m->kv_bits;
@@ -629,6 +751,9 @@ int c12_qwen_set_device(qwen_reference *m, const c12_qwen_device *ops, uint32_t 
 static int project_q16(qwen_reference *m, const matrix *mat, const activation *input,
                        int32_t *output, unsigned layer)
 {
+    if (mat->permutation)
+        return linear_block16(mat, input, output,
+               m->c12_hardware_layers & (UINT32_C(1) << layer) ? &m->c12_device : NULL);
     if (!(m->c12_hardware_layers & (UINT32_C(1) << layer))) {
         linear(mat, input, output);
         return 0;

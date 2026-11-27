@@ -12,7 +12,7 @@
 
 
 enum {
-    RING = 16 * 1024 * 1024, MAX_INPUT = QWEN_INTER, MAX_OUTPUT = 4864, PANEL = 496,
+    RING = 16 * 1024 * 1024, RESIDUAL_RING = 10 * 1024 * 1024, MAX_INPUT = QWEN_INTER, MAX_OUTPUT = 4864, PANEL = 496,
     EXPANDED = 8192, MAX_EXPANDED = QWEN_HIDDEN * QWEN_INTER,
     GEMM_OUTPUT = 8192 + MAX_EXPANDED, VECTOR_OUTPUT = 24576,
     STAGE_DDR = 8 * 1024 * 1024, CACHE_DDR = STAGE_DDR + 65536,
@@ -317,6 +317,77 @@ int c11b_z15_project_grouped(void *ctx, const uint8_t *packed, unsigned n, unsig
     return host_read(d, base_result, result, (size_t)(k / group) * n * sizeof(*result));
 }
 
+/* One activation and one contiguous W4 window per scratch half. Only the
+   completed INT32 projection travels back to the host. */
+int c11b_z15_project_block16(void *ctx, const uint8_t *packed, const uint8_t *fine,
+                            unsigned n, unsigned k,
+                           unsigned group, const int8_t *a8, const uint16_t *coeff, int32_t *out)
+{
+    enum { WIDTH = 16, C_BASE = 0xf8000, CONTINUE = 1u << 18, DEFER = 1u << 19,
+           GROUP_SCALE = 4u };
+    c11b_z15 *d = ctx;
+    if (!d || !packed || !a8 || !coeff || !out || d->target != VALENCE_P17 || !n || n > MAX_OUTPUT || n % WIDTH ||
+        k != QWEN_HIDDEN || (group != 64 && group != 128) || k % group)
+        return -1;
+    const unsigned group_count = k / group;
+    const unsigned panel_bytes = WIDTH * k / 2;
+    const unsigned passes = fine ? 2 : 1;
+    const unsigned max_panels = (C_BASE - NPU_B) / (panel_bytes * passes);
+    const unsigned count = n / WIDTH;
+    const unsigned stage = d->ring;
+    const unsigned output = stage + GEMM_OUTPUT;
+    const uintptr_t image = (uintptr_t)d->resident_image;
+    const size_t bytes = (size_t)n * k / 2;
+    unsigned weights[2];
+    for (unsigned pass = 0; pass < passes; ++pass) {
+        const uint8_t *base = pass ? fine : packed;
+        const uintptr_t address = (uintptr_t)base, offset = address - image;
+        weights[pass] = stage + EXPANDED + pass * (unsigned)bytes;
+        if (image && address >= image && !(offset & 31u) &&
+            offset <= d->resident_bytes && bytes <= d->resident_bytes - offset)
+            weights[pass] = (unsigned)offset;
+        else if (host_write(d, weights[pass], base, bytes))
+            return -1;
+    }
+    if (host_write(d, stage, a8, k))
+        return -1;
+
+    unsigned half = 0;
+    for (unsigned first = 0; first < count; first += max_panels, half ^= Z15_HALF_BYTES) {
+        unsigned panels = count - first < max_panels ? count - first : max_panels;
+        if (dma(d, stage, half + NPU_A, k, 0))
+            return -1;
+        for (unsigned pass = 0; pass < passes; ++pass)
+            if (dma(d, weights[pass] + first * panel_bytes,
+                    half + NPU_B + pass * panels * panel_bytes, panels * panel_bytes, 0))
+                return -1;
+        const unsigned chunks = group_count * passes;
+        for (unsigned p = 0; p < panels; ++p)
+            for (unsigned chunk = 0; chunk < chunks; ++chunk) {
+                const unsigned g = chunk / passes, pass = chunk % passes;
+                const unsigned coefficient = coeff[(first + p) * chunks + chunk];
+                if (coefficient > 256)
+                    return -1;
+                const unsigned flags = (chunk ? CONTINUE : 0) | (chunk + 1 < chunks ? DEFER : 0);
+                const word words[] = {
+                    {Z15_NPU_DIMS, 1 | WIDTH << 16}, {Z15_NPU_K, group | group << 16},
+                    {Z15_NPU_A, half + NPU_A + g * group},
+                    {Z15_NPU_B, half + NPU_B + (pass * panels + p) * panel_bytes + g * WIDTH * (group / 2)},
+                    {Z15_NPU_C, half + C_BASE + p * WIDTH * 4}, {Z15_NPU_BIAS, 0},
+                    {Z15_NPU_FLAGS, flags}, {Z15_NPU_SHAPE, 0}, {Z15_NPU_SLICE, 0}, {Z15_NPU_PARTIAL, 0},
+                    {P17_WEIGHT_CONFIG, P17_SIGNED_W4 | GROUP_SCALE | coefficient << 7}
+                };
+                const valence_cmd_batch_t batch = {words, sizeof(words) / sizeof(words[0]), Z15_START_NPU};
+                if (ready(d, 0, Z15_NPU_BUSY) || submit_batch(d, &batch) ||
+                    ready(d, Z15_NPU_DONE, Z15_NPU_BUSY))
+                    return -1;
+            }
+        if (dma(d, output + first * WIDTH * 4, half + C_BASE, panels * WIDTH * 4, 1))
+            return -1;
+    }
+    return host_read(d, output, out, (size_t)n * sizeof(*out));
+}
+
 static int project(void *ctx, const uint8_t *packed, unsigned n, unsigned k,
                    const int8_t *a8, int32_t *result)
 {
@@ -499,8 +570,10 @@ static int attention_hw(void *ctx, unsigned layer, unsigned pos, const int8_t *q
 c11b_z15 *c11b_z15_open_target(const ysyx_hal_t *hal, const uint8_t *image, size_t count,
                               valence_target target, const char **error)
 {
+    const unsigned ring_bytes = target == VALENCE_P17 && image && count >= 8 &&
+        (!memcmp(image, "YSQC14D", 8) || !memcmp(image, "YSQC14H", 8)) ? RESIDUAL_RING : RING;
     if ((target != VALENCE_STEP2 && target != VALENCE_P17) || !image || !count ||
-        count > Z15_POOL_SIZE - RING - 32 || !hal || !hal->mmio_read32 ||
+        count > Z15_POOL_SIZE - ring_bytes - 32 || !hal || !hal->mmio_read32 ||
         !hal->mmio_write32 || !hal->ddr_write || !hal->ddr_read || !hal->cache_sync)
         return NULL;
     c11b_z15 *d = calloc(1, sizeof(*d));
@@ -520,13 +593,13 @@ c11b_z15 *c11b_z15_open_target(const ysyx_hal_t *hal, const uint8_t *image, size
         ready(d, 0, Z15_GPU_BUSY | Z15_DMA_BUSY | Z15_NPU_BUSY) ||
         (target == VALENCE_P17 && (wr(d, P17_WEIGHT_CONFIG, 0) ||
                                   wr(d, P17_KV_CONFIG, 0) || error_reg(d))) ||
-        (!hal->observe && host_write(d, 0, image, count))) {
+        ((target == VALENCE_P17 || !hal->observe) && host_write(d, 0, image, count))) {
         if (error)
             *error = "Qwen allocation, Z15 ABI, or DDR initialization failed";
         c11b_z15_close(d);
         return NULL;
     }
-    if (target == VALENCE_P17 && !hal->observe) {
+    if (target == VALENCE_P17) {
         d->resident_image = image;
         d->resident_bytes = count;
     }
@@ -606,9 +679,9 @@ static int residual_q16(void *ctx, int32_t *hidden, const int32_t *delta)
 
 int c12_z15_attach(qwen_reference *m, c11b_z15 *d, uint32_t layers)
 {
-    if (!d)
+    if (!d || (c14_qwen_block16(m) && (d->target != VALENCE_P17 || c14_qwen_block16(m) < 2)))
         return -1;
-    c12_qwen_device ops = {d, c11b_z15_project_grouped, rope_hw, residual_q16};
+    c12_qwen_device ops = {d, c11b_z15_project_grouped, rope_hw, residual_q16, c11b_z15_project_block16};
     return c12_qwen_set_device(m, &ops, layers);
 }
 

@@ -25,6 +25,8 @@ def observe(source, gpu_step=2, gpu_divisor=3, *, p17=False):
     uint64_t c2_dma_gpu=0,c2_dma_tensor=0;
     uint64_t c3_read_bytes=0,c3_write_bytes=0;
     uint64_t c4_occupancy[8]={};
+    uint64_t c4_tc_busy=0,c4_vc_busy=0;
+    unsigned last_tensor_action=0;
     uint64_t c4_read_overlap_beats=0,c4_write_overlap_beats=0;""")
     old_step, old_divisor = (3, 4) if p17 else (2, 3)
     result = substitute(result, f"        gpu_phase+={old_step};",
@@ -50,6 +52,11 @@ def observe(source, gpu_step=2, gpu_divisor=3, *, p17=False):
     result = substitute(result, "                ddr[aw_st+j]=uint8_t(dut.m_axi_wdata[j/4]>>(8*(j%4)));",
                         """                {ddr[aw_st+j]=uint8_t(dut.m_axi_wdata[j/4]>>(8*(j%4)));
                  ++c3_write_bytes;}""")
+    if p17:
+        original = "    int write(unsigned address,uint32_t value,uint8_t strb=15) {"
+        result = substitute(result, original, original + "\n"
+                            "        if(address==Z15_CTRL && (value==8 || value==32 || value==64))\n"
+                            "            last_tensor_action=value;")
     return substitute(result, "        ++tick_count;",
                       """        ++tick_count;
         if(dut.aresetn) {
@@ -58,6 +65,8 @@ def observe(source, gpu_step=2, gpu_divisor=3, *, p17=False):
             const bool gpu=r->z15_bd_axi_shell__DOT__implementation__DOT__gpu_busy;
             const bool npu=r->z15_bd_axi_shell__DOT__implementation__DOT__npu_busy;
             ++c4_occupancy[unsigned(npu) | unsigned(gpu)*2u | unsigned(dma)*4u];
+            c4_tc_busy+=npu && last_tensor_action==8;
+            c4_vc_busy+=npu && (last_tensor_action==32 || last_tensor_action==64);
             c2_dma+=dma;
             c2_compute_dma+=dma && (gpu || npu);
             c2_dma_gpu+=dma && gpu;

@@ -11,6 +11,7 @@ from .c6_depthwise import depthwise_tiles, depthwise_weights, depthwise_widths
 from .c6_layout import plan_layout
 from .c6_memory import Lifetime, reserve_ddr
 from .c14_conv import can_chain_conv, chain_tiles, pack_chain_weights
+from .c14_spatial import needs_zero_row, pack_spatial_weights, row_plan, spatial_tiles
 from .c6_reduce_conv import combine_tiles, raw_conv_tiles, reduction_widths
 from .c6_schedule import emit_program
 from .c6_tensor import Conv, conv_tiles, pack_weights
@@ -151,6 +152,24 @@ def _conv(node, ctx, *, fast_reduce=False, reduce_bank_skew=False, reduce_in_scr
                                 bias_ddr=slots[bias_name].offset, mul=mul, shift=shift, lut=lut),)
 
         return schedule
+
+    if target == "p17":
+        blob, blocks = pack_spatial_weights(spec, weights, bias)
+        try:
+            row_plan(spec, len(blob))
+        except ValueError:
+            pass
+        else:
+            b_name = ctx.constant(f"{name}/@spatial_weights", blob)
+            zero_bytes = needs_zero_row(spec)
+            zero = ctx.constant(f"{name}/@spatial_zero", bytes(zero_bytes)) if zero_bytes else None
+
+            def schedule(slots):
+                return (spatial_tiles(spec, input_ddr=slots[src].offset, output_ddr=slots[dst].offset,
+                                      weights_ddr=slots[b_name].offset, weight_bytes=len(blob), blocks=blocks,
+                                      zero_ddr=slots[zero].offset if zero else 0, mul=mul, shift=shift, lut=lut),)
+
+            return schedule
 
     direct_width = scratch_combine_width(spec) if reduce_in_scratch else 0
     parts = reduction_widths(spec)

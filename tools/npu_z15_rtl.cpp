@@ -178,6 +178,7 @@ int main(int argc, char **argv) {
             }
         }
         require(commands != 0, "no hardware checks performed");
+        require(rig.read(Z15_ERROR) == 0, "sticky ABI error after replay");
         const unsigned wall = rig.tick_count;
         const unsigned overlap = rig.read(Z15_OVERLAP_CYCLES_LO);
         printf("Z15_RTL_PASS commands=%u wall_npu_ticks=%u axi_transactions=%u overlap_npu_ticks=%u\n",
@@ -209,6 +210,10 @@ int main(int argc, char **argv) {
                (unsigned long long)(rig.c4_occupancy[5] + rig.c4_occupancy[6]),
                (unsigned long long)rig.c4_read_overlap_beats,
                (unsigned long long)rig.c4_write_overlap_beats);
+        if (rig.c4_tc_busy || rig.c4_vc_busy)
+            printf("P17_BUSY_SPLIT TC_ticks=%llu VC_ticks=%llu error=%u\n",
+                   (unsigned long long)rig.c4_tc_busy, (unsigned long long)rig.c4_vc_busy,
+                   rig.read(Z15_ERROR));
         rig.dut.final();
     } catch (const std::exception &e) {
         fprintf(stderr,"Z15_NPU_RTL_FAIL %s\n",e.what());

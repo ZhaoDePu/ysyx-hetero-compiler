@@ -12,6 +12,11 @@ typedef struct {
     uint32_t code[Z15_PROGRAM_BYTES / 4u];
     uint32_t scales[512];
     uint8_t activation[256];
+    int phase17;
+    struct {
+        uint32_t sums[16][16], dims, a, c, shape, roi, offset, format;
+        int held;
+    } chain;
 } c6_reference_t;
 
 #define REG(ref, address) ((ref)->registers[(address) / 4u])
@@ -91,12 +96,26 @@ static int tensor(c6_reference_t *ref)
     const int kernel = flags & (1u << 10) ? 3 : 1;
     const int stride = flags & (1u << 11) ? 2 : 1;
     const int pad = flags & (1u << 12) ? 1 : 0;
+    const int keep = ref->phase17 && (flags & (1u << 18));
+    const int defer = ref->phase17 && (flags & (1u << 19));
+    const int chain = keep || defer;
+    const unsigned offset = chain ? REG(ref, Z15_NPU_PARTIAL) : 0;
+    const uint32_t format = flags & 0x7e01u;
+    if (chain && (m > 16 || n > 16 || ((offset | k) & 3u) ||
+        (keep ? (!ref->chain.held || (flags & 2u) || ref->chain.dims != dims ||
+                ref->chain.c != c || ref->chain.format != format ||
+                (conv && (ref->chain.a != a || ref->chain.shape != shape ||
+                          ref->chain.roi != roi || ref->chain.offset != offset)))
+              : offset != 0)))
+        return -1;
+    ref->chain.held = 0;
     unsigned ow = 0, first = 0;
     size_t input_size = (size_t)m * kstride;
     if (conv) {
         const int padded_h = height + 2 * pad - kernel, padded_w = width + 2 * pad - kernel;
+        const unsigned extent_k = cstride * (unsigned)(kernel * kernel);
         if (!height || !width || !channels || padded_h < 0 || padded_w < 0 ||
-            cstride * (unsigned)(kernel * kernel) != k)
+            offset > extent_k || k > extent_k - offset || ((offset + k != extent_k) != defer))
             return -1;
         const unsigned oh = (unsigned)(padded_h / stride + 1);
         ow = (unsigned)(padded_w / stride + 1);
@@ -110,13 +129,22 @@ static int tensor(c6_reference_t *ref)
         !scratch_span(b, n * kstride, half) || !scratch_span(c, m * output_stride, half) ||
         ((flags & 2u) && !scratch_span(bias, 4u * n, half)))
         return -1;
+    ref->chain.dims = dims;
+    ref->chain.a = a;
+    ref->chain.c = c;
+    ref->chain.shape = shape;
+    ref->chain.roi = roi;
+    ref->chain.offset = offset + k;
+    ref->chain.format = format;
+    ref->chain.held = defer;
     for (unsigned row = 0; row < m; ++row) {
         const int y = conv ? (int)(first + row / ow) * stride - pad : 0;
         const int x = conv ? (int)(row % ow) * stride - pad : 0;
         uint8_t *out = ref->scratch + c + row * output_stride;
         for (unsigned col = 0; col < n; ++col) {
             const uint8_t *weight = ref->scratch + b + col * kstride;
-            uint32_t sum = flags & 2u ? read_word(ref->scratch + bias + 4u * col) : 0;
+            uint32_t sum = keep ? ref->chain.sums[row][col] :
+                 flags & 2u ? read_word(ref->scratch + bias + 4u * col) : 0;
             if (conv) {
                 for (int dy = 0; dy < kernel; ++dy) {
                     if (y + dy < 0 || y + dy >= height)
@@ -127,11 +155,19 @@ static int tensor(c6_reference_t *ref)
                         const size_t pixel = (size_t)(y + dy) * (unsigned)width + (unsigned)(x + dx);
                         const uint8_t *data = ref->scratch + a + pixel * cstride;
                         const unsigned tap = (unsigned)(dy * kernel + dx) * cstride;
-                        sum += (uint32_t)dot(data, weight + tap, channels, (int)unsigned_a);
+                        const unsigned begin = offset > tap ? offset : tap;
+                        const unsigned end = offset + k < tap + channels ? offset + k : tap + channels;
+                        if (begin < end)
+                            sum += (uint32_t)dot(data + begin - tap, weight + begin - offset,
+                                                 end - begin, (int)unsigned_a);
                     }
                 }
             } else {
                 sum += (uint32_t)dot(ref->scratch + a + row * kstride, weight, k, (int)unsigned_a);
+            }
+            if (defer) {
+                ref->chain.sums[row][col] = sum;
+                continue;
             }
             int64_t value = signed32(sum);
             if (flags & (1u << 15)) {
@@ -534,6 +570,7 @@ static int mmio_write(void *opaque, uint32_t offset, uint32_t value)
         REG(ref, Z15_STATUS) = Z15_LOCKED;
         REG(ref, Z15_ERROR) = 0;
         REG(ref, Z15_GPU_SLOTS) = 0;
+        ref->chain.held = 0;
         return 0;
     case Z15_START_DMA:
         if (dma(ref))
@@ -623,5 +660,13 @@ int ysyx_hal_reference_c6_open(ysyx_hal_t *hal, const char **error)
                         .close = close_reference};
     if (error)
         *error = NULL;
+    return 0;
+}
+
+int ysyx_hal_reference_p17_open(ysyx_hal_t *hal, const char **error)
+{
+    if (ysyx_hal_reference_c6_open(hal, error))
+        return -1;
+    ((c6_reference_t *)hal->ctx)->phase17 = 1;
     return 0;
 }

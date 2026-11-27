@@ -30,6 +30,8 @@ c11b_z15 *c11b_z15_open_target(const ysyx_hal_t *, const uint8_t *, size_t,
                               valence_target, const char **);
 int c11b_z15_project_grouped(void *, const uint8_t *, unsigned n, unsigned k,
                             unsigned group, unsigned bits, const int8_t *, int32_t *);
+int c11b_z15_project_block16(void *, const uint8_t *, const uint8_t *, unsigned n, unsigned k,
+                            unsigned group, const int8_t *, const uint16_t *, int32_t *);
 valence_submission_stats c11b_z15_submission_stats(const c11b_z15 *);
 
 const c11b_ops *c11b_z15_ops(c11b_z15 *);

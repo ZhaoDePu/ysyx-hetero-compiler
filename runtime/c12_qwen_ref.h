@@ -16,8 +16,11 @@ typedef struct {
                    const int8_t *, int32_t *);
     int (*rope)(void *, int32_t *, int32_t *, const uint8_t *);
     int (*residual)(void *, int32_t *, const int32_t *);
+    int (*project_block16)(void *, const uint8_t *, const uint8_t *, unsigned, unsigned, unsigned,
+                           const int8_t *, const uint16_t *, int32_t *);
 } c12_qwen_device;
 
+int c14_qwen_block16(const qwen_reference *);
 int c12_qwen_mixed(const qwen_reference *);
 int c12_qwen_cache_bits(qwen_reference *, unsigned);
 /* Bit 0..23 selects hardware layers, bit 24 selects the tied LM head. */
