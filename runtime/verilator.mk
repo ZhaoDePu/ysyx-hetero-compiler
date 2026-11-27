@@ -48,10 +48,10 @@ $(OUT)/c11b_rope_words.h: ../tools/c11b_emit_rope.py ../hetero_compiler/c11_qwen
 	cd .. && python3 -B -m tools.c11b_emit_rope > "$@.tmp"
 	mv -f -- "$@.tmp" "$@"
 
-$(OUT)/c11b_qwen_z15.o: c11b_qwen_z15.c c11b_qwen_ops.h $(OUT)/c11b_rope_words.h
+$(OUT)/c11b_qwen_z15.o: c11b_qwen_z15.c c11b_qwen_ops.h c12_qwen_ref.h $(OUT)/c11b_rope_words.h
 	$(CC) $(CFLAGS) -I"$(OUT)" -c "$<" -o "$@"
 
-$(OUT)/c11b_qwen_ref.o: c11_qwen_ref.c c11_qwen_ref.h c11b_reference.inc c11b_qwen_ops.h
+$(OUT)/c11b_qwen_ref.o: c11_qwen_ref.c c11_qwen_ref.h c12_qwen_ref.h c12_qwen_cache.h c11b_reference.inc c11b_qwen_ops.h
 	$(CC) $(CFLAGS) -DYSYX_C11B_NATIVE -mavx2 -c "$<" -o "$@"
 
 $(OUT)/c11b_layer0.o: tests/c11b_layer0.c c11_qwen_ref.h c11b_qwen_ops.h
@@ -73,5 +73,13 @@ $(OUT)/c11b_projection: $(OUT)/c11b_projection.o $(C11B_RTL)
 	mv -f -- "$@.tmp" "$@"
 
 $(OUT)/c11b_full: $(OUT)/c11b_full.o $(C11B_RTL)
+	$(CXX) -pthread $^ -o "$@.tmp"
+	mv -f -- "$@.tmp" "$@"
+
+
+$(OUT)/c12_qwen_rtl.o: tests/c12_qwen_rtl.c c12_qwen_ref.h c11b_qwen_ops.h
+	$(CC) $(CFLAGS) -DYSYX_C11B_NATIVE -I. -c "$<" -o "$@"
+
+$(OUT)/c12_qwen_rtl: $(OUT)/c12_qwen_rtl.o $(C11B_RTL)
 	$(CXX) -pthread $^ -o "$@.tmp"
 	mv -f -- "$@.tmp" "$@"

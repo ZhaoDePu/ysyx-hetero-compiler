@@ -11,7 +11,7 @@ const uint8_t *qwen_reference_image(const qwen_reference *m, size_t *bytes)
 
 int qwen_reference_native(qwen_reference *m, const c11b_ops *ops)
 {
-    if (!m || m->position || (ops && (!ops->project || !ops->rms || !ops->rope ||
+    if (!m || m->kv_bits || m->position || (ops && (!ops->project || !ops->rms || !ops->rope ||
                                      !ops->attention || !ops->swiglu || !ops->faulted)))
         return -1;
     m->native = 1;
@@ -336,6 +336,8 @@ static int process_native(qwen_reference *m, unsigned token, int logits)
 
 int qwen_reference_advance(qwen_reference *m, unsigned token)
 {
+    if (m && m->kv_bits)
+        return process_q16(m, token, 0) ? 0 : -1;
     return process_native(m, token, 0);
 }
 

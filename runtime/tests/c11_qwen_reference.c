@@ -1,5 +1,5 @@
 /* Exercise the full deterministic reference with externally tokenized input. */
-#include "c11_qwen_ref.h"
+#include "c12_qwen_ref.h"
 
 #include <errno.h>
 #include <stdio.h>
@@ -73,12 +73,19 @@ int main(int argc, char **argv)
     if (minimum && (*end || min_steps > steps))
         return 2;
     qwen_reference *model = qwen_reference_open(argv[1]);
+    const char *kv_bits = getenv("YSYX_QWEN_KV_BITS");
+    int failed = 0;
+    if (kv_bits) {
+        if ((kv_bits[0] != '4' && kv_bits[0] != '8') || kv_bits[1])
+            failed = 1;
+        else
+            failed = c12_qwen_cache_bits(model, (unsigned)(kv_bits[0] - '0'));
+    }
     FILE *input = fopen(argv[2], "r");
     FILE *output = fopen(argv[4], "wb");
 #ifdef YSYX_C11B_NATIVE
-    int failed = qwen_reference_native(model, NULL);
-#else
-    int failed = 0;
+    if (!failed && !c12_qwen_mixed(model))
+        failed = qwen_reference_native(model, NULL);
 #endif
     if (!failed)
         failed = !model || !input || !output || generate(model, input, output, (unsigned)steps,

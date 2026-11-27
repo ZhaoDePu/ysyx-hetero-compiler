@@ -17,7 +17,10 @@ Arena load(const std::string &name) {
 }
 
 class Rig {
-    Vnpu_tensor_engine dut;
+    struct SerialContext : VerilatedContext {
+        SerialContext() { threads(1); }
+    } context;
+    Vnpu_tensor_engine dut{&context};
 public:
     Arena memory;
     unsigned cycles = 0, checkpoints = 0;

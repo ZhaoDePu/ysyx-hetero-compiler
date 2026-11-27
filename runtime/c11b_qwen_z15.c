@@ -1,7 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include "c11b_qwen_ops.h"
 
-#include "c11_qwen_ref.h"
+#include "c12_qwen_ref.h"
 #include "z15_regs.h"
 
 #include <sched.h>
@@ -9,6 +9,7 @@
 #include <string.h>
 
 #include "c11b_rope_words.h"
+
 
 enum {
     RING = 16 * 1024 * 1024, MAX_INPUT = QWEN_INTER, MAX_OUTPUT = 4864, PANEL = 496,
@@ -19,7 +20,9 @@ enum {
     NPU_A = 0x200, NPU_B = 0x1000, NPU_C = 0x11000,
     KEY = 0x20000, HEAD_CACHE = C11B_PITCH * QWEN_HEAD_DIM,
     AQ = 0x1000, AV = 0x1200, AS = 0xd0000, AP = 0xd0400, AO = 0xd0800,
-    POLL = 16777216
+    POLL = 16777216, V3_VERSION = 0x0120, V3_DMA_CYCLES = 0x0100,
+    V3_DMA_COMPUTE = 0x0108, V3_DMA_TRANSACTIONS = 0x0110,
+    V3_ACTIVATION_PACKED = 0x1800
 };
 
 typedef struct { uint32_t reg, value; } word;
@@ -30,7 +33,7 @@ struct c11b_z15 {
     uint32_t ring;
     uint64_t vpu_ticks, dma_bytes, expanded_bytes, ddr_peak;
     uint32_t dma_moves;
-    int failed, rope_resident, pipeline;
+    int failed, rope_resident, residual_resident, pipeline, turbo;
     int8_t *expanded;
 };
 
@@ -171,10 +174,10 @@ static int config(c11b_z15 *d, const word *words, size_t count)
     return 0;
 }
 
-static int gemm(c11b_z15 *d, unsigned base, unsigned n)
+static int gemm(c11b_z15 *d, unsigned base, unsigned n, unsigned group)
 {
     const word desc[] = {
-        {Z15_NPU_DIMS, 1 | n << 16}, {Z15_NPU_K, 128 | 128 << 16},
+        {Z15_NPU_DIMS, 1 | n << 16}, {Z15_NPU_K, group | group << 16},
         {Z15_NPU_A, base + NPU_A}, {Z15_NPU_B, base + NPU_B}, {Z15_NPU_C, base + NPU_C},
         {Z15_NPU_BIAS, 0}, {Z15_NPU_FLAGS, 0}, {Z15_NPU_SHAPE, 0},
         {Z15_NPU_SLICE, 0}, {Z15_NPU_PARTIAL, 0}
@@ -205,10 +208,10 @@ static tile tensor_tile(unsigned ordinal, unsigned channels)
     return (tile){group * channels + column, group, width, (ordinal & 1u) * Z15_HALF_BYTES};
 }
 
-static int prepare_tile(c11b_z15 *d, unsigned a, unsigned b, tile t)
+static int prepare_tile(c11b_z15 *d, unsigned a, unsigned b, tile t, unsigned group)
 {
-    return dma(d, a + t.group * QWEN_GROUP, t.sram + NPU_A, QWEN_GROUP, 0) ||
-           dma(d, b + t.block * QWEN_GROUP, t.sram + NPU_B, t.width * QWEN_GROUP, 0);
+    return dma(d, a + t.group * group, t.sram + NPU_A, group, 0) ||
+           dma(d, b + t.block * group, t.sram + NPU_B, t.width * group, 0);
 }
 
 static int store_tile(c11b_z15 *d, unsigned output, tile t)
@@ -216,41 +219,52 @@ static int store_tile(c11b_z15 *d, unsigned output, tile t)
     return dma(d, output + t.block * 4u, t.sram + NPU_C, t.width * 4u, 1);
 }
 
-static int project(void *ctx, const uint8_t *packed, unsigned n, unsigned k,
-                   const int8_t *a8, int32_t *result)
+static int project_grouped(void *ctx, const uint8_t *packed, unsigned n, unsigned k,
+                           unsigned group, unsigned bits, const int8_t *a8, int32_t *result)
 {
     c11b_z15 *d = ctx;
     if (!n || n > MAX_OUTPUT || (n & 15u) || (k != QWEN_HIDDEN && k != QWEN_INTER) ||
-        (size_t)n * k > MAX_EXPANDED)
+        (size_t)n * k > MAX_EXPANDED || (group != 64 && group != 128) ||
+        (bits != 4 && bits != 8))
         return -1;
     const unsigned stage = d->ring;
     const unsigned base_weight = stage + EXPANDED;
     const unsigned base_result = stage + GEMM_OUTPUT;
-    widen(d->expanded, packed, (size_t)n * k / 2);
-    if (host_write(d, base_weight, d->expanded, (size_t)n * k) ||
+    const void *weights = packed;
+    if (bits == 4) {
+        widen(d->expanded, packed, (size_t)n * k / 2);
+        weights = d->expanded;
+        d->expanded_bytes += (size_t)n * k;
+    }
+    if (host_write(d, base_weight, weights, (size_t)n * k) ||
         host_write(d, stage, a8, k))
         return -1;
-    d->expanded_bytes += (size_t)n * k;
-    const unsigned count = (k / QWEN_GROUP) * ((n + PANEL - 1) / PANEL);
+    const unsigned count = (k / group) * ((n + PANEL - 1) / PANEL);
     tile previous = tensor_tile(0, n);
-    if (prepare_tile(d, stage, base_weight, previous) || gemm(d, previous.sram, previous.width))
+    if (prepare_tile(d, stage, base_weight, previous, group) || gemm(d, previous.sram, previous.width, group))
         return -1;
     for (unsigned ordinal = 1; ordinal < count; ++ordinal) {
         const tile next = tensor_tile(ordinal, n);
         if (d->pipeline) {
-            if (prepare_tile(d, stage, base_weight, next) || ready(d, Z15_NPU_DONE, Z15_NPU_BUSY) ||
-                gemm(d, next.sram, next.width) || store_tile(d, base_result, previous))
+            if (prepare_tile(d, stage, base_weight, next, group) || ready(d, Z15_NPU_DONE, Z15_NPU_BUSY) ||
+                gemm(d, next.sram, next.width, group) || store_tile(d, base_result, previous))
                 return -1;
         } else {
             if (ready(d, Z15_NPU_DONE, Z15_NPU_BUSY) || store_tile(d, base_result, previous) ||
-                prepare_tile(d, stage, base_weight, next) || gemm(d, next.sram, next.width))
+                prepare_tile(d, stage, base_weight, next, group) || gemm(d, next.sram, next.width, group))
                 return -1;
         }
         previous = next;
     }
     if (ready(d, Z15_NPU_DONE, Z15_NPU_BUSY) || store_tile(d, base_result, previous))
         return -1;
-    return host_read(d, base_result, result, (size_t)(k / QWEN_GROUP) * n * sizeof(*result));
+    return host_read(d, base_result, result, (size_t)(k / group) * n * sizeof(*result));
+}
+
+static int project(void *ctx, const uint8_t *packed, unsigned n, unsigned k,
+                   const int8_t *a8, int32_t *result)
+{
+    return project_grouped(ctx, packed, n, k, QWEN_GROUP, 4, a8, result);
 }
 
 static int ew(c11b_z15 *d, unsigned a, unsigned b, unsigned c, unsigned length,
@@ -290,24 +304,37 @@ static int swiglu_hw(void *ctx, const int8_t *gate, const int8_t *up, const int8
     if (upload(d, A, buf, gate, QWEN_INTER) ||
         upload(d, B, buf + 8192, up, QWEN_INTER) || ready(d, 0, Z15_NPU_BUSY))
         return -1;
-    for (unsigned i = 0; i < 256; ++i)
-        if (wr(d, Z15_ACTIVATION, i | (unsigned)(uint8_t)lut[i] << 8) ||
-            action(d, Z15_WRITE_ACT))
+    if (d->turbo) {
+        for (unsigned i = 0; i < 256; i += 4) {
+            uint32_t packed = (uint8_t)lut[i] | (uint32_t)(uint8_t)lut[i + 1] << 8 |
+                              (uint32_t)(uint8_t)lut[i + 2] << 16 |
+                              (uint32_t)(uint8_t)lut[i + 3] << 24;
+            if (wr(d, V3_ACTIVATION_PACKED + i, packed))
+                return -1;
+        }
+        if (error_reg(d))
             return -1;
+    } else {
+        for (unsigned i = 0; i < 256; ++i)
+            if (wr(d, Z15_ACTIVATION, i | (unsigned)(uint8_t)lut[i] << 8) ||
+                action(d, Z15_WRITE_ACT))
+                return -1;
+    }
     return ew(d, A, 0, MID, QWEN_INTER, 0, 0, 11, 1, 0, 0) ||
            ew(d, MID, B, C, QWEN_INTER, 0, 0, 6, 1, shift, 0) ||
            download(d, C, buf + VECTOR_OUTPUT, result, QWEN_INTER);
 }
 
-static int rope_kernel(c11b_z15 *d)
+static int launch_warps(c11b_z15 *d, unsigned offset, const uint32_t *code, size_t length,
+                        const uint32_t pc[4], int *resident)
 {
     if (ready(d, 0, Z15_GPU_BUSY))
         return -1;
-    if (!d->rope_resident) {
-        for (size_t i = 0; i < sizeof(c11b_rope_words) / sizeof(c11b_rope_words[0]); ++i)
-            if (wr(d, Z15_PROGRAM + (unsigned)i * 4, c11b_rope_words[i]))
+    if (!*resident) {
+        for (size_t i = 0; i < length; ++i)
+            if (wr(d, Z15_PROGRAM + offset + (unsigned)i * 4, code[i]))
                 return -1;
-        d->rope_resident = 1;
+        *resident = 1;
     }
     for (unsigned warp = 0; warp < 4; ++warp) {
         unsigned i = 0;
@@ -318,7 +345,7 @@ static int rope_kernel(c11b_z15 *d)
             if (++i == POLL)
                 return -1;
         } while (slots & (Z15_GPU_PENDING | 1u << warp));
-        if (wr(d, Z15_GPU_PC, c11b_rope_pc[warp]) ||
+        if (wr(d, Z15_GPU_PC, offset + pc[warp]) ||
             wr(d, Z15_GPU_JOB, warp << 24 | 16u << 16) ||
             action(d, Z15_START_GPU))
             return -1;
@@ -340,7 +367,9 @@ static int rope_hw(void *ctx, int32_t *q, int32_t *k, const uint8_t *trig)
         int32_t *ki = k + group * QWEN_HEAD_DIM;
         memcpy(staged, qi, q_bytes);
         memcpy(staged + 7 * QWEN_HEAD_DIM, ki, k_bytes);
-        if (upload(d, A, buf, staged, sizeof(staged)) || rope_kernel(d) ||
+        if (upload(d, A, buf, staged, sizeof(staged)) ||
+            launch_warps(d, 0, c11b_rope_words, sizeof(c11b_rope_words) / sizeof(uint32_t),
+                         c11b_rope_pc, &d->rope_resident) ||
             download(d, A, buf + VECTOR_OUTPUT, staged, sizeof(staged)))
             return -1;
         memcpy(qi, staged, q_bytes);
@@ -472,6 +501,12 @@ int c11b_z15_stats(c11b_z15 *d, ysyx_stats_t *s)
     if (d->hal->observe) {
         s->has_observations = 1;
         d->hal->observe(d->hal->ctx, &s->observed);
+    } else if (d->turbo) {
+        if (ticks(d, V3_DMA_CYCLES, &s->observed.dma_busy_ticks) ||
+            ticks(d, V3_DMA_COMPUTE, &s->observed.dma_compute_overlap_ticks) ||
+            ticks(d, V3_DMA_TRANSACTIONS, &s->observed.axi_transactions))
+            return -1;
+        s->has_observations = 1;
     }
     return error_reg(d);
 }
@@ -479,3 +514,33 @@ int c11b_z15_stats(c11b_z15 *d, ysyx_stats_t *s)
 uint64_t c11b_z15_vpu_ticks(const c11b_z15 *d) { return d->vpu_ticks; }
 uint64_t c11b_z15_peak_bytes(const c11b_z15 *d) { return d->ddr_peak; }
 uint64_t c11b_z15_expanded_bytes(const c11b_z15 *d) { return d->expanded_bytes; }
+
+static int residual_q16(void *ctx, int32_t *hidden, const int32_t *delta)
+{
+    c11b_z15 *d = ctx;
+    const unsigned ddr = d->ring + STAGE_DDR;
+    const unsigned bytes = QWEN_HIDDEN * sizeof(*hidden);
+    return upload(d, A, ddr, hidden, bytes) ||
+           upload(d, B, ddr + 8192, delta, bytes) ||
+           launch_warps(d, 0x1000, c12_residual_words, sizeof(c12_residual_words) / sizeof(uint32_t),
+                        c12_residual_pc, &d->residual_resident) ||
+           download(d, A, ddr + VECTOR_OUTPUT, hidden, bytes);
+}
+
+int c12_z15_attach(qwen_reference *m, c11b_z15 *d, uint32_t layers)
+{
+    if (!d)
+        return -1;
+    c12_qwen_device ops = {d, project_grouped, rope_hw, residual_q16};
+    return c12_qwen_set_device(m, &ops, layers);
+}
+
+int c12_z15_enable_turbo(c11b_z15 *d)
+{
+    uint32_t version;
+    if (!d || ready(d, 0, Z15_GPU_BUSY | Z15_DMA_BUSY | Z15_NPU_BUSY) ||
+        rd(d, V3_VERSION, &version) || version != UINT32_C(0x0c0c0101) || error_reg(d))
+        return -1;
+    d->turbo = 1;
+    return 0;
+}

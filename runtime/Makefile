@@ -71,6 +71,7 @@ $(OUT)/z15_c10_benchmark: $(addprefix $(OUT)/,c10_benchmark.o ysyx_rt.o hal_linu
 c11-qwen: $(OUT)/ysyx_qwen_chat
 
 $(OUT)/c11_qwen_ref.o $(OUT)/c11_qwen_chat.o: c11_qwen_ref.h
+$(OUT)/c11_qwen_ref.o: c12_qwen_ref.h c12_qwen_cache.h
 $(OUT)/c11_qwen_bpe.o $(OUT)/c11_qwen_chat.o: c11_qwen_bpe.h
 
 $(OUT)/ysyx_qwen_chat: $(addprefix $(OUT)/,c11_qwen_chat.o c11_qwen_bpe.o c11_qwen_ref.o)
@@ -83,14 +84,25 @@ $(OUT)/c11b_rope_words.h: ../tools/c11b_emit_rope.py ../hetero_compiler/c11_qwen
 	cd .. && python3 -B -m tools.c11b_emit_rope > "$@.tmp"
 	mv -f -- "$@.tmp" "$@"
 
-$(OUT)/c11b_qwen_z15.o: c11b_qwen_z15.c c11b_qwen_ops.h $(OUT)/c11b_rope_words.h
+$(OUT)/c11b_qwen_z15.o: c11b_qwen_z15.c c11b_qwen_ops.h c12_qwen_ref.h $(OUT)/c11b_rope_words.h
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(WARNFLAGS) -I"$(OUT)" -c "$<" -o "$@"
 
-$(OUT)/c11b_qwen_ref.o: c11_qwen_ref.c c11_qwen_ref.h c11b_reference.inc c11b_qwen_ops.h | $(OUT)
+$(OUT)/c11b_qwen_ref.o: c11_qwen_ref.c c11_qwen_ref.h c12_qwen_ref.h c12_qwen_cache.h c11b_reference.inc c11b_qwen_ops.h | $(OUT)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(WARNFLAGS) -DYSYX_C11B_NATIVE -c "$<" -o "$@"
 
-$(OUT)/c11b_qwen_chat.o: c11_qwen_chat.c c11_qwen_ref.h c11_qwen_bpe.h c11b_qwen_ops.h | $(OUT)
+$(OUT)/c11b_qwen_chat.o: c11_qwen_chat.c c11_qwen_ref.h c12_qwen_ref.h c11_qwen_bpe.h c11b_qwen_ops.h | $(OUT)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(WARNFLAGS) -DYSYX_C11B_NATIVE -c "$<" -o "$@"
 
 $(OUT)/z15_qwen25_chat: $(addprefix $(OUT)/,c11b_qwen_chat.o c11b_qwen_ref.o c11_qwen_bpe.o c11b_qwen_ops.o c11b_qwen_z15.o hal_linux_uio.o)
 	$(CC) $(LDFLAGS) $^ $(LDLIBS) -o "$@"
+
+.PHONY: c12-check
+c12-check: $(OUT)/test-c12-cache $(OUT)/test-c12-turbo
+	"$(OUT)/test-c12-cache"
+	"$(OUT)/test-c12-turbo"
+
+$(OUT)/test-c12-cache: tests/c12_qwen_cache.c c12_qwen_cache.h | $(OUT)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(WARNFLAGS) -I. "$<" $(LDFLAGS) $(LDLIBS) -o "$@"
+
+$(OUT)/test-c12-turbo: tests/c12_qwen_turbo.c $(addprefix $(OUT)/,c11b_qwen_ref.o c11b_qwen_ops.o c11b_qwen_z15.o)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(WARNFLAGS) -DYSYX_C11B_NATIVE -I. $^ $(LDFLAGS) $(LDLIBS) -o "$@"

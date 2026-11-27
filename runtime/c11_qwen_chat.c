@@ -1,6 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 #include "c11_qwen_bpe.h"
-#include "c11_qwen_ref.h"
+#include "c12_qwen_ref.h"
 
 #include <errno.h>
 #include <inttypes.h>
@@ -20,7 +20,8 @@ static const char *const bench_prompts[] = {
 
 typedef struct {
     const char *weights, *tokenizer, *mode, *backend, *csv, *plain, *chat, *prompt;
-    unsigned steps;
+    unsigned steps, kv_bits;
+    int turbo, trace_steps;
 #ifdef YSYX_C11B_NATIVE
     const char *golden;
     unsigned token;
@@ -93,8 +94,9 @@ static void reset(session *chat)
     qwen_reference_reset(chat->model);
 }
 
-static int turn(session *chat, const char *prompt, unsigned limit, FILE *csv)
+static int turn(session *chat, const char *prompt, const options *o, FILE *csv)
 {
+    const unsigned limit = o->steps;
     uint32_t ids[MAX_IDS];
     int count = chat_prompt(chat->bpe, prompt, !chat->turn, ids);
     if (count <= 0 || chat->position + (unsigned)count + limit + 1u >
@@ -131,11 +133,37 @@ static int turn(session *chat, const char *prompt, unsigned limit, FILE *csv)
         const char *piece = qwen_bpe_piece(chat->bpe, id, &bytes);
         if (!piece || fwrite(piece, 1, bytes, stdout) != bytes || fflush(stdout))
             return -1;
+        const double step_start = o->trace_steps ? seconds() : 0;
+#ifdef YSYX_C11B_NATIVE
+        ysyx_stats_t token_before;
+        if (o->trace_steps && chat->device && c11b_z15_stats(chat->device, &token_before))
+            return -1;
+#endif
         if (generated + 1 == limit) {
             if (advance(chat, id))
                 return -1;
         } else if (!(logits = step(chat, id))) {
             return -1;
+        }
+        if (o->trace_steps) {
+            double latency = seconds() - step_start;
+            fprintf(stderr, "decode_step=%u token=%u ms=%.6f tok/s=%.3f",
+                    generated + 1, id, latency * 1000, latency > 0 ? 1 / latency : 0);
+#ifdef YSYX_C11B_NATIVE
+            if (chat->device) {
+                ysyx_stats_t token_after;
+                if (c11b_z15_stats(chat->device, &token_after))
+                    return -1;
+                fprintf(stderr, " wall=%" PRIu64 " npu_vpu=%" PRIu64 " gpu=%" PRIu64
+                        " dma_bytes=%" PRIu64 " overlap=%" PRIu64,
+                        token_after.wall_ticks - token_before.wall_ticks,
+                        token_after.npu_ticks - token_before.npu_ticks,
+                        token_after.gpu_ticks - token_before.gpu_ticks,
+                        token_after.dma_bytes - token_before.dma_bytes,
+                        token_after.npu_gpu_overlap_ticks - token_before.npu_gpu_overlap_ticks);
+            }
+#endif
+            fputc('\n', stderr);
         }
     }
     const double elapsed = seconds() - begin;
@@ -202,6 +230,16 @@ static int parse(options *o, int argc, char **argv)
         else if (!strcmp(key, "--encode")) o->plain = value;
         else if (!strcmp(key, "--encode-chat")) o->chat = value;
 #ifdef YSYX_C11B_NATIVE
+        else if (!strcmp(key, "--mmio-profile")) {
+            if (strcmp(value, "v1") && strcmp(value, "turbo"))
+                return -1;
+            o->turbo = !strcmp(value, "turbo");
+        }
+        else if (!strcmp(key, "--kv-bits")) {
+            if ((value[0] != '4' && value[0] != '8') || value[1])
+                return -1;
+            o->kv_bits = (unsigned)(value[0] - '0');
+        }
         else if (!strcmp(key, "--golden")) o->golden = value;
         else if (!strcmp(key, "--token-id")) {
             char *end;
@@ -213,6 +251,11 @@ static int parse(options *o, int argc, char **argv)
             o->token_given = 1;
         }
 #endif
+        else if (!strcmp(key, "--trace-steps")) {
+            if (strcmp(value, "on") && strcmp(value, "off"))
+                return -1;
+            o->trace_steps = !strcmp(value, "on");
+        }
         else if (!strcmp(key, "--max-new-tokens")) {
             char *end;
             errno = 0;
@@ -230,6 +273,7 @@ static int parse(options *o, int argc, char **argv)
 #ifdef YSYX_C11B_NATIVE
            (strcmp(o->backend, "cpu") && strcmp(o->backend, "z15")) ||
            (encode && !strcmp(o->backend, "z15")) ||
+           (o->turbo && strcmp(o->backend, "z15")) ||
            (!strcmp(o->mode, "verify") ? !o->golden || !o->token_given || encode || o->csv
              : (strcmp(o->mode, "chat") && strcmp(o->mode, "bench")) || o->golden || o->token_given);
 #else
@@ -244,13 +288,13 @@ static int run_console(session *chat, const options *o, FILE *csv)
         for (unsigned i = 0; i < sizeof(bench_prompts) / sizeof(bench_prompts[0]); ++i) {
             reset(chat);
             printf("[%u] %s\n", i + 1, bench_prompts[i]);
-            if (turn(chat, bench_prompts[i], o->steps, csv))
+            if (turn(chat, bench_prompts[i], o, csv))
                 return -1;
         }
         return 0;
     }
     if (o->prompt)
-        return turn(chat, o->prompt, o->steps, csv);
+        return turn(chat, o->prompt, o, csv);
     char line[MAX_PROMPT];
     for (;;) {
         if (fputs("user> ", stdout) == EOF || fflush(stdout))
@@ -273,7 +317,7 @@ static int run_console(session *chat, const options *o, FILE *csv)
             reset(chat);
             continue;
         }
-        if (*line && turn(chat, line, o->steps, csv) < 0)
+        if (*line && turn(chat, line, o, csv) < 0)
             return -1;
     }
 }
@@ -315,8 +359,8 @@ static int verify_token(session *chat, const options *o)
                " invalid_dma=%" PRIu32 "\n", s.wall_ticks,
                c11b_z15_peak_bytes(chat->device), s.abi_error, s.invalid_dma_descriptors);
     }
-    printf("C11B_VERIFY_PASS token=%u logits_bytes=%zu backend=%s\n",
-           o->token, QWEN_VOCAB * sizeof(*got), o->backend);
+    printf("%s_VERIFY_PASS token=%u logits_bytes=%zu backend=%s\n",
+           c12_qwen_mixed(chat->model) ? "C12" : "C11B", o->token, QWEN_VOCAB * sizeof(*got), o->backend);
     return 0;
 }
 #endif
@@ -324,8 +368,11 @@ static int verify_token(session *chat, const options *o)
 #ifdef YSYX_C11B_NATIVE
 static int native_start(session *chat, const options *o)
 {
+    int mixed = c12_qwen_mixed(chat->model);
+    if (o->kv_bits && c12_qwen_cache_bits(chat->model, o->kv_bits))
+        return -1;
     if (!strcmp(o->backend, "cpu"))
-        return qwen_reference_native(chat->model, NULL);
+        return mixed ? 0 : qwen_reference_native(chat->model, NULL);
     FILE *state = fopen("/sys/class/fpga_manager/fpga0/state", "r");
     char line[32];
     const int operating = state && fgets(line, sizeof(line), state) &&
@@ -348,6 +395,14 @@ static int native_start(session *chat, const options *o)
         fprintf(stderr, "%s\n", why ? why : "could not open the Z15 Qwen runtime");
         return -1;
     }
+    if (o->turbo && c12_z15_enable_turbo(chat->device)) {
+        fputs("The selected Turbo image did not report MMIO extension 0x0c0c0101.\n", stderr);
+        return -1;
+    }
+    if (mixed) {
+        fputs("C12 candidate: NPU projections, GPU RoPE/residual and host Q16 nonlinearities.\n", stderr);
+        return c12_z15_attach(chat->model, chat->device, (UINT32_C(1) << (QWEN_LAYERS + 1)) - 1);
+    }
     return qwen_reference_native(chat->model, c11b_z15_ops(chat->device));
 }
 #endif
@@ -357,12 +412,12 @@ int main(int argc, char **argv)
     static const char help[] =
 #ifdef YSYX_C11B_NATIVE
          "z15_qwen25_chat --weights FILE --tokenizer FILE [--backend cpu|z15] "
-        "[--mode verify --token-id ID --golden FILE]\n"
+        "[--kv-bits 4|8] [--mmio-profile v1|turbo] [--mode verify --token-id ID --golden FILE]\n"
         "Chat and bench options: "
 #else
         "ysyx_qwen_chat --weights FILE --tokenizer FILE [--backend sim] "
 #endif
-        "[--mode chat|bench] [--prompt TEXT] [--max-new-tokens N] [--csv FILE]\n"
+        "[--mode chat|bench] [--prompt TEXT] [--max-new-tokens N] [--trace-steps on|off] [--csv FILE]\n"
         "--tokenizer FILE --encode TEXT|--encode-chat PROMPT\n";
     options o;
     if (argc == 2 && !strcmp(argv[1], "--help")) {

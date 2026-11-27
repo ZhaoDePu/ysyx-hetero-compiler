@@ -15,6 +15,10 @@ def observe(source, gpu_step=2, gpu_divisor=3):
         raise ValueError("expected GPU/NPU clock ratio between zero and one")
     result = substitute(source, '#include "Vz15_bd_axi_shell.h"',
                         '#include "Vz15_bd_axi_shell.h"\n#include "Vz15_bd_axi_shell___024root.h"')
+    result = substitute(result, "    VerilatedContext context;",
+                        "    struct SerialContext : VerilatedContext {\n"
+                        "        SerialContext() { threads(1); }\n"
+                        "    } context;")
     result = substitute(result, "    unsigned transactions=0;",
                         """    unsigned transactions=0;
     uint64_t c2_dma=0,c2_compute_dma=0,c2_triple=0,c2_gpu_clock=0;
@@ -60,11 +64,34 @@ def observe(source, gpu_step=2, gpu_divisor=3):
         }""")
 
 
+def paged_ddr(source):
+    """Preserve zero-filled DDR bytes and the BFM's AXI timing, without byte maps."""
+    return substitute(source, "    std::map<uint32_t,uint8_t> ddr;",
+                      """    struct PagedDdr {
+        static constexpr unsigned page_size = 4096;
+        using Page = std::array<uint8_t, page_size>;
+        std::vector<std::unique_ptr<Page>> pages =
+            std::vector<std::unique_ptr<Page>>(Z15_POOL_SIZE / page_size);
+
+        uint8_t &operator[](uint32_t address) {
+            require(address >= Z15_POOL_BASE && address - Z15_POOL_BASE < Z15_POOL_SIZE,
+                    "DDR BFM address outside aperture");
+            const unsigned local = address - Z15_POOL_BASE;
+            auto &page = pages[local / page_size];
+            if (!page) page = std::make_unique<Page>();
+            return (*page)[local % page_size];
+        }
+    } ddr;""")
+
 if __name__ == "__main__":
     cli = argparse.ArgumentParser(description=__doc__)
     cli.add_argument("src", type=Path)
     cli.add_argument("dst", type=Path)
     cli.add_argument("--gpu-clock-ratio", choices=("2:3", "4:5", "24840:32911", "3:4", "161:221"), default="2:3")
+    cli.add_argument("--paged-ddr", action="store_true")
     args = cli.parse_args()
     step, divisor = map(int, args.gpu_clock_ratio.split(":"))
-    args.dst.write_text(observe(args.src.read_text(encoding="utf-8"), step, divisor), encoding="utf-8")
+    instrumented = observe(args.src.read_text(encoding="utf-8"), step, divisor)
+    if args.paged_ddr:
+        instrumented = "#include <array>\n#include <memory>\n#include <vector>\n" + paged_ddr(instrumented)
+    args.dst.write_text(instrumented, encoding="utf-8")
