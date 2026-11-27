@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 
+#include "z15_exec_option.h"
 #include "ysyx_rt.h"
 #include "z15_regs.h"
 
@@ -65,6 +66,7 @@ static int write_file(const char *path, const void *data, size_t n)
 static void usage(FILE *f)
 {
     fputs("usage: ysyx_run PROGRAM.yhb [--backend linux|verilator]\n"
+          "       [--exec-mode auto|cmdq|mmio] [--exec-stats]\n"
           "       [--input tensor=file.bin] [--output tensor=file.bin] [--dump-stats] [--host-timing]\n"
           "       [--uio-control /dev/uioN|name] [--uio-dma /dev/uioN|name] [--inspect]\n"
           "       [--kv-script TSV_FILE]\n", f);
@@ -219,6 +221,8 @@ done:
 
 int ysyx_run_cli(int argc, char **argv, int simulation_available)
 {
+    if (z15_exec_option(&argc, argv))
+        return 2;
     if (argc == 2 && !strcmp(argv[1], "--help")) {
         usage(stdout);
         return 0;

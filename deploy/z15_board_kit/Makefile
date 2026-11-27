@@ -7,6 +7,7 @@ LDFLAGS ?=
 LDLIBS ?=
 DEMO_LINK ?= $(CC)
 DEMO_LIBS ?=
+CMDQ_OBJECT = $(if $(wildcard source/z15_cmdq.c),$(OUT)/z15_cmdq.o)
 WARNFLAGS = -std=c99 -Wall -Wextra -Werror
 
 .PHONY: all demos
@@ -19,8 +20,8 @@ $(OUT):
 $(OUT)/%.o: source/%.c source/ysyx_rt.h source/z15_regs.h | $(OUT)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(WARNFLAGS) -c "$<" -o "$@"
 
-$(OUT)/libysyx_rt.a: $(OUT)/ysyx_rt.o
-	$(AR) rcs "$@" "$<"
+$(OUT)/libysyx_rt.a: $(OUT)/ysyx_rt.o $(CMDQ_OBJECT)
+	$(AR) rcs "$@" $^
 
 $(OUT)/ysyx_run: $(OUT)/ysyx_run.o $(OUT)/hal_linux_uio.o $(OUT)/libysyx_rt.a
 	$(CC) $(LDFLAGS) $^ $(LDLIBS) -o "$@"

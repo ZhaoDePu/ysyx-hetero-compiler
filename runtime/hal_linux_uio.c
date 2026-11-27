@@ -2,15 +2,18 @@
 
 #include "ysyx_rt.h"
 #include "z15_regs.h"
+#include "z15_cmdq.h"
 
 #include <ctype.h>
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <signal.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/file.h>
 #include <sys/mman.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 enum { MAX_PATH = 512 };
@@ -20,6 +23,8 @@ typedef struct {
     void *control, *ddr;
     size_t page;
     int noncached_ddr;
+    int ext_probed;
+    uint32_t ext_version, cap_flags;
 } linux_hal_t;
 
 static void ordered(void)
@@ -40,14 +45,70 @@ static uint32_t little(uint32_t value)
 #endif
 }
 
+static uint32_t mapped_read(const linux_hal_t *hal, uint32_t reg)
+{
+    ordered();
+    const uint32_t value = little(((volatile uint32_t *)hal->control)[reg / 4u]);
+    ordered();
+    return value;
+}
+
+static void probe_fault(int signal_number)
+{
+    (void)signal_number;
+    _exit(1);
+}
+
+static void probe_extension(linux_hal_t *hal)
+{
+    /* Some legacy shells return SLVERR for an unmapped optional register.
+       Keep a synchronous external abort from killing the runtime process. */
+    hal->ext_probed = 1;
+    int channel[2];
+    if (pipe(channel))
+        return;
+    const pid_t child = fork();
+    if (!child) {
+        close(channel[0]);
+        if (signal(SIGBUS, probe_fault) == SIG_ERR)
+            _exit(1);
+        uint32_t found[2] = {mapped_read(hal, Z15_EXT_VERSION), 0};
+        if (found[0] == Z15_P18_VERSION)
+            found[1] = mapped_read(hal, Z15_CAP_FLAGS);
+        _exit(write(channel[1], found, sizeof(found)) == sizeof(found) ? 0 : 1);
+    }
+    close(channel[1]);
+    if (child > 0) {
+        uint32_t found[2];
+        ssize_t n;
+        do {
+            n = read(channel[0], found, sizeof(found));
+        } while (n < 0 && errno == EINTR);
+        int status;
+        pid_t waited;
+        do {
+            waited = waitpid(child, &status, 0);
+        } while (waited < 0 && errno == EINTR);
+        if (n == sizeof(found) && waited == child && WIFEXITED(status) && WEXITSTATUS(status) == 0) {
+            hal->ext_version = found[0];
+            hal->cap_flags = found[1];
+        }
+    }
+    close(channel[0]);
+}
+
 static int mmio_read(void *ctx, uint32_t reg, uint32_t *value)
 {
     linux_hal_t *hal = ctx;
     if (reg >= Z15_REGISTER_SIZE || (reg & 3u))
         return -1;
-    ordered();
-    *value = little(((volatile uint32_t *)hal->control)[reg / 4u]);
-    ordered();
+    if (reg == Z15_EXT_VERSION || reg == Z15_CAP_FLAGS) {
+        if (!hal->ext_probed)
+            probe_extension(hal);
+        *value = reg == Z15_EXT_VERSION ? hal->ext_version : hal->cap_flags;
+    } else {
+        *value = mapped_read(hal, reg);
+    }
     return 0;
 }
 
@@ -280,7 +341,8 @@ int ysyx_hal_linux_open(ysyx_hal_t *out, const char *control_uio, const char *dm
         reason = "out of memory opening UIO";
         goto failed;
     }
-    *hal = (linux_hal_t){-1, -1, MAP_FAILED, MAP_FAILED, (size_t)page, physical_generic_uio(dma)};
+    *hal = (linux_hal_t){.control_fd = -1, .dma_fd = -1, .control = MAP_FAILED,
+                       .ddr = MAP_FAILED, .page = (size_t)page, .noncached_ddr = physical_generic_uio(dma)};
     hal->control_fd = open(control, O_RDWR | O_SYNC | O_CLOEXEC);
     if (hal->control_fd < 0 || flock(hal->control_fd, LOCK_EX | LOCK_NB)) {
         reason = "cannot open or exclusively lock Z15 control UIO";

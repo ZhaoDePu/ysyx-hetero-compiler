@@ -1,3 +1,5 @@
+#define _POSIX_C_SOURCE 200809L
+#include "z15_exec_option.h"
 #include "yolo26n_target.h"
 
 #include <ctype.h>
@@ -99,6 +101,8 @@ static void print_result(const ysyx_det_t *d, int count, const ysyx_perf_t *p, d
 
 int main(int argc, char **argv)
 {
+    if (z15_exec_option(&argc, argv))
+        return 2;
     const char *path = NULL;
     int sim = 0, ppm = 0, phase17 = 0;
     float threshold = 0.25f;
@@ -158,7 +162,7 @@ int main(int argc, char **argv)
     return count < 0 ? 1 : 0;
 
 usage:
-    fprintf(stderr, "usage: %s MODEL (--rgb RGB320 | --ppm FRAME.ppm) [--conf FLOAT] [--npu-mhz MHz] [--sim] [--target p17]\n",
+    fprintf(stderr, "usage: %s MODEL (--rgb RGB320 | --ppm FRAME.ppm) [--conf FLOAT] [--npu-mhz MHz] [--sim] [--target p17] [--exec-mode auto|cmdq|mmio] [--exec-stats]\n",
             argv[0]);
     return 2;
 }

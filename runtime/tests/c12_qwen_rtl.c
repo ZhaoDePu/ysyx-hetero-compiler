@@ -1,5 +1,6 @@
 /* Replay real autoregressive input against a separate C99 reference. */
 #include "c12_qwen_ref.h"
+#include "c11b_qwen_z15_cmdq.h"
 
 #include <inttypes.h>
 #include <stdio.h>
@@ -26,6 +27,7 @@ static int replay_step(qwen_reference *gold, qwen_reference *sim, c11b_z15 *dev,
         c11b_z15_stats(dev, &before))
         return -1;
     const valence_submission_stats before_submit = c11b_z15_submission_stats(dev);
+    const z15_cmdq_stats queue_before = c11b_z15_queue_stats(dev);
     const uint64_t before_vpu = c11b_z15_vpu_ticks(dev);
     const int32_t *want = qwen_reference_step(gold, id);
     const int32_t *got = qwen_reference_step(sim, id);
@@ -40,13 +42,15 @@ static int replay_step(qwen_reference *gold, qwen_reference *sim, c11b_z15 *dev,
     }
     *next = greedy(got);
     const valence_submission_stats after_submit = c11b_z15_submission_stats(dev);
+    const z15_cmdq_stats queue_after = c11b_z15_queue_stats(dev);
     printf("C12_STEP layer=%u pos=%u token=%u next=%u phase=%s hidden=%zu cache=%zu "
            "logits=%zu head_npu=%d wall=%" PRIu64 " npu=%" PRIu64 " gpu=%" PRIu64
            " dma=%" PRIu64 " npu_gpu_overlap=%" PRIu64 " compute_dma_overlap=%" PRIu64
            " dma_bytes=%" PRIu64 " ddr_high=%" PRIu64 " error=%" PRIu32
            " slverr=0 invalid_dma=%" PRIu32 " vpu=%" PRIu64 " dma_descriptors=%" PRIu32
            " mmio_writes=%" PRIu64 " doorbells=%" PRIu64 " host_reads=%" PRIu64
-           " host_writes=%" PRIu64 "\n",
+           " host_writes=%" PRIu64 " arm_reads=%" PRIu64 " arm_writes=%" PRIu64
+           " cmdq_batches=%" PRIu64 " cmdq_commands=%" PRIu64 " cmdq_cycles=%" PRIu64 "\n",
            layer, pos, id, *next, is_decode ? "decode" : "prefill", sizeof(reference.hidden),
            reference.cache_bytes, QWEN_VOCAB * sizeof(*want), check_head,
            after.wall_ticks - before.wall_ticks, after.npu_ticks - before.npu_ticks,
@@ -59,7 +63,10 @@ static int replay_step(qwen_reference *gold, qwen_reference *sim, c11b_z15 *dev,
            after_submit.mmio_writes - before_submit.mmio_writes,
            after_submit.doorbells - before_submit.doorbells,
            after_submit.host_reads - before_submit.host_reads,
-           after_submit.host_writes - before_submit.host_writes);
+           after_submit.host_writes - before_submit.host_writes,
+           queue_after.reads - queue_before.reads, queue_after.writes - queue_before.writes,
+           queue_after.starts - queue_before.starts, queue_after.commands - queue_before.commands,
+           queue_after.cycles - queue_before.cycles);
     return fflush(stdout);
 }
 

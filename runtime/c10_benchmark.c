@@ -1,5 +1,6 @@
 /* Frozen Z15 C10 fixture benchmark. Stdout is CSV except for probe modes. */
 #define _POSIX_C_SOURCE 200809L
+#include "z15_exec_option.h"
 #include "c10_session.h"
 #include "hal_reference_c6.h"
 #include "z15_regs.h"
@@ -37,7 +38,7 @@ typedef struct {
     const char *reason;
     unsigned frames;
     enum backend backend;
-    int probe, selftest, scan_clock;
+    int probe, selftest, scan_clock, phase17;
 } options_t;
 
 typedef struct {
@@ -176,15 +177,21 @@ static int add_binding(fixture_t *fixture, const char *directory, char *line)
     return 0;
 }
 
-static int open_fixture(fixture_t *fixture, const char *directory)
+static int open_fixture(fixture_t *fixture, const char *directory, int phase17)
 {
     size_t image_bytes;
     const char *error = NULL;
-    fixture->image = load_file(directory, "program.yhb", &image_bytes);
+    const char *file = phase17 ? "program.yhp" : "program.yhb";
+    fixture->image = load_file(directory, file, &image_bytes);
     if (!fixture->image)
         return -1;
+    if (phase17) {
+        if (image_bytes < 4u || memcmp(fixture->image, "YHP1", 4))
+            return -1;
+        memcpy(fixture->image, "YHB1", 4);
+    }
     if (ysyx_program_open(fixture->image, image_bytes, &fixture->program, &error)) {
-        fprintf(stderr, "invalid program.yhb: %s\n", error ? error : "unknown error");
+        fprintf(stderr, "invalid %s: %s\n", file, error ? error : "unknown error");
         return -1;
     }
     if (ysyx_program_target(fixture->program) != YSYX_TARGET_Z15_BALANCED)
@@ -238,7 +245,8 @@ static int open_backend(const options_t *options, ysyx_hal_t *hal, const char **
     case LINUX:
         return ysyx_hal_linux_open(hal, options->control, options->dma, error);
     case REFERENCE:
-        return ysyx_hal_reference_c6_open(hal, error);
+        return options->phase17 ? ysyx_hal_reference_p17_open(hal, error) :
+                                  ysyx_hal_reference_c6_open(hal, error);
     case VERILATOR:
 #ifdef YSYX_WITH_VERILATOR
         return ysyx_hal_verilator_open(hal, error);
@@ -484,7 +492,7 @@ static int benchmark(const options_t *options, const ysyx_hal_t *hal)
     uint8_t *buffer = NULL;
     ysyx_c10_session_t *resident = NULL;
     const char *error = NULL;
-    if (open_fixture(fixture, options->directory)) {
+    if (open_fixture(fixture, options->directory, options->phase17)) {
         fputs("fixture program, io.tsv or tensor file is invalid\n", stderr);
         goto done;
     }
@@ -550,6 +558,8 @@ static int parse(char *const *args, int count, options_t *options)
             const char *value = args[++i];
             if (!strcmp(arg, "--case"))
                 options->directory = value;
+            else if (!strcmp(arg, "--target") && (!strcmp(value, "step2") || !strcmp(value, "p17")))
+                options->phase17 = !strcmp(value, "p17");
             else if (!strcmp(arg, "--fixture") && simple_name(value))
                 options->fixed_fixture = value;
             else if (!strcmp(arg, "--freq-profile") &&
@@ -588,10 +598,13 @@ static int parse(char *const *args, int count, options_t *options)
 
 int main(int argc, char **argv)
 {
+    if (z15_exec_option(&argc, argv))
+        return 2;
     options_t options;
     if (parse(argv, argc, &options)) {
         fputs("usage: z15_c10_benchmark --case DIR [--backend linux|reference|verilator]\n"
               "       [--frames N] [--fixture ID] [--freq-profile 125_100|200_150]\n"
+              "       [--target step2|p17] [--exec-mode auto|cmdq|mmio] [--exec-stats]\n"
               "       [--uio-control ID] [--uio-dma ID]\n"
               "       z15_c10_benchmark --probe|--self-test|--detect-clock [--backend linux]\n"
               "       z15_c10_benchmark --reject YHB EXPECTED_ERROR\n", stderr);

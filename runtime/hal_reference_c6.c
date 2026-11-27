@@ -1,5 +1,6 @@
 #include "hal_reference_c6.h"
 #include "z15_regs.h"
+#include "z15_cmdq.h"
 
 #include <limits.h>
 #include <stdlib.h>
@@ -12,7 +13,12 @@ typedef struct {
     uint32_t code[Z15_PROGRAM_BYTES / 4u];
     uint32_t scales[512];
     uint8_t activation[256];
-    int phase17;
+    int phase17, phase18;
+    struct {
+        uint32_t lo, hi, count, completed, code, status;
+        uint64_t cycles;
+        int inject_fetch_fault;
+    } queue;
     struct {
         uint32_t sums[16][16], dims, a, c, shape, roi, offset, format;
         int held;
@@ -541,18 +547,16 @@ static int fail_action(c6_reference_t *ref, uint32_t code)
     return -1;
 }
 
-static int mmio_read(void *opaque, uint32_t offset, uint32_t *out)
+static int legacy_read(c6_reference_t *ref, uint32_t offset, uint32_t *out)
 {
-    c6_reference_t *ref = opaque;
     if ((offset & 3u) || offset >= sizeof(ref->registers))
         return -1;
     *out = REG(ref, offset);
     return 0;
 }
 
-static int mmio_write(void *opaque, uint32_t offset, uint32_t value)
+static int legacy_write(c6_reference_t *ref, uint32_t offset, uint32_t value)
 {
-    c6_reference_t *ref = opaque;
     if (offset & 3u)
         return fail_action(ref, 1u << 4);
     if (offset >= Z15_PROGRAM && offset < Z15_PROGRAM + Z15_PROGRAM_BYTES) {
@@ -600,6 +604,162 @@ static int mmio_write(void *opaque, uint32_t offset, uint32_t value)
         return 0;
     default:
         return fail_action(ref, 1u << 4);
+    }
+}
+
+static void queue_error(c6_reference_t *ref, uint32_t code, int stop)
+{
+    ref->queue.code = code;
+    if (stop)
+        ref->queue.status &= ~CMDQ_BUSY;
+    ref->queue.status |= CMDQ_ERROR;
+}
+
+static int queue_control(c6_reference_t *ref, uint32_t value)
+{
+    const int busy = !!(ref->queue.status & CMDQ_BUSY);
+    if ((value & 3u) == 3u) {
+        queue_error(ref, 10, 0);
+        return -1;
+    }
+    if (value & CMDQ_CLEAR) {
+        ref->queue.status = ref->queue.code = ref->queue.completed = 0;
+        ref->queue.cycles = 0;
+        return 0;
+    }
+    if (!(value & CMDQ_START))
+        return 0;
+    if (busy) {
+        queue_error(ref, 6, 0);
+        return -1;
+    }
+    ref->queue.status = ref->queue.code = ref->queue.completed = 0;
+    ref->queue.cycles = 0;
+    const uint32_t addr = ref->queue.lo;
+    const uint32_t count = ref->queue.count;
+    uint32_t code = (!count || count > CMDQ_LIMIT) ? 3u :
+                    (addr & 7u) ? 2u :
+                    (ref->queue.hi || addr < Z15_POOL_BASE ||
+                     (uint64_t)addr + (uint64_t)count * 8u > Z15_POOL_BASE + Z15_POOL_SIZE) ? 1u : 0;
+    if (code) {
+        queue_error(ref, code, 1);
+        return -1;
+    }
+    ref->queue.status = CMDQ_BUSY;
+    return 0;
+}
+
+static int phase18_write(c6_reference_t *ref, uint32_t reg, uint32_t value)
+{
+    if (reg >= 0x1000u && reg < 0x1800u) {
+        ref->scales[(reg - 0x1000u) / 4u] = value & 0x1fffffu;
+        return 0;
+    }
+    if (reg >= 0x1800u && reg < 0x1900u) {
+        for (unsigned i = 0; i < 4; ++i)
+            ref->activation[reg - 0x1800u + i] = (uint8_t)(value >> (i * 8u));
+        return 0;
+    }
+    if (reg >= 0x1c00u && reg < 0x2000u) {
+        ref->activation[(reg - 0x1c00u) / 4u] = (uint8_t)value;
+        return 0;
+    }
+    if (reg == Z15_CTRL && value == 1u)
+        value = 2u;
+    return legacy_write(ref, reg, value);
+}
+
+static void queue_advance(c6_reference_t *ref)
+{
+    /* Functional ticks advance on a host status read. Engined operations
+       are synchronous in this HAL, so these ticks are only diagnostic. */
+    for (unsigned n = 0; n < 64 && (ref->queue.status & CMDQ_BUSY); ++n) {
+        ++ref->queue.cycles;
+        if (ref->queue.inject_fetch_fault) {
+            ref->queue.inject_fetch_fault = 0;
+            queue_error(ref, 7, 1);
+            return;
+        }
+        if (ref->queue.completed == ref->queue.count) {
+            queue_error(ref, 8, 1);
+            return;
+        }
+        const uint8_t *p = ref->ddr + (ref->queue.lo - Z15_POOL_BASE) + ref->queue.completed * 8u;
+        uint64_t word = 0;
+        for (unsigned i = 0; i < 8; ++i)
+            word |= (uint64_t)p[i] << (i * 8u);
+        int code = z15_cmdq_validate(word);
+        if (code) {
+            queue_error(ref, (uint32_t)code, 1);
+            return;
+        }
+        const unsigned opcode = (unsigned)(word >> 60);
+        const uint32_t reg = (uint16_t)(word >> 32), value = (uint32_t)word;
+        if (opcode == CMDQ_WRITE) {
+            const uint32_t previous_status = REG(ref, Z15_STATUS), previous_error = REG(ref, Z15_ERROR);
+            if (phase18_write(ref, reg, value)) {
+                REG(ref, Z15_STATUS) = previous_status;
+                REG(ref, Z15_ERROR) = previous_error;
+                queue_error(ref, 9, 1);
+                return;
+            }
+        } else if (opcode == CMDQ_ZERO || opcode == CMDQ_ONE) {
+            const uint32_t status = REG(ref, reg) & value;
+            if (status != (opcode == CMDQ_ZERO ? 0 : value))
+                return;
+        } else if (opcode == CMDQ_IDLE &&
+                   (REG(ref, Z15_STATUS) & (Z15_NPU_BUSY | Z15_GPU_BUSY | Z15_DMA_BUSY))) {
+            return;
+        } else if (opcode == CMDQ_END) {
+            ref->queue.status = (ref->queue.status & ~CMDQ_BUSY) | CMDQ_DONE;
+        }
+        ++ref->queue.completed;
+    }
+}
+
+static int mmio_read(void *opaque, uint32_t reg, uint32_t *out)
+{
+    c6_reference_t *ref = opaque;
+    if (!ref->phase18)
+        return legacy_read(ref, reg, out);
+    switch (reg) {
+    case Z15_EXT_VERSION: *out = Z15_P18_VERSION; return 0;
+    case Z15_CAP_FLAGS: *out = 31; return 0;
+    case CMDQ_BASE_LO: *out = ref->queue.lo; return 0;
+    case CMDQ_BASE_HI: *out = ref->queue.hi; return 0;
+    case CMDQ_COUNT: *out = ref->queue.count; return 0;
+    case CMDQ_CTRL: *out = 0; return 0;
+    case CMDQ_STATUS: queue_advance(ref); *out = ref->queue.status; return 0;
+    case CMDQ_COMPLETED: *out = ref->queue.completed; return 0;
+    case CMDQ_CYCLES: *out = (uint32_t)ref->queue.cycles; return 0;
+    case CMDQ_CYCLES + 4: *out = (uint32_t)(ref->queue.cycles >> 32); return 0;
+    case CMDQ_ERR_CODE: *out = ref->queue.code; return 0;
+    default:
+        if (legacy_read(ref, reg, out))
+            return -1;
+        if ((reg == Z15_STATUS || reg == Z15_ERROR) && ref->queue.code)
+            *out |= 128u;
+        return 0;
+    }
+}
+
+static int mmio_write(void *opaque, uint32_t reg, uint32_t value)
+{
+    c6_reference_t *ref = opaque;
+    if (!ref->phase18)
+        return legacy_write(ref, reg, value);
+    if (reg == CMDQ_CTRL)
+        return queue_control(ref, value);
+    if (ref->queue.status & CMDQ_BUSY)
+        return -1;
+    switch (reg) {
+    case CMDQ_BASE_LO: ref->queue.lo = value; return 0;
+    case CMDQ_BASE_HI: ref->queue.hi = value; return 0;
+    case CMDQ_COUNT: ref->queue.count = value; return 0;
+    default:
+        if ((reg & 3u) || (reg >= CMDQ_STATUS && reg <= CMDQ_ERR_CODE))
+            return -1;
+        return phase18_write(ref, reg, value);
     }
 }
 
@@ -651,6 +811,8 @@ int ysyx_hal_reference_c6_open(ysyx_hal_t *hal, const char **error)
             *error = "cannot allocate exact C6 reference HAL memory";
         return -1;
     }
+    const char *phase18 = getenv("YSYX_REFERENCE_CMDQ");
+    ref->phase18 = phase18 && !strcmp(phase18, "1");
     REG(ref, Z15_STATUS) = Z15_LOCKED;
     REG(ref, Z15_MAGIC) = Z15_MAGIC_VALUE;
     REG(ref, Z15_VERSION) = Z15_VERSION_VALUE;
@@ -669,4 +831,10 @@ int ysyx_hal_reference_p17_open(ysyx_hal_t *hal, const char **error)
         return -1;
     ((c6_reference_t *)hal->ctx)->phase17 = 1;
     return 0;
+}
+
+/* Enables a deterministic equivalent of the AXI RRESP fault for unit tests. */
+void ysyx_hal_reference_cmdq_fault(const ysyx_hal_t *hal)
+{
+    ((c6_reference_t *)hal->ctx)->queue.inject_fetch_fault = 1;
 }

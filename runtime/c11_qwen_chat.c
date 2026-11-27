@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 #include "c11_qwen_bpe.h"
+#include "z15_exec_option.h"
 #include "c12_qwen_ref.h"
 
 #include <errno.h>
@@ -429,10 +430,12 @@ static int native_start(session *chat, const options *o)
 
 int main(int argc, char **argv)
 {
+    if (z15_exec_option(&argc, argv))
+        return 2;
     static const char help[] =
 #ifdef YSYX_C11B_NATIVE
          "z15_qwen25_chat --weights FILE --tokenizer FILE [--backend cpu|z15] "
-        "[--kv-bits 4|8 (C12 default: 8)] [--target step2|p17] [--mmio-profile v1|turbo] [--mode verify --token-id ID --golden FILE]\n"
+        "[--kv-bits 4|8 (C12 default: 8)] [--target step2|p17] [--exec-mode auto|cmdq|mmio] [--exec-stats] [--mmio-profile v1|turbo] [--mode verify --token-id ID --golden FILE]\n"
         "Chat and bench options: "
 #else
         "ysyx_qwen_chat --weights FILE --tokenizer FILE [--backend sim] "

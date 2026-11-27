@@ -16,8 +16,8 @@ $(OUT):
 $(OUT)/%.o: %.c ysyx_rt.h z15_regs.h | $(OUT)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(WARNFLAGS) -c "$<" -o "$@"
 
-$(OUT)/libysyx_rt.a: $(OUT)/ysyx_rt.o
-	$(AR) rcs "$@" "$<"
+$(OUT)/libysyx_rt.a: $(OUT)/ysyx_rt.o $(OUT)/z15_cmdq.o
+	$(AR) rcs "$@" $^
 
 $(OUT)/ysyx_run: $(OUT)/ysyx_run.o $(OUT)/hal_linux_uio.o $(OUT)/libysyx_rt.a
 	$(CC) $(LDFLAGS) $^ $(LDLIBS) -o "$@"
@@ -34,7 +34,7 @@ $(OUT)/hal_reference_c6.o $(OUT)/ysyx_yolo26n_api.o: hal_reference_c6.h
 $(OUT)/ysyx_yolo26n_api.o $(OUT)/ysyx_yolo26n_cli.o: yolo26n_target.h
 $(OUT)/yolo26n_post.o: CFLAGS += -ffp-contract=off
 
-$(OUT)/libysyx_yolo26n.a: $(addprefix $(OUT)/,ysyx_yolo26n_api.o yolo26n_post.o ysyx_rt.o hal_linux_uio.o hal_reference_c6.o)
+$(OUT)/libysyx_yolo26n.a: $(addprefix $(OUT)/,ysyx_yolo26n_api.o yolo26n_post.o ysyx_rt.o z15_cmdq.o hal_linux_uio.o hal_reference_c6.o)
 	$(AR) rcs "$@" $^
 
 $(OUT)/ysyx_yolo26n_cli: $(OUT)/ysyx_yolo26n_cli.o $(OUT)/libysyx_yolo26n.a
@@ -53,7 +53,7 @@ $(OUT)/test-c10-session: tests/c10_session.c $(OUT)/libysyx_rt.a
 .PHONY: c10
 c10: $(OUT)/z15_yolo_live_c10
 
-$(OUT)/c10_service.o: c10_session.h c10_session_core.h c10_pixels.h c10_v4l2.h
+$(OUT)/c10_service.o: c10_session.h c10_session_core.h c10_pixels.h c10_v4l2.h yolo26n_target.h
 $(OUT)/c10_v4l2.o: c10_v4l2.h c10_pixels.h
 $(OUT)/c10_pixels.o: c10_pixels.h c10_jpeg.h
 $(OUT)/c10_jpeg.o: c10_jpeg.h c10_jpeg_tables.h
@@ -65,7 +65,7 @@ c10: $(OUT)/z15_c10_benchmark
 
 $(OUT)/c10_benchmark.o: c10_session.h c10_session_core.h hal_reference_c6.h
 
-$(OUT)/z15_c10_benchmark: $(addprefix $(OUT)/,c10_benchmark.o ysyx_rt.o hal_linux_uio.o hal_reference_c6.o)
+$(OUT)/z15_c10_benchmark: $(addprefix $(OUT)/,c10_benchmark.o ysyx_rt.o z15_cmdq.o hal_linux_uio.o hal_reference_c6.o)
 	$(CC) $(LDFLAGS) $^ $(LDLIBS) -lm -o "$@"
 
 .PHONY: c11-qwen
@@ -74,6 +74,7 @@ c11-qwen: $(OUT)/ysyx_qwen_chat
 $(OUT)/c11_qwen_ref.o $(OUT)/c11_qwen_chat.o: c11_qwen_ref.h
 $(OUT)/c11_qwen_ref.o: c12_qwen_ref.h c12_qwen_cache.h
 $(OUT)/c11_qwen_bpe.o $(OUT)/c11_qwen_chat.o: c11_qwen_bpe.h
+$(OUT)/c11_qwen_chat.o: z15_exec_option.h
 
 $(OUT)/ysyx_qwen_chat: $(addprefix $(OUT)/,c11_qwen_chat.o c11_qwen_bpe.o c11_qwen_ref.o)
 	$(CC) $(LDFLAGS) $^ $(LDLIBS) -o "$@"
@@ -85,16 +86,16 @@ $(OUT)/c11b_rope_words.h: ../tools/c11b_emit_rope.py ../hetero_compiler/c11_qwen
 	cd .. && python3 -B -m tools.c11b_emit_rope > "$@.tmp"
 	mv -f -- "$@.tmp" "$@"
 
-$(OUT)/c11b_qwen_z15.o: c11b_qwen_z15.c c11b_qwen_ops.h c12_qwen_ref.h $(OUT)/c11b_rope_words.h
+$(OUT)/c11b_qwen_z15.o: c11b_qwen_z15.c c11b_qwen_z15_cmdq.h z15_cmdq.h c11b_qwen_ops.h c12_qwen_ref.h $(OUT)/c11b_rope_words.h
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(WARNFLAGS) -I"$(OUT)" -c "$<" -o "$@"
 
 $(OUT)/c11b_qwen_ref.o: c11_qwen_ref.c c11_qwen_ref.h c12_qwen_ref.h c12_qwen_cache.h c11b_reference.inc c11b_qwen_ops.h | $(OUT)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(WARNFLAGS) -DYSYX_C11B_NATIVE -c "$<" -o "$@"
 
-$(OUT)/c11b_qwen_chat.o: c11_qwen_chat.c c11_qwen_ref.h c12_qwen_ref.h c11_qwen_bpe.h c11b_qwen_ops.h | $(OUT)
+$(OUT)/c11b_qwen_chat.o: c11_qwen_chat.c z15_exec_option.h c11_qwen_ref.h c12_qwen_ref.h c11_qwen_bpe.h c11b_qwen_ops.h | $(OUT)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(WARNFLAGS) -DYSYX_C11B_NATIVE -c "$<" -o "$@"
 
-$(OUT)/z15_qwen25_chat: $(addprefix $(OUT)/,c11b_qwen_chat.o c11b_qwen_ref.o c11_qwen_bpe.o c11b_qwen_ops.o c11b_qwen_z15.o hal_linux_uio.o)
+$(OUT)/z15_qwen25_chat: $(addprefix $(OUT)/,c11b_qwen_chat.o c11b_qwen_ref.o c11_qwen_bpe.o c11b_qwen_ops.o c11b_qwen_z15.o z15_cmdq.o hal_linux_uio.o)
 	$(CC) $(LDFLAGS) $^ $(LDLIBS) -o "$@"
 
 .PHONY: c12-check
@@ -105,12 +106,22 @@ c12-check: $(OUT)/test-c12-cache $(OUT)/test-c12-turbo
 $(OUT)/test-c12-cache: tests/c12_qwen_cache.c c12_qwen_cache.h | $(OUT)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(WARNFLAGS) -I. "$<" $(LDFLAGS) $(LDLIBS) -o "$@"
 
-$(OUT)/test-c12-turbo: tests/c12_qwen_turbo.c $(addprefix $(OUT)/,c11b_qwen_ref.o c11b_qwen_ops.o c11b_qwen_z15.o)
+$(OUT)/test-c12-turbo: tests/c12_qwen_turbo.c $(addprefix $(OUT)/,c11b_qwen_ref.o c11b_qwen_ops.o c11b_qwen_z15.o z15_cmdq.o)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(WARNFLAGS) -DYSYX_C11B_NATIVE -I. $^ $(LDFLAGS) $(LDLIBS) -o "$@"
 
 .PHONY: c14-check
 c14-check: $(OUT)/test-c14-projection
 	"$(OUT)/test-c14-projection"
 
-$(OUT)/test-c14-projection: tests/c14_p17_projection.c $(addprefix $(OUT)/,c11b_qwen_ref.o c11b_qwen_ops.o c11b_qwen_z15.o)
+$(OUT)/test-c14-projection: tests/c14_p17_projection.c $(addprefix $(OUT)/,c11b_qwen_ref.o c11b_qwen_ops.o c11b_qwen_z15.o z15_cmdq.o)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(WARNFLAGS) -I. $^ $(LDFLAGS) $(LDLIBS) -o "$@"
+
+$(OUT)/ysyx_rt.o $(OUT)/z15_cmdq.o $(OUT)/hal_reference_c6.o $(OUT)/hal_linux_uio.o: z15_cmdq.h
+$(addprefix $(OUT)/,ysyx_run.o ysyx_yolo26n_cli.o c10_benchmark.o c10_service.o): z15_exec_option.h
+
+.PHONY: c15-check
+c15-check: $(OUT)/test-c15-cmdq
+	"$<"
+
+$(OUT)/test-c15-cmdq: tests/c15_cmdq.c $(addprefix $(OUT)/,z15_cmdq.o hal_reference_c6.o)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(WARNFLAGS) -I. $^ $(LDFLAGS) $(LDLIBS) -o "$@"

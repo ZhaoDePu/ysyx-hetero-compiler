@@ -1,5 +1,5 @@
 #define _POSIX_C_SOURCE 200809L
-#include "c11b_qwen_ops.h"
+#include "c11b_qwen_z15_cmdq.h"
 
 #include "c12_qwen_ref.h"
 #include "z15_regs.h"
@@ -46,9 +46,51 @@ struct c11b_z15 {
     const uint8_t *resident_image;
     size_t resident_bytes;
     valence_submission_stats submissions;
+    int cmdq;
+    uint32_t queue_base;
+    z15_cmdq_plan *queue;
+    z15_cmdq_stats queued;
     uint32_t config_values[P17_WEIGHT_CONFIG / 4 + 1];
     uint8_t config_known[P17_WEIGHT_CONFIG / 4 + 1];
 };
+
+static int queue_add(c11b_z15 *d, z15_cmdq_op op, uint32_t reg, uint32_t value)
+{
+    if (!d->queue)
+        d->queue = z15_cmdq_create();
+    if (!d->queue || z15_cmdq_add(d->queue, op, reg, value)) {
+        d->failed = 1;
+        return -1;
+    }
+    return 0;
+}
+
+static int queue_flush(c11b_z15 *d)
+{
+    if (d->failed)
+        return -1;
+    if (!d->queue)
+        return 0;
+    z15_cmdq_stats stats = {0};
+    const int rc = z15_cmdq_place(d->queue, d->queue_base) ||
+                   z15_cmdq_run(d->queue, d->hal, &stats);
+    z15_cmdq_destroy(d->queue);
+    d->queue = NULL;
+    d->queued.starts += stats.starts;
+    d->queued.commands += stats.commands;
+    d->queued.cycles += stats.cycles;
+    d->queued.upload_bytes += stats.upload_bytes;
+    d->queued.reads += stats.reads;
+    d->queued.writes += stats.writes;
+    d->submissions.mmio_writes += stats.writes;
+    d->submissions.doorbells += stats.starts;
+    if (d->ddr_peak < stats.ddr_end)
+        d->ddr_peak = stats.ddr_end;
+    if (rc)
+        z15_cmdq_report(stderr, &stats);
+    d->failed = rc;
+    return rc ? -1 : 0;
+}
 
 static int bad(void *ctx)
 {
@@ -57,6 +99,7 @@ static int bad(void *ctx)
 
 static int rd(c11b_z15 *d, uint32_t reg, uint32_t *x)
 {
+    ++d->queued.reads;
     if (d->failed || d->hal->mmio_read32(d->hal->ctx, reg, x)) {
         d->failed = 1;
         return -1;
@@ -66,7 +109,10 @@ static int rd(c11b_z15 *d, uint32_t reg, uint32_t *x)
 
 static int wr(c11b_z15 *d, uint32_t reg, uint32_t x)
 {
-    if (d->failed || d->hal->mmio_write32(d->hal->ctx, reg, x)) {
+    const int record = d->cmdq && reg < Z15_PROGRAM;
+    if (d->failed ||
+        (record ? queue_add(d, CMDQ_WRITE, reg, x) :
+                  queue_flush(d) || d->hal->mmio_write32(d->hal->ctx, reg, x))) {
         d->failed = 1;
         return -1;
     }
@@ -74,12 +120,15 @@ static int wr(c11b_z15 *d, uint32_t reg, uint32_t x)
         d->config_known[reg / 4] = 1;
         d->config_values[reg / 4] = x;
     }
-    ++d->submissions.mmio_writes;
+    d->submissions.mmio_writes += !record;
+    d->queued.writes += !record;
     return 0;
 }
 
 static int error_reg(c11b_z15 *d)
 {
+    if (d->queue)
+        return 0;
     uint32_t err;
     if (rd(d, Z15_ERROR, &err) || err) {
         d->failed = 1;
@@ -92,12 +141,15 @@ static int action(c11b_z15 *d, unsigned bit)
 {
     if (wr(d, Z15_CTRL, bit))
         return -1;
-    ++d->submissions.doorbells;
+    d->submissions.doorbells += !d->cmdq;
     return error_reg(d);
 }
 
 static int ready(c11b_z15 *d, unsigned require, unsigned busy)
 {
+    if (d->cmdq)
+        return (require && queue_add(d, CMDQ_ONE, Z15_STATUS, require)) ||
+               (busy && queue_add(d, CMDQ_ZERO, Z15_STATUS, busy));
     for (unsigned i = 0; i < POLL; ++i) {
         uint32_t v;
         if (rd(d, Z15_STATUS, &v) || (v & Z15_HAS_ERROR) || !(v & Z15_LOCKED))
@@ -113,6 +165,8 @@ static int ready(c11b_z15 *d, unsigned require, unsigned busy)
 
 static int ticks(c11b_z15 *d, unsigned reg, uint64_t *value)
 {
+    if (queue_flush(d))
+        return -1;
     for (unsigned i = 0; i < 8; ++i) {
         uint32_t a, lo, b;
         if (rd(d, reg + 4, &a) || rd(d, reg, &lo) || rd(d, reg + 4, &b))
@@ -128,7 +182,7 @@ static int ticks(c11b_z15 *d, unsigned reg, uint64_t *value)
 
 static int host_write(c11b_z15 *d, unsigned where, const void *data, size_t bytes)
 {
-    if (d->failed || where > Z15_POOL_SIZE || bytes > Z15_POOL_SIZE - where ||
+    if (queue_flush(d) || where > Z15_POOL_SIZE || bytes > Z15_POOL_SIZE - where ||
         d->hal->ddr_write(d->hal->ctx, where, data, bytes) ||
         d->hal->cache_sync(d->hal->ctx, where, bytes, YSYX_SYNC_FOR_DEVICE)) {
         d->failed = 1;
@@ -142,7 +196,7 @@ static int host_write(c11b_z15 *d, unsigned where, const void *data, size_t byte
 
 static int host_read(c11b_z15 *d, unsigned where, void *data, size_t bytes)
 {
-    if (d->failed || where > Z15_POOL_SIZE || bytes > Z15_POOL_SIZE - where ||
+    if (queue_flush(d) || where > Z15_POOL_SIZE || bytes > Z15_POOL_SIZE - where ||
         d->hal->cache_sync(d->hal->ctx, where, bytes, YSYX_SYNC_FOR_HOST) ||
         d->hal->ddr_read(d->hal->ctx, where, data, bytes)) {
         d->failed = 1;
@@ -431,7 +485,7 @@ static int swiglu_hw(void *ctx, const int8_t *gate, const int8_t *up, const int8
     if (upload(d, A, buf, gate, QWEN_INTER) ||
         upload(d, B, buf + 8192, up, QWEN_INTER) || ready(d, 0, Z15_NPU_BUSY))
         return -1;
-    if (d->turbo) {
+    if (d->turbo || d->cmdq) {
         for (unsigned i = 0; i < 256; i += 4) {
             uint32_t packed = (uint8_t)lut[i] | (uint32_t)(uint8_t)lut[i + 1] << 8 |
                               (uint32_t)(uint8_t)lut[i + 2] << 16 |
@@ -464,14 +518,18 @@ static int launch_warps(c11b_z15 *d, unsigned offset, const uint32_t *code, size
         *resident = 1;
     }
     for (unsigned warp = 0; warp < 4; ++warp) {
-        unsigned i = 0;
-        uint32_t slots;
-        do {
-            if (rd(d, Z15_GPU_SLOTS, &slots) || (slots & Z15_GPU_SLOT_FAULTS))
+        const uint32_t wait = Z15_GPU_PENDING | (1u << warp);
+        if (d->cmdq) {
+            if (queue_add(d, CMDQ_ZERO, Z15_GPU_SLOTS, wait))
                 return -1;
-            if (++i == POLL)
-                return -1;
-        } while (slots & (Z15_GPU_PENDING | 1u << warp));
+        } else {
+            unsigned i = 0;
+            uint32_t slots;
+            do {
+                if (rd(d, Z15_GPU_SLOTS, &slots) || (slots & Z15_GPU_SLOT_FAULTS) || ++i == POLL)
+                    return -1;
+            } while (slots & wait);
+        }
         if (wr(d, Z15_GPU_PC, offset + pc[warp]) ||
             wr(d, Z15_GPU_JOB, warp << 24 | 16u << 16) ||
             action(d, Z15_START_GPU))
@@ -567,8 +625,8 @@ static int attention_hw(void *ctx, unsigned layer, unsigned pos, const int8_t *q
     return 0;
 }
 
-c11b_z15 *c11b_z15_open_target(const ysyx_hal_t *hal, const uint8_t *image, size_t count,
-                              valence_target target, const char **error)
+static c11b_z15 *open_device(const ysyx_hal_t *hal, const uint8_t *image, size_t count,
+                            valence_target target, const char **error, int probe)
 {
     const unsigned ring_bytes = target == VALENCE_P17 && image && count >= 8 &&
         (!memcmp(image, "YSQC14D", 8) || !memcmp(image, "YSQC14H", 8)) ? RESIDUAL_RING : RING;
@@ -590,15 +648,29 @@ c11b_z15 *c11b_z15_open_target(const ysyx_hal_t *hal, const uint8_t *image, size
     if ((target == VALENCE_STEP2 && !d->expanded) ||
         rd(d, Z15_MAGIC, &magic) || magic != Z15_MAGIC_VALUE ||
         rd(d, Z15_VERSION, &version) || (version & Z15_VERSION_COMPAT_MASK) != Z15_VERSION_VALUE ||
-        ready(d, 0, Z15_GPU_BUSY | Z15_DMA_BUSY | Z15_NPU_BUSY) ||
-        (target == VALENCE_P17 && (wr(d, P17_WEIGHT_CONFIG, 0) ||
-                                  wr(d, P17_KV_CONFIG, 0) || error_reg(d))) ||
-        ((target == VALENCE_P17 || !hal->observe) && host_write(d, 0, image, count))) {
+        ready(d, 0, Z15_GPU_BUSY | Z15_DMA_BUSY | Z15_NPU_BUSY)) {
         if (error)
             *error = "Qwen allocation, Z15 ABI, or DDR initialization failed";
         c11b_z15_close(d);
         return NULL;
     }
+    const int mode = probe ? z15_cmdq_select(hal) : 0;
+    d->queue_base = d->ring + ring_bytes;
+    if (mode < 0 || (mode && (d->queue_base > Z15_POOL_SIZE - 32u || !z15_cmdq_idle(hal)))) {
+        if (error)
+            *error = "Qwen requires Phase 18 CMDQ capability and reserved queue DDR";
+        c11b_z15_close(d);
+        return NULL;
+    }
+    if ((target == VALENCE_P17 && (wr(d, P17_WEIGHT_CONFIG, 0) ||
+                                  wr(d, P17_KV_CONFIG, 0) || error_reg(d))) ||
+        ((target == VALENCE_P17 || !hal->observe) && host_write(d, 0, image, count))) {
+        if (error)
+            *error = "Qwen Z15 register or DDR initialization failed";
+        c11b_z15_close(d);
+        return NULL;
+    }
+    d->cmdq = mode;
     if (target == VALENCE_P17) {
         d->resident_image = image;
         d->resident_bytes = count;
@@ -606,15 +678,26 @@ c11b_z15 *c11b_z15_open_target(const ysyx_hal_t *hal, const uint8_t *image, size
     return d;
 }
 
+c11b_z15 *c11b_z15_open_target(const ysyx_hal_t *hal, const uint8_t *image, size_t count,
+                              valence_target target, const char **error)
+{
+    return open_device(hal, image, count, target, error, 1);
+}
+
 c11b_z15 *c11b_z15_open(const ysyx_hal_t *hal, const uint8_t *image, size_t count,
                        const char **error)
 {
-    return c11b_z15_open_target(hal, image, count, VALENCE_STEP2, error);
+    return open_device(hal, image, count, VALENCE_STEP2, error, 0);
 }
 
 valence_submission_stats c11b_z15_submission_stats(const c11b_z15 *d)
 {
     return d ? d->submissions : (valence_submission_stats){0};
+}
+
+z15_cmdq_stats c11b_z15_queue_stats(const c11b_z15 *d)
+{
+    return d ? d->queued : (z15_cmdq_stats){0};
 }
 
 const c11b_ops *c11b_z15_ops(c11b_z15 *d)
@@ -625,6 +708,9 @@ const c11b_ops *c11b_z15_ops(c11b_z15 *d)
 void c11b_z15_close(c11b_z15 *d)
 {
     if (d) {
+        z15_cmdq_destroy(d->queue);
+        if (d->cmdq && getenv("YSYX_CMDQ_STATS"))
+            z15_cmdq_report(stderr, &d->queued);
         free(d->expanded);
         free(d);
     }

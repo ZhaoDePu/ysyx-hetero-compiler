@@ -1,9 +1,11 @@
 #define _POSIX_C_SOURCE 200809L
 #define _FILE_OFFSET_BITS 64
 
+#include "z15_exec_option.h"
 #include "c10_pixels.h"
 #include "c10_session.h"
 #include "c10_v4l2.h"
+#include "yolo26n_target.h"
 
 #include <arpa/inet.h>
 #include <errno.h>
@@ -28,7 +30,7 @@ typedef struct {
     const char *model, *device, *recording, *csv, *bind, *golden;
     unsigned width, height, fps, port, in_port, native_mhz, gpu_mhz;
     uint64_t frames;
-    int mode, mode_explicit;
+    int mode, mode_explicit, phase17;
 } settings;
 
 typedef struct {
@@ -508,6 +510,10 @@ static int parse_args(settings *o, int argc, char **argv)
                 o->gpu_mhz = 150;
             } else
                 return -1;
+        } else if (!strcmp(key, "--target")) {
+            if (strcmp(value, "step2") && strcmp(value, "p17"))
+                return -1;
+            o->phase17 = !strcmp(value, "p17");
         } else if (!strcmp(key, "--model")) o->model = value;
         else if (!strcmp(key, "--device")) o->device = value;
         else if (!strcmp(key, "--recorded-yuyv")) {
@@ -548,7 +554,9 @@ static int init_service(service *s, const settings *o)
         if (!s->heads || !s->golden)
             return -1;
     }
-    s->model = ysyx_yolo26n_open(o->model, (o->mode & MODE_SIM) != 0);
+    const int simulate = !!(o->mode & MODE_SIM);
+    s->model = o->phase17 ? ysyx_yolo26n_open_p17(o->model, simulate) :
+                           ysyx_yolo26n_open(o->model, simulate);
     if (!s->model)
         return -1;
     if (o->recording) {
@@ -601,10 +609,13 @@ static void close_service(service *s)
 
 int main(int argc, char **argv)
 {
+    if (z15_exec_option(&argc, argv))
+        return 2;
     const char *usage = "z15_yolo_live_c10 --model FILE --source tcp|v4l2 "
         "[--device /dev/video0 --width 640 --height 480 --fps 30] "
         "[--freq-profile 125_100|200_150] [--live | --verify --golden DIRECTORY] "
         "[--csv PATH] [--frames N] [--bind IPv4 --port 9000 --in-port 9001] "
+        "[--target step2|p17] [--exec-mode auto|cmdq|mmio] [--exec-stats] "
         "[--sim] [--recorded-yuyv FILE]\n"
         "--golden loads DIRECTORY/<sequence>.heads.bin (176400 raw bytes per frame).\n";
     settings o;

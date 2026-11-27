@@ -86,6 +86,7 @@ int main(void)
             source.write_text(code)
             subprocess.run(["cc", "-std=c99", "-O2", "-Wall", "-Wextra", "-Werror",
                             "-I", str(ROOT / "runtime"), str(source),
-                            str(ROOT / "runtime/hal_reference_c6.c"), "-o", str(binary)],
+                            str(ROOT / "runtime/hal_reference_c6.c"),
+                            str(ROOT / "runtime/z15_cmdq.c"), "-o", str(binary)],
                            check=True)
             subprocess.run([binary], check=True)

@@ -11,6 +11,7 @@ extern "C" {
  * read as zero. The software reference is synchronous and uses host RAM. */
 int ysyx_hal_reference_p17_open(ysyx_hal_t *, const char **);
 int ysyx_hal_reference_c6_open(ysyx_hal_t *, const char **error);
+void ysyx_hal_reference_cmdq_fault(const ysyx_hal_t *hal);
 
 #ifdef __cplusplus
 }

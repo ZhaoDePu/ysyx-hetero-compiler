@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include "c10_session_core.h"
 #include "z15_regs.h"
+#include "z15_cmdq.h"
 
 #include <inttypes.h>
 #include <sched.h>
@@ -633,34 +634,43 @@ typedef struct {
     const uint8_t *gpu_code;
     size_t gpu_code_bytes;
     int gpu_upload_always, cooperative_poll;
+    z15_cmdq_plan *queue;
+    uint32_t scale_index, scale_data, activation;
+    uint32_t scales[512], acts[256];
+    uint64_t arm_reads, arm_writes, arm_actions;
 } run_t;
 
-static int read32(const run_t *run, uint32_t reg, uint32_t *value)
+static int read32(run_t *run, uint32_t reg, uint32_t *value)
 {
+    ++run->arm_reads;
     return run->hal->mmio_read32(run->hal->ctx, reg, value);
 }
 
-static int write32(const run_t *run, uint32_t reg, uint32_t value)
+static int write32(run_t *run, uint32_t reg, uint32_t value)
 {
+    if (run->queue)
+        return z15_cmdq_add(run->queue, CMDQ_WRITE, reg, value);
+    ++run->arm_writes;
+    run->arm_actions += reg == Z15_CTRL;
     return run->hal->mmio_write32(run->hal->ctx, reg, value);
 }
 
-static int read_error(const run_t *run)
+static int read_error(run_t *run)
 {
     uint32_t error;
     return read32(run, Z15_ERROR, &error) || error;
 }
 
-static int action(const run_t *run, uint32_t bit)
+static int action(run_t *run, uint32_t bit)
 {
     if (!(bit & Z15_ACTIONS) || (bit & ~Z15_ACTIONS) || (bit & (bit - 1u)))
         return -1;
     if (write32(run, Z15_CTRL, bit))
         return -1;
-    return read_error(run);
+    return run->queue ? 0 : read_error(run);
 }
 
-static int read_counter(const run_t *run, uint32_t reg, uint64_t *value)
+static int read_counter(run_t *run, uint32_t reg, uint64_t *value)
 {
     for (unsigned i = 0; i < 8; ++i) {
         uint32_t hi, lo, second;
@@ -674,8 +684,11 @@ static int read_counter(const run_t *run, uint32_t reg, uint64_t *value)
     return -1;
 }
 
-static int poll_status(const run_t *run, uint32_t required, uint32_t busy)
+static int poll_status(run_t *run, uint32_t required, uint32_t busy)
 {
+    if (run->queue)
+        return (required && z15_cmdq_add(run->queue, CMDQ_ONE, Z15_STATUS, required)) ||
+               (busy && z15_cmdq_add(run->queue, CMDQ_ZERO, Z15_STATUS, busy));
     for (unsigned i = 0; i < POLL_LIMIT; ++i) {
         uint32_t value;
         if (read32(run, Z15_STATUS, &value) || value & Z15_HAS_ERROR || !(value & Z15_LOCKED))
@@ -688,8 +701,11 @@ static int poll_status(const run_t *run, uint32_t required, uint32_t busy)
     return -1;
 }
 
-static int wait_gpu_slot(const run_t *run, uint32_t warp)
+static int wait_gpu_slot(run_t *run, uint32_t warp)
 {
+    if (run->queue)
+        return z15_cmdq_add(run->queue, CMDQ_ZERO, Z15_GPU_SLOTS,
+                            Z15_GPU_PENDING | (1u << warp));
     for (unsigned i = 0; i < POLL_LIMIT; ++i) {
         uint32_t value, status;
         if (read32(run, Z15_STATUS, &status) || !(status & Z15_LOCKED) || status & Z15_HAS_ERROR ||
@@ -713,9 +729,14 @@ static int launch_gpu(run_t *run, const uint8_t *stage, const uint8_t *words)
        image and forget the cache before every new frame or KV slice. */
     if (run->gpu_upload_always || bytes != run->gpu_code_bytes ||
         memcmp(run->gpu_code, words, bytes)) {
-        for (uint32_t i = 0; i < count; ++i)
-            if (write32(run, Z15_PROGRAM + 4u * i, get(words, i)))
+        if (run->queue) {
+            if (z15_cmdq_image(run->queue, words, bytes))
                 return -1;
+        } else {
+            for (uint32_t i = 0; i < count; ++i)
+                if (write32(run, Z15_PROGRAM + 4u * i, get(words, i)))
+                    return -1;
+        }
         run->gpu_code = words;
         run->gpu_code_bytes = bytes;
     }
@@ -732,6 +753,38 @@ static int launch_gpu(run_t *run, const uint8_t *stage, const uint8_t *words)
         previous_page = page;
     }
     return 0;
+}
+
+static int queue_table_write(run_t *run, uint32_t reg, uint32_t value)
+{
+    switch (reg) {
+    case Z15_SCALE_INDEX:
+        run->scale_index = value;
+        return 0;
+    case Z15_SCALE_DATA:
+        run->scale_data = value;
+        return 0;
+    case Z15_ACTIVATION:
+        run->activation = value;
+        return 0;
+    default:
+        break;
+    }
+    if (reg == Z15_CTRL && value == Z15_WRITE_SCALE) {
+        const uint32_t i = run->scale_index;
+        if (run->scales[i] == run->scale_data)
+            return 0;
+        run->scales[i] = run->scale_data;
+        return write32(run, 0x1000u + i * 4u, run->scale_data);
+    }
+    if (reg == Z15_CTRL && value == Z15_WRITE_ACT) {
+        const uint32_t i = run->activation & 255u, data = run->activation >> 8;
+        if (run->acts[i] == data)
+            return 0;
+        run->acts[i] = data;
+        return write32(run, 0x1c00u + i * 4u, data);
+    }
+    return reg == Z15_CTRL ? action(run, value) : write32(run, reg, value);
 }
 
 static int launch_stage(run_t *run, uint32_t index)
@@ -751,7 +804,8 @@ static int launch_stage(run_t *run, uint32_t index)
             return -1;
         for (uint32_t i = 0; i < get(stage, 4); i += 2) {
             const uint32_t reg = get(words, i), value = get(words, i + 1);
-            if (reg == Z15_CTRL ? action(run, value) : write32(run, reg, value))
+            if (run->queue ? queue_table_write(run, reg, value) :
+                             (reg == Z15_CTRL ? action(run, value) : write32(run, reg, value)))
                 return -1;
         }
     }
@@ -793,7 +847,7 @@ static int finish_dma(run_t *run)
     if (poll_status(run, Z15_DMA_DONE, Z15_DMA_BUSY))
         return -1;
     const uint8_t *move = record(run->program, MOVES, run->dma_index);
-    if (get(move, 0) == DMA_STORE &&
+    if (!run->queue && get(move, 0) == DMA_STORE &&
         run->hal->cache_sync(run->hal->ctx, get(move, 1), get(move, 3), YSYX_SYNC_FOR_HOST))
         return -1;
     if (run->trace) {
@@ -814,7 +868,7 @@ static int launch_dma(run_t *run, uint32_t index)
     const uint8_t *move = record(run->program, MOVES, index);
     uint32_t out = get(move, 0) == DMA_STORE;
     if (finish_dma(run) || poll_status(run, 0, Z15_DMA_BUSY) ||
-        run->hal->cache_sync(run->hal->ctx, get(move, 1), get(move, 3), YSYX_SYNC_FOR_DEVICE) ||
+        (!run->queue && run->hal->cache_sync(run->hal->ctx, get(move, 1), get(move, 3), YSYX_SYNC_FOR_DEVICE)) ||
         (run->trace && read_counter(run, Z15_WALL_CYCLES, &run->dma_start)))
         return -1;
     if (write32(run, Z15_DMA_BASE, Z15_POOL_BASE) ||
@@ -864,7 +918,8 @@ static int write_static(const ysyx_program_t *p, const ysyx_hal_t *hal, uint64_t
 {
     for (uint32_t i = 0; i < p->sections[INITIAL].count; ++i) {
         const uint8_t *r = record(p, INITIAL, i);
-        if (hal->ddr_write(hal->ctx, get(r, 0), p->sections[DATA].bytes + get(r, 2), get(r, 1)))
+        if (hal->ddr_write(hal->ctx, get(r, 0), p->sections[DATA].bytes + get(r, 2), get(r, 1)) ||
+            hal->cache_sync(hal->ctx, get(r, 0), get(r, 1), YSYX_SYNC_FOR_DEVICE))
             return -1;
         *bytes += get(r, 1);
     }
@@ -877,14 +932,15 @@ static int write_inputs(const ysyx_program_t *p, const ysyx_hal_t *hal,
     for (size_t i = 0; i < count; ++i) {
         ysyx_symbol_t symbol;
         if (ysyx_find_symbol(p, inputs[i].name, YSYX_INPUT, &symbol) ||
-            hal->ddr_write(hal->ctx, symbol.ddr_offset, inputs[i].data, inputs[i].size))
+            hal->ddr_write(hal->ctx, symbol.ddr_offset, inputs[i].data, inputs[i].size) ||
+            hal->cache_sync(hal->ctx, symbol.ddr_offset, inputs[i].size, YSYX_SYNC_FOR_DEVICE))
             return -1;
         *bytes += inputs[i].size;
     }
     return 0;
 }
 
-static int sample_telemetry(const run_t *run, ysyx_stats_t *stats)
+static int sample_telemetry(run_t *run, ysyx_stats_t *stats)
 {
     return read_counter(run, Z15_WALL_CYCLES, &stats->wall_ticks) ||
            read_counter(run, Z15_NPU_CYCLES, &stats->npu_ticks) ||
@@ -902,7 +958,7 @@ static int compatible_hal(const ysyx_program_t *p, const ysyx_hal_t *hal, const 
     return 0;
 }
 
-static int ready_and_idle(const run_t *run)
+static int ready_and_idle(run_t *run)
 {
     uint32_t magic, version;
     return read32(run, Z15_MAGIC, &magic) || magic != Z15_MAGIC_VALUE ||
@@ -919,18 +975,103 @@ static int attach(const ysyx_program_t *p, const ysyx_hal_t *hal, const ysyx_inp
         return fail(error, "missing runtime inputs");
     if (validate_inputs(p, inputs, count, error))
         return -1;
-    const run_t run = {.program = p, .hal = hal};
+    run_t run = {.program = p, .hal = hal};
     if (ready_and_idle(&run))
         return fail(error, "Z15 Balanced ABI absent, busy or reporting a sticky fault");
+    const int mode = z15_cmdq_select(hal);
+    if (mode < 0)
+        return fail(error, "Z15 firmware does not advertise Phase 18 CMDQ");
+    if (mode && !z15_cmdq_idle(hal))
+        return fail(error, "Z15 CMDQ is busy or reports a pending fault");
     uint64_t bytes = 0;
     if (write_static(p, hal, &bytes) || write_inputs(p, hal, inputs, count, &bytes))
         return fail(error, "DDR initial image or runtime input write failed");
     return 0;
 }
 
+static int dispatch_range(run_t *run, uint32_t first, uint32_t end, const char **error)
+{
+    for (uint32_t i = first; i < end; ++i) {
+        const uint8_t *command = record(run->program, COMMANDS, i);
+        uint32_t index = get(command, 1);
+        switch (get(command, 0)) {
+        case LAUNCH:
+            if (launch_stage(run, index))
+                return fail(error, "compute descriptor or GPU program submission failed");
+            break;
+        case WAIT_STAGE:
+            if (finish_stage(run, index))
+                return fail(error, "compute fence timed out or hardware reported a fault");
+            break;
+        case DMA:
+            if (launch_dma(run, index))
+                return fail(error, "DMA submission failed");
+            break;
+        case WAIT_DMA:
+            if (finish_dma(run))
+                return fail(error, "DMA fence timed out or hardware reported a fault");
+            break;
+        case KV_YIELD:
+            /* The loader requires explicit fences before every checkpoint. */
+            break;
+        default:
+            return fail(error, "invalid YHB opcode");
+        }
+    }
+    for (unsigned i = 0; i < 2; ++i)
+        if (run->pending[i] != UINT32_MAX && finish_stage(run, run->pending[i]))
+            return fail(error, "final compute fence failed");
+    return finish_dma(run) ? fail(error, "final DMA fence failed") : 0;
+}
+
+static uint32_t ddr_high_water(const ysyx_program_t *p)
+{
+    uint32_t high = 0;
+    for (uint32_t i = 0; i < p->sections[SYMBOLS].count; ++i) {
+        ysyx_symbol_t symbol;
+        ysyx_program_symbol(p, i, &symbol);
+        const uint32_t end = symbol.ddr_offset + symbol.bytes;
+        if (high < end)
+            high = end;
+    }
+    for (uint32_t i = 0; i < p->sections[INITIAL].count; ++i) {
+        const uint8_t *initial = record(p, INITIAL, i);
+        const uint32_t end = get(initial, 0) + get(initial, 1);
+        if (high < end)
+            high = end;
+    }
+    for (uint32_t i = 0; i < p->sections[MOVES].count; ++i) {
+        const uint8_t *move = record(p, MOVES, i);
+        const uint32_t end = get(move, 1) + get(move, 3);
+        if (high < end)
+            high = end;
+    }
+    return high;
+}
+
+static int record_range(const ysyx_program_t *p, z15_cmdq_plan **out, ysyx_stats_t *stats,
+                        uint32_t first, uint32_t end, const char **error)
+{
+    z15_cmdq_plan *queue = z15_cmdq_create();
+    if (!queue)
+        return fail(error, "cannot allocate Z15 CMDQ recorder");
+    run_t run = {.program = p, .stats = stats, .queue = queue,
+                 .pending = {UINT32_MAX, UINT32_MAX}, .dma_index = UINT32_MAX};
+    for (unsigned i = 0; i < 512; ++i)
+        run.scales[i] = UINT32_MAX;
+    for (unsigned i = 0; i < 256; ++i)
+        run.acts[i] = UINT32_MAX;
+    if (dispatch_range(&run, first, end, error) || z15_cmdq_place(queue, ddr_high_water(p))) {
+        z15_cmdq_destroy(queue);
+        return fail(error, "cannot record or reserve disjoint DDR for Z15 CMDQ");
+    }
+    *out = queue;
+    return 0;
+}
+
 static int execute_range(const ysyx_program_t *p, const ysyx_hal_t *hal, uint32_t first,
                          uint32_t end, ysyx_stats_t *stats, FILE *trace, const char **error,
-                         int resident)
+                         int resident, z15_cmdq_plan *queue, const ysyx_stats_t *queued)
 {
     memset(stats, 0, sizeof(*stats));
     const char *gpu_upload = getenv("YSYX_C8_GPU_UPLOAD");
@@ -944,37 +1085,20 @@ static int execute_range(const ysyx_program_t *p, const ysyx_hal_t *hal, uint32_
     if (hal->observe)
         hal->observe(hal->ctx, &begin.observed);
 
-    for (uint32_t i = first; i < end; ++i) {
-        const uint8_t *command = record(p, COMMANDS, i);
-        uint32_t index = get(command, 1);
-        switch (get(command, 0)) {
-        case LAUNCH:
-            if (launch_stage(&run, index))
-                return fail(error, "compute descriptor or GPU program submission failed");
-            break;
-        case WAIT_STAGE:
-            if (finish_stage(&run, index))
-                return fail(error, "compute fence timed out or hardware reported a fault");
-            break;
-        case DMA:
-            if (launch_dma(&run, index))
-                return fail(error, "DMA submission failed");
-            break;
-        case WAIT_DMA:
-            if (finish_dma(&run))
-                return fail(error, "DMA fence timed out or hardware reported a fault");
-            break;
-        case KV_YIELD:
-            /* The loader requires explicit fences before every checkpoint. */
-            break;
-        default:
-            return fail(error, "invalid YHB opcode");
-        }
+    if (queue) {
+        z15_cmdq_stats batch;
+        const int rc = z15_cmdq_run(queue, hal, &batch);
+        FILE *report = trace ? trace : getenv("YSYX_CMDQ_STATS") ? stderr : NULL;
+        if (report || rc)
+            z15_cmdq_report(report ? report : stderr, &batch);
+        if (rc)
+            return fail(error, "Z15 CMDQ submission, timeout or device fault");
+        stats->dma_operations = queued->dma_operations;
+        stats->dma_bytes = queued->dma_bytes;
+    } else if (dispatch_range(&run, first, end, error)) {
+        return -1;
     }
-    for (unsigned i = 0; i < 2; ++i)
-        if (run.pending[i] != UINT32_MAX && finish_stage(&run, run.pending[i]))
-            return fail(error, "final compute fence failed");
-    if (finish_dma(&run) || sample_telemetry(&run, stats) ||
+    if (sample_telemetry(&run, stats) ||
         read32(&run, Z15_ERROR, &stats->abi_error))
         return fail(error, "final DMA fence or counter read failed");
     stats->invalid_dma_descriptors = !!(stats->abi_error & Z15_ERR_DMA_DESC);
@@ -999,7 +1123,26 @@ static int execute_range(const ysyx_program_t *p, const ysyx_hal_t *hal, uint32_
         stats->observed.dma_gpu_overlap_ticks -= begin.observed.dma_gpu_overlap_ticks;
         stats->observed.dma_tensor_overlap_ticks -= begin.observed.dma_tensor_overlap_ticks;
     }
+    FILE *report = trace ? trace : getenv("YSYX_CMDQ_STATS") ? stderr : NULL;
+    if (!queue && report)
+        fprintf(report, "MMIO arm_actions=%" PRIu64 " arm_reads=%" PRIu64 " arm_writes=%" PRIu64 "\n",
+                run.arm_actions, run.arm_reads, run.arm_writes);
     return 0;
+}
+
+static int execute_auto(const ysyx_program_t *p, const ysyx_hal_t *hal, uint32_t start,
+                        uint32_t end, ysyx_stats_t *stats, FILE *trace, const char **error)
+{
+    const int mode = z15_cmdq_select(hal);
+    if (mode < 0)
+        return fail(error, "Z15 firmware does not advertise Phase 18 CMDQ");
+    z15_cmdq_plan *plan = NULL;
+    ysyx_stats_t queued = {0};
+    if (mode && record_range(p, &plan, &queued, start, end, error))
+        return -1;
+    const int rc = execute_range(p, hal, start, end, stats, trace, error, 0, plan, &queued);
+    z15_cmdq_destroy(plan);
+    return rc;
 }
 
 int ysyx_execute(const ysyx_program_t *p, const ysyx_hal_t *hal, const ysyx_input_t *inputs, size_t count,
@@ -1009,7 +1152,7 @@ int ysyx_execute(const ysyx_program_t *p, const ysyx_hal_t *hal, const ysyx_inpu
         return fail(error, "missing runtime statistics");
     if (attach(p, hal, inputs, count, error))
         return -1;
-    return execute_range(p, hal, 0, p->sections[COMMANDS].count, stats, trace, error, 0);
+    return execute_auto(p, hal, 0, p->sections[COMMANDS].count, stats, trace, error);
 }
 
 static int read_symbol(const ysyx_hal_t *hal, const ysyx_symbol_t *symbol, void *data, size_t size)
@@ -1031,7 +1174,10 @@ int ysyx_read_output(const ysyx_program_t *p, const ysyx_hal_t *hal, const char 
 struct ysyx_c10_session {
     const ysyx_program_t *program;
     const ysyx_hal_t *hal;
-    int static_uploaded, frame_ready, failed;
+    int static_uploaded, frame_ready, failed, selected;
+    z15_cmdq_plan *queue;
+    ysyx_stats_t queued;
+
 };
 
 typedef struct {
@@ -1182,11 +1328,23 @@ int ysyx_c10_session_run(ysyx_c10_session_t *s, const ysyx_input_t *inputs, size
 
     const ysyx_program_t *p = s->program;
     const ysyx_hal_t *hal = s->hal;
-    const run_t run = {.program = p, .hal = hal, .cooperative_poll = !hal->observe};
+    run_t run = {.program = p, .hal = hal, .cooperative_poll = !hal->observe};
     const char *failure = NULL;
     if (ready_and_idle(&run)) {
         failure = "Z15 ABI absent, busy or reporting a fault before resident frame";
     } else {
+        if (!s->selected) {
+            const int mode = z15_cmdq_select(hal);
+            if (mode < 0)
+                return fail(error, "Z15 firmware does not advertise Phase 18 CMDQ");
+            if (mode && record_range(p, &s->queue, &s->queued, 0, p->sections[COMMANDS].count, error)) {
+                s->failed = 1;
+                return -1;
+            }
+            s->selected = 1;
+        }
+        if (s->queue && !z15_cmdq_idle(hal))
+            return fail(error, "Z15 CMDQ is busy or reports a pending fault");
         const double copy_begin = monotonic_ms();
         const int write_failed = (!s->static_uploaded && write_static(p, hal, &stage.static_h2d_bytes)) ||
                                  write_inputs(p, hal, inputs, count, &stage.dynamic_h2d_bytes);
@@ -1197,7 +1355,7 @@ int ysyx_c10_session_run(ysyx_c10_session_t *s, const ysyx_input_t *inputs, size
         } else {
             s->static_uploaded = 1;
             if (execute_range(p, hal, 0, p->sections[COMMANDS].count, &frame, trace,
-                              &failure, 1) == 0 && ready_and_idle(&run))
+                              &failure, 1, s->queue, &s->queued) == 0 && ready_and_idle(&run))
                 failure = "Z15 ABI absent, busy or reporting a fault after resident frame";
             stage.t_execute_ms = monotonic_ms() - execute_begin;
         }
@@ -1258,6 +1416,8 @@ int ysyx_c10_session_static_output(const ysyx_c10_session_t *s, const char *name
 
 void ysyx_c10_session_close(ysyx_c10_session_t *s)
 {
+    if (s)
+        z15_cmdq_destroy(s->queue);
     free(s);
 }
 
@@ -1308,7 +1468,7 @@ int ysyx_kv_step(ysyx_kv_session_t *s, uint32_t step, ysyx_stats_t *stats, FILE 
     uint32_t end = s->cursor;
     while (end < p->sections[COMMANDS].count && get(record(p, COMMANDS, end), 0) != KV_YIELD)
         ++end;
-    if (end == p->sections[COMMANDS].count || execute_range(p, s->hal, s->cursor, end, stats, trace, error, 0)) {
+    if (end == p->sections[COMMANDS].count || execute_auto(p, s->hal, s->cursor, end, stats, trace, error)) {
         s->failed = 1;
         return end == p->sections[COMMANDS].count ? fail(error, "missing KV checkpoint") : -1;
     }
@@ -1323,7 +1483,8 @@ int ysyx_kv_write_input(ysyx_kv_session_t *s, const ysyx_input_t *input, const c
     if (!kv_appendable(s) || !input || !input->name || !input->data ||
         ysyx_find_symbol(s->program, input->name, YSYX_INPUT, &symbol) || symbol.bytes != input->size)
         return fail(error, "unknown KV input or invalid input size/session");
-    if (s->hal->ddr_write(s->hal->ctx, symbol.ddr_offset, input->data, input->size)) {
+    if (s->hal->ddr_write(s->hal->ctx, symbol.ddr_offset, input->data, input->size) ||
+        s->hal->cache_sync(s->hal->ctx, symbol.ddr_offset, input->size, YSYX_SYNC_FOR_DEVICE)) {
         s->failed = 1;
         return fail(error, "KV runtime input write failed");
     }
