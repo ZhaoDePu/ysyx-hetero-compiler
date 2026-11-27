@@ -1,4 +1,4 @@
-# C12 Qwen2.5-0.5B candidate
+# Valence（蔚澜） C12 Qwen2.5-0.5B
 
 The quantization tools start from official revision 7ae557604adf67be50417f59c2c2f167def9a775.
 The original safetensors object must match SHA-256
@@ -75,7 +75,12 @@ decode positions in the fixed-length comparison.
       --backend cpu --kv-bits 8 --mode chat --prompt 'Explain FPGA.' \
       --max-new-tokens 64 --trace-steps on
 
-This candidate's Z15 dispatch uses the frozen NPU for exact signed integer
+The C12 release defaults to KV8. KV4 remains available via --kv-bits 4 for
+experiments. The measured mean cosine was 0.92259 for KV8 and 0.89266 for
+protected KV4. Protected KV4 saves 17.65% of cache bytes; PL DMA traffic
+was unchanged.
+
+The Z15 dispatch uses the frozen NPU for exact signed integer
 partial dots and GPU kernels for Q16 RoPE and residuals. Scale accumulation,
 RMSNorm, causal attention, KV coding and SwiGLU run in the host Q16 path.
 The v1 profile is the default. Turbo extension probing at 0x0120 requires an

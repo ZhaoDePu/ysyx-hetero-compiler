@@ -124,7 +124,7 @@ static int read_layout(qwen_reference *m)
         m->protection = policy & 7u;
         m->grouped_a8 = !!(policy & 8u);
         m->kv4_outliers = !!(policy & 16u);
-        m->kv_bits = 4;
+        m->kv_bits = 8;
     } else if (memcmp(m->image, magic, sizeof(magic)) || m->group != QWEN_GROUP || policy != 16) {
         return -1;
     }

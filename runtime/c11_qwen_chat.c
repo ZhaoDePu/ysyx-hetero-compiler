@@ -400,7 +400,7 @@ static int native_start(session *chat, const options *o)
         return -1;
     }
     if (mixed) {
-        fputs("C12 candidate: NPU projections, GPU RoPE/residual and host Q16 nonlinearities.\n", stderr);
+        fputs("Valence C12: NPU projections, GPU RoPE/residual and host Q16 nonlinearities.\n", stderr);
         return c12_z15_attach(chat->model, chat->device, (UINT32_C(1) << (QWEN_LAYERS + 1)) - 1);
     }
     return qwen_reference_native(chat->model, c11b_z15_ops(chat->device));
@@ -412,7 +412,7 @@ int main(int argc, char **argv)
     static const char help[] =
 #ifdef YSYX_C11B_NATIVE
          "z15_qwen25_chat --weights FILE --tokenizer FILE [--backend cpu|z15] "
-        "[--kv-bits 4|8] [--mmio-profile v1|turbo] [--mode verify --token-id ID --golden FILE]\n"
+        "[--kv-bits 4|8 (C12 default: 8)] [--mmio-profile v1|turbo] [--mode verify --token-id ID --golden FILE]\n"
         "Chat and bench options: "
 #else
         "ysyx_qwen_chat --weights FILE --tokenizer FILE [--backend sim] "
