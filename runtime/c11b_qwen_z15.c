@@ -12,7 +12,7 @@
 
 
 enum {
-    RING = 16 * 1024 * 1024, RESIDUAL_RING = 10 * 1024 * 1024, MAX_INPUT = QWEN_INTER, MAX_OUTPUT = 4864, PANEL = 496,
+    RING = 16 * 1024 * 1024, RESIDUAL_RING = 10 * 1024 * 1024, MAX_INPUT = QWEN_INTER, MAX_OUTPUT = 4864, PANEL = C16_GROUPED_COLS,
     EXPANDED = 8192, MAX_EXPANDED = QWEN_HIDDEN * QWEN_INTER,
     GEMM_OUTPUT = 8192 + MAX_EXPANDED, VECTOR_OUTPUT = 24576,
     STAGE_DDR = 8 * 1024 * 1024, CACHE_DDR = STAGE_DDR + 65536,
@@ -270,17 +270,23 @@ static int config(c11b_z15 *d, const word *words, size_t count)
     return 0;
 }
 
-static int gemm(c11b_z15 *d, unsigned base, unsigned n, unsigned group, unsigned packed_w4)
+static int gemm_at(c11b_z15 *d, unsigned a, unsigned b, unsigned c,
+                   unsigned rows, unsigned n, unsigned group, unsigned packed_w4)
 {
     const word desc[] = {
-        {Z15_NPU_DIMS, 1 | n << 16}, {Z15_NPU_K, group | group << 16},
-        {Z15_NPU_A, base + NPU_A}, {Z15_NPU_B, base + NPU_B}, {Z15_NPU_C, base + NPU_C},
+        {Z15_NPU_DIMS, rows | n << 16}, {Z15_NPU_K, group | group << 16},
+        {Z15_NPU_A, a}, {Z15_NPU_B, b}, {Z15_NPU_C, c},
         {Z15_NPU_BIAS, 0}, {Z15_NPU_FLAGS, 0}, {Z15_NPU_SHAPE, 0},
         {Z15_NPU_SLICE, 0}, {Z15_NPU_PARTIAL, 0}, {P17_WEIGHT_CONFIG, packed_w4}
     };
     const valence_cmd_batch_t batch = {desc, sizeof(desc) / sizeof(desc[0]) -
                                       (d->target == VALENCE_STEP2), Z15_START_NPU};
     return ready(d, 0, Z15_NPU_BUSY) || submit_batch(d, &batch);
+}
+
+static int gemm(c11b_z15 *d, unsigned base, unsigned rows, unsigned n, unsigned group, unsigned packed_w4)
+{
+    return gemm_at(d, base + NPU_A, base + NPU_B, base + NPU_C, rows, n, group, packed_w4);
 }
 
 static void widen(int8_t *out, const uint8_t *packed, size_t count)
@@ -305,15 +311,46 @@ static tile tensor_tile(unsigned ordinal, unsigned channels)
     return (tile){group * channels + column, group, width, (ordinal & 1u) * Z15_HALF_BYTES};
 }
 
-static int prepare_tile(c11b_z15 *d, unsigned a, unsigned b, tile t, unsigned group, unsigned row_bytes)
+static int prepare_tile(c11b_z15 *d, unsigned a, unsigned b, tile t, unsigned group,
+                        unsigned row_bytes, unsigned channels, unsigned weight_stride, unsigned rows)
 {
-    return dma(d, a + t.group * group, t.sram + NPU_A, group, 0) ||
-           dma(d, b + t.block * row_bytes, t.sram + NPU_B, t.width * row_bytes, 0);
+    return dma(d, a + t.group * group * rows, t.sram + NPU_A, group * rows, 0) ||
+           dma(d, b + (t.group * weight_stride + t.block % channels) * row_bytes, t.sram + NPU_B, t.width * row_bytes, 0);
 }
 
-static int store_tile(c11b_z15 *d, unsigned output, tile t)
+static int store_tile(c11b_z15 *d, unsigned output, tile t, unsigned rows)
 {
-    return dma(d, output + t.block * 4u, t.sram + NPU_C, t.width * 4u, 1);
+    return dma(d, output + t.block * 4u * rows, t.sram + NPU_C, t.width * 4u * rows, 1);
+}
+
+static int schedule_grouped(c11b_z15 *d, unsigned stage, unsigned base_weight, unsigned base_result,
+                            unsigned n, unsigned k, unsigned group, unsigned packed_w4,
+                            unsigned weight_stride, unsigned rows)
+{
+    const unsigned row_bytes = packed_w4 ? group / 2 : group;
+    const unsigned count = (k / group) * ((n + PANEL - 1) / PANEL);
+    tile previous = tensor_tile(0, n);
+    if (prepare_tile(d, stage, base_weight, previous, group, row_bytes, n, weight_stride, rows) ||
+        gemm(d, previous.sram, rows, previous.width, group, packed_w4))
+        return -1;
+    for (unsigned ordinal = 1; ordinal < count; ++ordinal) {
+        const tile next = tensor_tile(ordinal, n);
+        if (d->pipeline) {
+            if (prepare_tile(d, stage, base_weight, next, group, row_bytes, n, weight_stride, rows) ||
+                ready(d, Z15_NPU_DONE, Z15_NPU_BUSY) || gemm(d, next.sram, rows, next.width, group, packed_w4) ||
+                store_tile(d, base_result, previous, rows))
+                return -1;
+        } else {
+            if (ready(d, Z15_NPU_DONE, Z15_NPU_BUSY) || store_tile(d, base_result, previous, rows) ||
+                prepare_tile(d, stage, base_weight, next, group, row_bytes, n, weight_stride, rows) ||
+                gemm(d, next.sram, rows, next.width, group, packed_w4))
+                return -1;
+        }
+        previous = next;
+    }
+    if (ready(d, Z15_NPU_DONE, Z15_NPU_BUSY) || store_tile(d, base_result, previous, rows))
+        return -1;
+    return 0;
 }
 
 int c11b_z15_project_grouped(void *ctx, const uint8_t *packed, unsigned n, unsigned k,
@@ -346,29 +383,142 @@ int c11b_z15_project_grouped(void *ctx, const uint8_t *packed, unsigned n, unsig
         return -1;
     if (host_write(d, stage, a8, k))
         return -1;
-    const unsigned count = (k / group) * ((n + PANEL - 1) / PANEL);
-    tile previous = tensor_tile(0, n);
-    if (prepare_tile(d, stage, base_weight, previous, group, row_bytes) ||
-        gemm(d, previous.sram, previous.width, group, packed_w4))
-        return -1;
-    for (unsigned ordinal = 1; ordinal < count; ++ordinal) {
-        const tile next = tensor_tile(ordinal, n);
-        if (d->pipeline) {
-            if (prepare_tile(d, stage, base_weight, next, group, row_bytes) ||
-                ready(d, Z15_NPU_DONE, Z15_NPU_BUSY) || gemm(d, next.sram, next.width, group, packed_w4) ||
-                store_tile(d, base_result, previous))
-                return -1;
-        } else {
-            if (ready(d, Z15_NPU_DONE, Z15_NPU_BUSY) || store_tile(d, base_result, previous) ||
-                prepare_tile(d, stage, base_weight, next, group, row_bytes) ||
-                gemm(d, next.sram, next.width, group, packed_w4))
-                return -1;
-        }
-        previous = next;
-    }
-    if (ready(d, Z15_NPU_DONE, Z15_NPU_BUSY) || store_tile(d, base_result, previous))
+    if (schedule_grouped(d, stage, base_weight, base_result, n, k, group, packed_w4, n, 1))
         return -1;
     return host_read(d, base_result, result, (size_t)(k / group) * n * sizeof(*result));
+}
+
+static int resident_offset(const c11b_z15 *d, const uint8_t *weights, size_t bytes, unsigned *offset)
+{
+    const uintptr_t base = (uintptr_t)d->resident_image, address = (uintptr_t)weights;
+    const uintptr_t at = address - base;
+    if (!base || address < base || (at & 31u) || at > d->resident_bytes ||
+        bytes > d->resident_bytes - at)
+        return -1;
+    *offset = (unsigned)at;
+    return 0;
+}
+
+static int project_parallel(void *ctx, const valence_raw_projection *jobs, unsigned count,
+                            unsigned group, const int8_t *input)
+{
+    c11b_z15 *d = ctx;
+    const unsigned stage = d->ring;
+    unsigned weights[3], offsets[3];
+    unsigned next = stage + GEMM_OUTPUT;
+    if (!count || count > 3 || (group != 64 && group != 128))
+        return -1;
+    for (unsigned i = 0; i < count; ++i) {
+        const unsigned n = jobs[i].rows, bits = jobs[i].bits;
+        if (!n || n > MAX_OUTPUT || n % 16 || (bits != 4 && bits != 8) ||
+            resident_offset(d, jobs[i].packed, (size_t)n * QWEN_HIDDEN * bits / 8, weights + i))
+            return -1;
+        offsets[i] = next;
+        next += n * (QWEN_HIDDEN / group) * 4;
+    }
+    if (next > stage + STAGE_DDR || host_write(d, stage, input, QWEN_HIDDEN))
+        return -1;
+    for (unsigned i = 0; i < count; ++i)
+        if (schedule_grouped(d, stage, weights[i], offsets[i], jobs[i].rows,
+                             QWEN_HIDDEN, group, jobs[i].bits == 4, jobs[i].rows, 1))
+            return -1;
+    for (unsigned i = 0; i < count; ++i)
+        if (host_read(d, offsets[i], jobs[i].partials, jobs[i].rows * (QWEN_HIDDEN / group) * 4u))
+            return -1;
+    return 0;
+}
+
+static int project_head(void *ctx, const uint8_t *weights, unsigned first, unsigned rows, unsigned vocab,
+                        unsigned group, unsigned bits, const int8_t *input, int32_t *partials)
+{
+    c11b_z15 *d = ctx;
+    unsigned offset;
+    const unsigned stage = d->ring;
+    const unsigned output = stage + GEMM_OUTPUT;
+    if (group != 64 && group != 128)
+        return -1;
+    const unsigned groups = QWEN_HIDDEN / group;
+    const unsigned bytes = rows * groups * 4;
+    if (!rows || rows > C16_HEAD_PANEL || ((rows | first) & 15u) || first > vocab || rows > vocab - first ||
+        (bits != 4 && bits != 8) || bytes > STAGE_DDR - GEMM_OUTPUT ||
+        resident_offset(d, weights, (size_t)vocab * QWEN_HIDDEN * bits / 8, &offset))
+        return -1;
+    offset += first * (group * bits / 8);
+    if (host_write(d, stage, input, QWEN_HIDDEN) ||
+        schedule_grouped(d, stage, offset, output, rows, QWEN_HIDDEN, group, bits == 4, vocab, 1))
+        return -1;
+    return host_read(d, output, partials, bytes);
+}
+
+static int project_rows(void *ctx, const uint8_t *weights, unsigned n, unsigned k,
+                        unsigned group, unsigned bits, unsigned rows,
+                        const int8_t *activation, int32_t *partials)
+{
+    c11b_z15 *d = ctx;
+    enum { OUTPUT_OFFSET = 128 * 1024 };
+    unsigned offset;
+    if (!rows || rows > C16_PREFILL_ROWS || !n || n > MAX_OUTPUT || n % 16 ||
+        (k != QWEN_HIDDEN && k != QWEN_INTER) || (group != 64 && group != 128) ||
+        k % group || (bits != 4 && bits != 8) ||
+        resident_offset(d, weights, (size_t)n * k * bits / 8, &offset))
+        return -1;
+    const unsigned out_bytes = (k / group) * n * rows * 4u;
+    const unsigned stage = d->ring;
+    const unsigned output = stage + OUTPUT_OFFSET;
+    if (k * rows > OUTPUT_OFFSET || out_bytes > STAGE_DDR - OUTPUT_OFFSET ||
+        host_write(d, stage, activation, k * rows) ||
+        schedule_grouped(d, stage, offset, output, n, k, group, bits == 4, n, rows))
+        return -1;
+    return host_read(d, output, partials, out_bytes);
+}
+
+/* Raw products are independent across batch rows. The host applies each
+   token's own dynamic Q0.8 coefficient with the same rounding as C15. */
+static int project_block16_rows(void *ctx, const uint8_t *packed, const uint8_t *fine,
+                                unsigned n, unsigned group, unsigned rows,
+                                const int8_t *activation, int32_t *partials)
+{
+    c11b_z15 *d = ctx;
+    enum { WIDTH = 16, B_BASE = 0x5000, C_BASE = 0xf6000, OUTPUT_OFFSET = 128 * 1024 };
+    if (!rows || rows > C16_PREFILL_ROWS || !n || n > MAX_OUTPUT || n % WIDTH ||
+        (group != 64 && group != 128))
+        return -1;
+    const unsigned stage = d->ring, output = stage + OUTPUT_OFFSET;
+    const unsigned passes = fine ? 2 : 1, chunks = (QWEN_HIDDEN / group) * passes;
+    const unsigned panel_bytes = WIDTH * QWEN_HIDDEN / 2;
+    const unsigned max_panels = (C_BASE - B_BASE) / (panel_bytes * passes);
+    const unsigned chunk_result = rows * WIDTH * 4u, panel_result = chunks * chunk_result;
+    const unsigned count = n / WIDTH, bytes = count * panel_result;
+    unsigned weights[2];
+    if (NPU_A + QWEN_HIDDEN * rows > B_BASE || C_BASE + panel_result > Z15_HALF_BYTES ||
+        bytes > RESIDUAL_RING - OUTPUT_OFFSET ||
+        resident_offset(d, packed, n * QWEN_HIDDEN / 2, weights) ||
+        (fine && resident_offset(d, fine, n * QWEN_HIDDEN / 2, weights + 1)) ||
+        host_write(d, stage, activation, QWEN_HIDDEN * rows))
+        return -1;
+    for (unsigned first = 0, half = 0; first < count; first += max_panels, half ^= Z15_HALF_BYTES) {
+        const unsigned panels = count - first < max_panels ? count - first : max_panels;
+        if (dma(d, stage, half + NPU_A, QWEN_HIDDEN * rows, 0))
+            return -1;
+        for (unsigned pass = 0; pass < passes; ++pass)
+            if (dma(d, weights[pass] + first * panel_bytes,
+                    half + B_BASE + pass * panels * panel_bytes, panels * panel_bytes, 0))
+                return -1;
+        for (unsigned p = 0; p < panels; ++p) {
+            for (unsigned chunk = 0; chunk < chunks; ++chunk) {
+                const unsigned g = chunk / passes, pass = chunk % passes;
+                const unsigned a = half + NPU_A + g * group * rows;
+                const unsigned b = half + B_BASE + (pass * panels + p) * panel_bytes + g * WIDTH * (group / 2);
+                const unsigned c = half + C_BASE + chunk * chunk_result;
+                if (gemm_at(d, a, b, c, rows, WIDTH, group, P17_SIGNED_W4) ||
+                    ready(d, Z15_NPU_DONE, Z15_NPU_BUSY))
+                    return -1;
+            }
+            if (dma(d, output + (first + p) * panel_result, half + C_BASE, panel_result, 1))
+                return -1;
+        }
+    }
+    return host_read(d, output, partials, bytes);
 }
 
 /* One activation and one contiguous W4 window per scratch half. Only the
@@ -767,7 +917,17 @@ int c12_z15_attach(qwen_reference *m, c11b_z15 *d, uint32_t layers)
 {
     if (!d || (c14_qwen_block16(m) && (d->target != VALENCE_P17 || c14_qwen_block16(m) < 2)))
         return -1;
-    c12_qwen_device ops = {d, c11b_z15_project_grouped, rope_hw, residual_q16, c11b_z15_project_block16};
+    c12_qwen_device ops = {.ctx = d, .project = c11b_z15_project_grouped, .rope = rope_hw,
+                          .residual = residual_q16, .project_block16 = c11b_z15_project_block16};
+    const char *turbo = getenv("YSYX_QWEN_C16");
+    if (d->target == VALENCE_P17 && d->cmdq && turbo && !strcmp(turbo, "1")) {
+        ops.project_parallel = project_parallel;
+        ops.project_head = project_head;
+        ops.project_rows = project_rows;
+        ops.project_block16_rows = project_block16_rows;
+        ops.rope = NULL;
+        ops.residual = NULL;
+    }
     return c12_qwen_set_device(m, &ops, layers);
 }
 

@@ -21,7 +21,7 @@ enum {
 
 typedef struct {
     const uint8_t *packed, *scale, *bias, *permutation, *equalizer, *fine;
-    unsigned inputs, outputs, group, bits, panel_major;
+    unsigned inputs, outputs, group, bits, panel_major, has_fine;
 } matrix;
 
 typedef struct {
@@ -30,7 +30,9 @@ typedef struct {
 } block;
 
 struct qwen_reference {
-    const uint8_t *image, *rms, *rope, *exp, *kv_scale;
+    const uint8_t *image, *rms, *rope, *exp, *kv_scale, *head_order;
+    uint32_t *head_inverse;
+    int32_t *head_logits;
     size_t bytes, layout;
     unsigned context, position, group, protection, kv_bits, grouped_a8, kv4_outliers;
     int block16;
@@ -106,13 +108,16 @@ static int read_matrix(qwen_reference *model, matrix *mat, unsigned outputs,
     if (!mat->packed || !mat->scale || (bias && !mat->bias))
         return -1;
     const size_t scale_extent = weights / mat->group * 4;
-    if (model->block16 && bits == 4 &&
-        (model->block16 != 4 || u32(mat->scale + scale_extent - 4) == UINT32_C(0xb1600014))) {
+    const uint32_t tag = u32(mat->scale + scale_extent - 4);
+    const int double_plane = tag == UINT32_C(0xb1600014);
+    const int single_plane = model->block16 == 5 && tag == UINT32_C(0xb1600016);
+    if (model->block16 && bits == 4 && (model->block16 < 4 || double_plane || single_plane)) {
         if (inputs != QWEN_HIDDEN || outputs != QWEN_INTER || bias || outputs % 16)
             return -1;
         const size_t scale_bytes = 4u * (inputs / mat->group) * (outputs / 16);
         mat->permutation = mat->scale + scale_bytes;
         mat->panel_major = model->block16 >= 2;
+        mat->has_fine = model->block16 == 3 || (model->block16 >= 4 && double_plane);
         mat->equalizer = mat->permutation + outputs * 4u;
         uint8_t seen[QWEN_INTER] = {0};
         for (unsigned i = 0; i < outputs; ++i) {
@@ -142,7 +147,9 @@ static int read_layout(qwen_reference *m)
     static const uint8_t panel_magic[8] = {'Y','S','Q','C','1','4','P',0};
     static const uint8_t residual_magic[8] = {'Y','S','Q','C','1','4','D',0};
     static const uint8_t hybrid_magic[8] = {'Y','S','Q','C','1','4','H',0};
-    m->block16 = !memcmp(m->image, hybrid_magic, sizeof(hybrid_magic)) ? 4 :
+    static const uint8_t c16_magic[8] = {'Y','S','Q','C','1','6','H',0};
+    m->block16 = !memcmp(m->image, c16_magic, sizeof(c16_magic)) ? 5 :
+                 !memcmp(m->image, hybrid_magic, sizeof(hybrid_magic)) ? 4 :
                  !memcmp(m->image, residual_magic, sizeof(residual_magic)) ? 3 :
                  !memcmp(m->image, panel_magic, sizeof(panel_magic)) ? 2 :
                  !memcmp(m->image, block16_magic, sizeof(block16_magic));
@@ -152,7 +159,8 @@ static int read_layout(qwen_reference *m)
     if (mixed) {
         if ((m->group != 64 && m->group != 128) || (policy & ~63u))
             return -1;
-        if (m->block16 && (policy & 15u) != 15u)
+        const unsigned need = m->block16 == 5 ? 11u : 15u;
+        if (m->block16 && (policy & need) != need)
             return -1;
         m->protection = policy & 7u;
         m->grouped_a8 = !!(policy & 8u);
@@ -205,11 +213,26 @@ static int read_layout(qwen_reference *m)
         for (unsigned i = 0; i < QWEN_LAYERS; ++i) {
             matrix *layers[] = {&m->layer[i].gate, &m->layer[i].up};
             for (unsigned x = 0; x < 2; ++x)
-                if (layers[x]->permutation) {
+                if (layers[x]->has_fine) {
                     layers[x]->fine = extent(m, (size_t)QWEN_HIDDEN * QWEN_INTER / 2);
                     if (!layers[x]->fine)
                         return -1;
                 }
+        }
+    }
+    if (m->block16 == 5 && head == 4) {
+        m->head_order = extent(m, QWEN_VOCAB * sizeof(*m->head_inverse));
+        m->head_inverse = malloc(QWEN_VOCAB * sizeof(*m->head_inverse));
+        m->head_logits = malloc(QWEN_VOCAB * sizeof(*m->head_logits));
+        if (!m->head_order || !m->head_inverse || !m->head_logits)
+            return -1;
+        for (unsigned i = 0; i < QWEN_VOCAB; ++i)
+            m->head_inverse[i] = UINT32_MAX;
+        for (unsigned i = 0; i < QWEN_VOCAB; ++i) {
+            const uint32_t token = u32(m->head_order + 4u * i);
+            if (token >= QWEN_VOCAB || m->head_inverse[token] != UINT32_MAX)
+                return -1;
+            m->head_inverse[token] = i;
         }
     }
     if (!m->rms || !m->rope || !m->exp || ((m->layout + 63u) & ~(size_t)63) != m->bytes ||
@@ -288,6 +311,8 @@ void qwen_reference_close(qwen_reference *m)
     free(m->packed_kv);
     free(m->c12_partials);
     free(m->c12_panel);
+    free(m->head_inverse);
+    free(m->head_logits);
     free(m);
 }
 
@@ -315,7 +340,10 @@ static int32_t quantize_block(int8_t *out, const int32_t *src, unsigned width)
     if (!scale)
         scale = 1;
     for (unsigned i = 0; i < width; ++i) {
-        int32_t a = (int32_t)rounded(src[i], scale);
+        const int32_t v = src[i], magnitude = v < 0 ? -v : v;
+        int32_t a = (magnitude + scale / 2) / scale;
+        if (v < 0)
+            a = -a;
         a = a < -127 ? -127 : a > 127 ? 127 : a;
         out[i] = (int8_t)a;
     }
@@ -404,16 +432,11 @@ static int64_t round_even(int64_t value, uint64_t divisor)
     return value < 0 ? -result : result;
 }
 
-static int linear_block16(const matrix *mat, const activation *input, int32_t *out,
-                          const c12_qwen_device *device)
+static void block16_coefficients(const matrix *mat, const activation *input,
+                                 uint64_t *units, uint16_t *coeffs)
 {
-    const unsigned groups = mat->inputs / mat->group;
-    const unsigned panels = mat->outputs / 16;
-    const unsigned row_bytes = mat->group / 2;
-    uint64_t units[QWEN_INTER / 16];
+    const unsigned groups = mat->inputs / mat->group, panels = mat->outputs / 16;
     const unsigned passes = mat->fine ? 2 : 1;
-    uint16_t coeffs[2 * (QWEN_INTER / 16) * (QWEN_HIDDEN / 64)];
-    int32_t accum[QWEN_INTER];
     for (unsigned panel = 0; panel < panels; ++panel) {
         uint64_t gain[QWEN_HIDDEN / 64], unit = 1;
         for (unsigned g = 0; g < groups; ++g) {
@@ -430,6 +453,35 @@ static int linear_block16(const matrix *mat, const activation *input, int32_t *o
                 coeffs[at + 1] = (uint16_t)round_even((int64_t)(gain[g] << 4), unit);
         }
     }
+
+}
+
+static void block16_finish(const matrix *mat, const int32_t *accum, const uint64_t *units, int32_t *out)
+{
+    const uint64_t fixed_units = UINT64_C(1) << 40;
+    for (unsigned physical = 0; physical < mat->outputs; ++physical) {
+        const uint64_t unit = units[physical / 16];
+        const unsigned logical = u32(mat->permutation + 4u * physical);
+        const uint32_t equalizer = u32(mat->equalizer + 4u * physical);
+        const int64_t product = (int64_t)accum[physical] * equalizer;
+        const int64_t value = unit <= fixed_units
+            ? round_even(product, fixed_units / unit)
+            : product * (int64_t)(unit / fixed_units);
+        out[logical] = bounded(value);
+    }
+}
+
+static int linear_block16(const matrix *mat, const activation *input, int32_t *out,
+                          const c12_qwen_device *device)
+{
+    const unsigned groups = mat->inputs / mat->group;
+    const unsigned panels = mat->outputs / 16;
+    const unsigned row_bytes = mat->group / 2;
+    uint64_t units[QWEN_INTER / 16];
+    const unsigned passes = mat->fine ? 2 : 1;
+    uint16_t coeffs[2 * (QWEN_INTER / 16) * (QWEN_HIDDEN / 64)];
+    int32_t accum[QWEN_INTER];
+    block16_coefficients(mat, input, units, coeffs);
 
     if (device && device->project_block16 && mat->panel_major) {
         if (device->project_block16(device->ctx, mat->packed, mat->fine, mat->outputs, mat->inputs,
@@ -455,17 +507,7 @@ static int linear_block16(const matrix *mat, const activation *input, int32_t *o
                 }
             }
     }
-    const uint64_t fixed_units = UINT64_C(1) << 40;
-    for (unsigned physical = 0; physical < mat->outputs; ++physical) {
-        const uint64_t unit = units[physical / 16];
-        const unsigned logical = u32(mat->permutation + 4u * physical);
-        const uint32_t equalizer = u32(mat->equalizer + 4u * physical);
-        const int64_t product = (int64_t)accum[physical] * equalizer;
-        const int64_t value = unit <= fixed_units
-            ? round_even(product, fixed_units / unit)
-            : product * (int64_t)(unit / fixed_units);
-        out[logical] = bounded(value);
-    }
+    block16_finish(mat, accum, units, out);
     return 0;
 }
 
@@ -697,7 +739,7 @@ static void unpack_cache(const qwen_reference *m, const uint8_t *record, int32_t
             head[i] = shift_cache(head[i], (int)(exponents[i] ^ 128u) - 128);
 }
 
-static void store_cache(qwen_reference *m, unsigned layer)
+static void store_cache(qwen_reference *m, unsigned layer, unsigned unpack_from)
 {
     const size_t head_bytes = c12_cache_record_size(m->kv_bits, m->kv4_outliers);
     const size_t slot = 2 * QWEN_KV_HEADS * head_bytes;
@@ -716,7 +758,7 @@ static void store_cache(qwen_reference *m, unsigned layer)
         memcpy(m->c12_capture->cache, record, slot);
         m->c12_capture->cache_bytes = slot;
     }
-    for (unsigned pos = 0; pos <= m->position; ++pos) {
+    for (unsigned pos = unpack_from; pos <= m->position; ++pos) {
         const uint8_t *p = start + pos * slot;
         for (unsigned h = 0; h < QWEN_KV_HEADS; ++h) {
             size_t index = (size_t)pos * KV_WIDTH + h * QWEN_HEAD_DIM;
@@ -733,19 +775,44 @@ enum { C12_LM_PANEL = 2048 };
 
 int c12_qwen_set_device(qwen_reference *m, const c12_qwen_device *ops, uint32_t layers)
 {
-    if (!m || !m->kv_bits || m->position || !ops || !ops->project || !ops->rope ||
+    if (!m || !m->kv_bits || m->position || !ops || !ops->project ||
         !layers || layers >> (QWEN_LAYERS + 1))
         return -1;
-    if (!m->c12_partials)
-        m->c12_partials = malloc((size_t)QWEN_HIDDEN * QWEN_INTER / m->group *
-                                 sizeof(*m->c12_partials));
-    if (layers >> QWEN_LAYERS && !m->c12_panel)
+    size_t partials = (size_t)QWEN_HIDDEN *
+        (ops->project_head && (layers >> QWEN_LAYERS) ? C16_HEAD_PANEL : QWEN_INTER) / m->group;
+    if (ops->project_rows)
+        partials = (size_t)QWEN_HIDDEN * QWEN_INTER * C16_PREFILL_ROWS / m->group *
+                   (ops->project_block16_rows ? 2u : 1u);
+    int32_t *buffer = realloc(m->c12_partials, partials * sizeof(*m->c12_partials));
+    if (!buffer)
+        return -1;
+    m->c12_partials = buffer;
+    const int copy_head = (layers >> QWEN_LAYERS) && !ops->project_head;
+    if (copy_head && !m->c12_panel)
         m->c12_panel = malloc((size_t)C12_LM_PANEL * QWEN_HIDDEN);
-    if (!m->c12_partials || (layers >> QWEN_LAYERS && !m->c12_panel))
+    if (copy_head && !m->c12_panel)
         return -1;
     m->c12_device = *ops;
     m->c12_hardware_layers = layers;
     return 0;
+}
+
+static void apply_partials(const matrix *mat, const activation *input, const int32_t *partials,
+                           unsigned first, unsigned count, int32_t *output)
+{
+    const unsigned groups = mat->inputs / mat->group;
+    for (unsigned c = 0; c < count; ++c) {
+        int64_t sum = 0;
+        for (unsigned g = 0; g < groups; ++g) {
+            const size_t at = (size_t)g * mat->outputs + first + c;
+            int64_t value = (int64_t)partials[(size_t)g * count + c] * u32(mat->scale + 4 * at);
+            sum += input->grouped ? rescale_q24(value, input->groups[g]) : value;
+        }
+        int64_t value = input->grouped ? sum : rescale_q24(sum, input->scale);
+        if (mat->bias)
+            value += s32(mat->bias + 4 * (first + c));
+        output[first + c] = bounded(value);
+    }
 }
 
 static int project_q16(qwen_reference *m, const matrix *mat, const activation *input,
@@ -762,34 +829,50 @@ static int project_q16(qwen_reference *m, const matrix *mat, const activation *i
     int vocab = layer == QWEN_LAYERS;
     const unsigned groups = mat->inputs / mat->group;
     const unsigned stride = mat->group * mat->bits / 8;
-    const unsigned panel = vocab ? C12_LM_PANEL : mat->outputs;
+    const int resident_head = vocab && m->c12_device.project_head;
+    const unsigned panel = vocab ? (resident_head ? C16_HEAD_PANEL : C12_LM_PANEL) : mat->outputs;
     for (unsigned first = 0; first < mat->outputs; first += panel) {
         unsigned count = mat->outputs - first;
         if (count > panel)
             count = panel;
         const uint8_t *packed = mat->packed;
-        if (vocab) {
+        if (vocab && !resident_head) {
             for (unsigned g = 0; g < groups; ++g)
                 memcpy(m->c12_panel + (size_t)g * count * stride,
                        packed + ((size_t)g * mat->outputs + first) * stride, (size_t)count * stride);
             packed = m->c12_panel;
         }
-        if (m->c12_device.project(m->c12_device.ctx, packed, count, mat->inputs,
+        if (resident_head ?
+            m->c12_device.project_head(m->c12_device.ctx, mat->packed, first, count, mat->outputs,
+                                       mat->group, mat->bits, input->a8, m->c12_partials) :
+            m->c12_device.project(m->c12_device.ctx, packed, count, mat->inputs,
                                   mat->group, mat->bits, input->a8, m->c12_partials))
             return -1;
-        for (unsigned c = 0; c < count; ++c) {
-            int64_t sum = 0;
-            for (unsigned g = 0; g < groups; ++g) {
-                const size_t at = (size_t)g * mat->outputs + first + c;
-                int64_t value = (int64_t)m->c12_partials[(size_t)g * count + c] * u32(mat->scale + 4 * at);
-                sum += input->grouped ? rescale_q24(value, input->groups[g]) : value;
-            }
-            int64_t value = input->grouped ? sum : rescale_q24(sum, input->scale);
-            if (mat->bias)
-                value += s32(mat->bias + 4 * (first + c));
-            output[first + c] = bounded(value);
-        }
+        apply_partials(mat, input, m->c12_partials, first, count, output);
     }
+    return 0;
+}
+
+static int project_parallel(qwen_reference *m, const activation *input, unsigned layer,
+                            const matrix *const *weights, int32_t *const *outputs, unsigned count)
+{
+    if (!(m->c12_hardware_layers & (UINT32_C(1) << layer)) || !m->c12_device.project_parallel) {
+        for (unsigned i = 0; i < count; ++i)
+            if (project_q16(m, weights[i], input, outputs[i], layer))
+                return -1;
+        return 0;
+    }
+    valence_raw_projection jobs[3];
+    int32_t *buffer = m->c12_partials;
+    for (unsigned i = 0; i < count; ++i) {
+        const matrix *mat = weights[i];
+        jobs[i] = (valence_raw_projection){mat->packed, buffer, mat->outputs, mat->bits};
+        buffer += mat->outputs * (QWEN_HIDDEN / m->group);
+    }
+    if (m->c12_device.project_parallel(m->c12_device.ctx, jobs, count, m->group, input->a8))
+        return -1;
+    for (unsigned i = 0; i < count; ++i)
+        apply_partials(weights[i], input, jobs[i].partials, 0, jobs[i].rows, outputs[i]);
     return 0;
 }
 
@@ -811,12 +894,25 @@ static int add_residual(qwen_reference *m, unsigned layer)
     return 0;
 }
 
+static int emit_logits(qwen_reference *m, activation *input)
+{
+    rms(m->x, m->rms, m->norm);
+    quantize_q16(m, input, m->norm, QWEN_HIDDEN);
+    int32_t *physical = m->head_logits ? m->head_logits : m->logits;
+    if (project_q16(m, &m->embedding, input, physical, QWEN_LAYERS))
+        return -1;
+    if (m->head_order)
+        for (unsigned i = 0; i < QWEN_VOCAB; ++i)
+            m->logits[u32(m->head_order + 4u * i)] = physical[i];
+    return 0;
+}
+
 static const int32_t *process_q16(qwen_reference *m, unsigned token, int logits)
 {
     if (!m || token >= QWEN_VOCAB || m->position >= m->context)
         return NULL;
     activation input;
-    embed(&m->embedding, token, m->x);
+    embed(&m->embedding, m->head_inverse ? m->head_inverse[token] : token, m->x);
     const uint8_t *rope = m->rope + (size_t)m->position * QWEN_HEAD_DIM * 4;
     for (unsigned i = 0; i < QWEN_LAYERS; ++i) {
         const block *b = m->layer + i;
@@ -824,13 +920,13 @@ static const int32_t *process_q16(qwen_reference *m, unsigned token, int logits)
         if (i == 0 && m->vectors)
             captured_norm(m->vectors, 0, m->x, m->norm);
         quantize_q16(m, &input, m->norm, QWEN_HIDDEN);
-        if (project_q16(m, &b->q, &input, m->q, i) ||
-            project_q16(m, &b->k, &input, m->k, i) ||
-            project_q16(m, &b->v, &input, m->v, i))
+        const matrix *const qkv[] = {&b->q, &b->k, &b->v};
+        int32_t *const outputs[] = {m->q, m->k, m->v};
+        if (project_parallel(m, &input, i, qkv, outputs, 3))
             return NULL;
         if (i == 0 && m->capture)
             captured_qk(m->capture->before, m->q, m->k);
-        if (m->c12_hardware_layers & (UINT32_C(1) << i)) {
+        if (m->c12_device.rope && (m->c12_hardware_layers & (UINT32_C(1) << i))) {
             if (m->c12_device.rope(m->c12_device.ctx, m->q, m->k, rope))
                 return NULL;
         } else {
@@ -844,7 +940,7 @@ static const int32_t *process_q16(qwen_reference *m, unsigned token, int logits)
         int32_t *keys = m->keys;
         int32_t *values = m->values;
         if (m->kv_bits) {
-            store_cache(m, i);
+            store_cache(m, i, 0);
         } else {
             keys += (size_t)i * m->context * KV_WIDTH;
             values += (size_t)i * m->context * KV_WIDTH;
@@ -880,12 +976,8 @@ static const int32_t *process_q16(qwen_reference *m, unsigned token, int logits)
         if (m->c12_capture && m->c12_layer == i)
             memcpy(m->c12_capture->hidden, m->x, sizeof(m->x));
     }
-    if (logits) {
-        rms(m->x, m->rms, m->norm);
-        quantize_q16(m, &input, m->norm, QWEN_HIDDEN);
-        if (project_q16(m, &m->embedding, &input, m->logits, QWEN_LAYERS))
-            return NULL;
-    }
+    if (logits && emit_logits(m, &input))
+        return NULL;
     ++m->position;
     return m->logits;
 }
@@ -901,6 +993,168 @@ const int32_t *qwen_reference_step(qwen_reference *m, unsigned token)
         return step_native(m, token);
 #endif
     return process_q16(m, token, 1);
+}
+
+typedef struct {
+    activation inputs[C16_PREFILL_ROWS];
+    int8_t grouped[C16_PREFILL_ROWS * QWEN_INTER];
+    int32_t state[C16_PREFILL_ROWS][QWEN_HIDDEN];
+    int32_t norm[C16_PREFILL_ROWS * QWEN_HIDDEN], q[C16_PREFILL_ROWS * QWEN_HIDDEN];
+    int32_t k[C16_PREFILL_ROWS * KV_WIDTH], v[C16_PREFILL_ROWS * KV_WIDTH];
+    int32_t gate[C16_PREFILL_ROWS * QWEN_INTER], up[C16_PREFILL_ROWS * QWEN_INTER];
+} prefill_work;
+
+static int block16_prefill(qwen_reference *m, const matrix *mat, prefill_work *work,
+                            int32_t *output, unsigned rows)
+{
+    if (m->c12_device.project_block16_rows(m->c12_device.ctx, mat->packed, mat->fine, mat->outputs,
+                                          mat->group, rows, work->grouped, m->c12_partials))
+        return -1;
+    const unsigned chunks = (mat->inputs / mat->group) * (mat->fine ? 2 : 1);
+    for (unsigned row = 0; row < rows; ++row) {
+        uint64_t units[QWEN_INTER / 16];
+        uint16_t coeffs[2 * (QWEN_INTER / 16) * (QWEN_HIDDEN / 64)];
+        int32_t accum[QWEN_INTER] = {0};
+        block16_coefficients(mat, work->inputs + row, units, coeffs);
+        for (unsigned panel = 0; panel < mat->outputs / 16; ++panel)
+            for (unsigned chunk = 0; chunk < chunks; ++chunk) {
+                const unsigned idx = panel * chunks + chunk;
+                const int32_t *dot = m->c12_partials + (idx * rows + row) * 16;
+                for (unsigned i = 0; i < 16; ++i)
+                    accum[panel * 16 + i] += (int32_t)round_even((int64_t)dot[i] * coeffs[idx], 256);
+            }
+        block16_finish(mat, accum, units, output + row * mat->outputs);
+    }
+    return 0;
+}
+
+static int project_prefill(qwen_reference *m, const matrix *mat, prefill_work *work,
+                            int32_t *output, unsigned layer, unsigned rows)
+{
+    const unsigned n = mat->outputs, g = m->group, groups = mat->inputs / g;
+    if (rows == 1 || !(m->c12_hardware_layers & (UINT32_C(1) << layer)) ||
+        (mat->permutation && !m->c12_device.project_block16_rows)) {
+        for (unsigned row = 0; row < rows; ++row)
+            if (project_q16(m, mat, work->inputs + row, output + row * n, layer))
+                return -1;
+        return 0;
+    }
+    for (unsigned i = 0; i < groups; ++i)
+        for (unsigned row = 0; row < rows; ++row)
+            memcpy(work->grouped + (i * rows + row) * g, work->inputs[row].a8 + i * g, g);
+    if (mat->permutation)
+        return block16_prefill(m, mat, work, output, rows);
+    if (m->c12_device.project_rows(m->c12_device.ctx, mat->packed, n, mat->inputs, g,
+                                   mat->bits, rows, work->grouped, m->c12_partials))
+        return -1;
+    for (unsigned row = 0; row < rows; ++row) {
+        const activation *input = work->inputs + row;
+        for (unsigned c = 0; c < n; ++c) {
+            const unsigned first = c / C16_GROUPED_COLS * C16_GROUPED_COLS;
+            const unsigned width = n - first < C16_GROUPED_COLS ? n - first : C16_GROUPED_COLS;
+            const unsigned at = first * rows + row * width + c - first;
+            int64_t sum = 0;
+            for (unsigned i = 0; i < groups; ++i) {
+                const int64_t value = (int64_t)m->c12_partials[i * n * rows + at] *
+                                      u32(mat->scale + 4u * (i * n + c));
+                sum += input->grouped ? rescale_q24(value, input->groups[i]) : value;
+            }
+            if (!input->grouped)
+                sum = rescale_q24(sum, input->scale);
+            if (mat->bias)
+                sum += s32(mat->bias + 4u * c);
+            output[row * n + c] = bounded(sum);
+        }
+    }
+    return 0;
+}
+
+static int prefill_tile(qwen_reference *m, prefill_work *work, const uint32_t *tokens, unsigned rows)
+{
+    const unsigned start = m->position;
+    for (unsigned row = 0; row < rows; ++row) {
+        const unsigned id = m->head_inverse ? m->head_inverse[tokens[row]] : tokens[row];
+        embed(&m->embedding, id, work->state[row]);
+    }
+    for (unsigned i = 0; i < QWEN_LAYERS; ++i) {
+        const block *b = m->layer + i;
+        for (unsigned row = 0; row < rows; ++row) {
+            rms(work->state[row], b->rms_in, (work->norm + row * QWEN_HIDDEN));
+            quantize_q16(m, work->inputs + row, (work->norm + row * QWEN_HIDDEN), QWEN_HIDDEN);
+        }
+        if (project_prefill(m, &b->q, work, work->q, i, rows) ||
+            project_prefill(m, &b->k, work, work->k, i, rows) ||
+            project_prefill(m, &b->v, work, work->v, i, rows))
+            return -1;
+        for (unsigned row = 0; row < rows; ++row) {
+            m->position = start + row;
+            const uint8_t *rope = m->rope + (size_t)m->position * QWEN_HEAD_DIM * 4;
+            memcpy(m->q, (work->q + row * QWEN_HIDDEN), sizeof(m->q));
+            memcpy(m->k, (work->k + row * KV_WIDTH), sizeof(m->k));
+            memcpy(m->v, (work->v + row * KV_WIDTH), sizeof(m->v));
+            rotate(m->q, QWEN_HEADS, rope);
+            rotate(m->k, QWEN_KV_HEADS, rope);
+            store_cache(m, i, row ? m->position : 0);
+            causal_attention(m, m->keys, m->values);
+            quantize_q16(m, work->inputs + row, m->mix, QWEN_HIDDEN);
+        }
+        if (project_prefill(m, &b->o, work, work->norm, i, rows))
+            return -1;
+        for (unsigned row = 0; row < rows; ++row) {
+            for (unsigned d = 0; d < QWEN_HIDDEN; ++d)
+                work->state[row][d] = bounded((int64_t)work->state[row][d] + (work->norm + row * QWEN_HIDDEN)[d]);
+            rms(work->state[row], b->rms_ffn, (work->norm + row * QWEN_HIDDEN));
+            quantize_q16(m, work->inputs + row, (work->norm + row * QWEN_HIDDEN), QWEN_HIDDEN);
+        }
+        if (project_prefill(m, &b->gate, work, work->gate, i, rows) ||
+            project_prefill(m, &b->up, work, work->up, i, rows))
+            return -1;
+        for (unsigned row = 0; row < rows; ++row) {
+            swiglu((work->gate + row * QWEN_INTER), (work->up + row * QWEN_INTER), m->exp);
+            quantize_q16(m, work->inputs + row, (work->gate + row * QWEN_INTER), QWEN_INTER);
+        }
+        if (project_prefill(m, &b->down, work, work->norm, i, rows))
+            return -1;
+        for (unsigned row = 0; row < rows; ++row)
+            for (unsigned d = 0; d < QWEN_HIDDEN; ++d)
+                work->state[row][d] = bounded((int64_t)work->state[row][d] + (work->norm + row * QWEN_HIDDEN)[d]);
+        if (m->c12_capture && m->c12_layer == i)
+            memcpy(m->c12_capture->hidden, work->state[rows - 1], sizeof(m->x));
+    }
+    memcpy(m->x, work->state[rows - 1], sizeof(m->x));
+    m->position = start + rows;
+    return 0;
+}
+
+const int32_t *c16_qwen_prefill(qwen_reference *m, const uint32_t *tokens, unsigned count)
+{
+    if (!m || !tokens || !count || count > m->context - m->position)
+        return NULL;
+    if (!m->c12_device.project_rows || m->capture || m->vectors || count == 1) {
+        for (unsigned i = 0; i + 1 < count; ++i)
+#ifdef YSYX_C11B_NATIVE
+            if (qwen_reference_advance(m, tokens[i]))
+#else
+            if (!process_q16(m, tokens[i], 0))
+#endif
+                return NULL;
+        return qwen_reference_step(m, tokens[count - 1]);
+    }
+    for (unsigned i = 0; i < count; ++i)
+        if (tokens[i] >= QWEN_VOCAB)
+            return NULL;
+    prefill_work *work = malloc(sizeof(*work));
+    if (!work)
+        return NULL;
+    int failed = 0;
+    for (unsigned at = 0; at < count && !failed; at += C16_PREFILL_ROWS) {
+        const unsigned rows = count - at < C16_PREFILL_ROWS ? count - at : C16_PREFILL_ROWS;
+        failed = prefill_tile(m, work, tokens + at, rows);
+    }
+    if (!failed)
+        failed = emit_logits(m, work->inputs);
+    free(work);
+    return failed ? NULL : m->logits;
 }
 
 int qwen_reference_lm_input(const qwen_reference *m, int8_t out[QWEN_HIDDEN],

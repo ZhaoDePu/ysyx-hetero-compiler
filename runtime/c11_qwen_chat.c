@@ -25,7 +25,7 @@ static const char *const bench_prompts[] = {
 typedef struct {
     const char *weights, *tokenizer, *mode, *backend, *csv, *plain, *chat, *prompt;
     const char *logits_path;
-    unsigned steps, kv_bits;
+    unsigned steps, min_steps, kv_bits;
     int turbo, trace_steps;
 #ifdef YSYX_C11B_NATIVE
     const char *golden;
@@ -65,36 +65,41 @@ static int chat_prompt(const qwen_bpe *bpe, const char *prompt, int first, uint3
     return qwen_bpe_encode(bpe, text, ids, MAX_IDS);
 }
 
-static unsigned best(const int32_t *logits)
+static unsigned best(const int32_t *logits, int suppress_stop)
 {
     unsigned id = 0;
     for (unsigned i = 1; i < QWEN_VOCAB; ++i)
-        if (logits[i] > logits[id])
+        if ((!suppress_stop || (i != IM_END && i != END_OF_TEXT)) && logits[i] > logits[id])
             id = i;
     return id;
+}
+
+static int dump_logits(FILE *file, const int32_t *logits)
+{
+    if (!file)
+        return 0;
+    uint8_t block[4096];
+    for (unsigned first = 0; first < QWEN_VOCAB; first += sizeof(block) / 4) {
+        unsigned count = QWEN_VOCAB - first;
+        if (count > sizeof(block) / 4)
+            count = sizeof(block) / 4;
+        for (unsigned j = 0; j < count; ++j) {
+            const uint32_t value = (uint32_t)logits[first + j];
+            for (unsigned i = 0; i < 4; ++i)
+                block[j * 4 + i] = (uint8_t)(value >> (8 * i));
+        }
+        if (fwrite(block, 4, count, file) != count)
+            return -1;
+    }
+    return 0;
 }
 
 static const int32_t *step(session *chat, unsigned id)
 {
     const int32_t *result = qwen_reference_step(chat->model, id);
-    if (result) {
-        ++chat->position;
-        if (chat->logits_dump) {
-            uint8_t block[4096];
-            for (unsigned first = 0; first < QWEN_VOCAB; first += sizeof(block) / 4) {
-                unsigned count = QWEN_VOCAB - first;
-                if (count > sizeof(block) / 4)
-                    count = sizeof(block) / 4;
-                for (unsigned j = 0; j < count; ++j) {
-                    const uint32_t value = (uint32_t)result[first + j];
-                    for (unsigned i = 0; i < 4; ++i)
-                        block[j * 4 + i] = (uint8_t)(value >> (8 * i));
-                }
-                if (fwrite(block, 4, count, chat->logits_dump) != count)
-                    return NULL;
-            }
-        }
-    }
+    if (!result || dump_logits(chat->logits_dump, result))
+        return NULL;
+    ++chat->position;
     return result;
 }
 
@@ -138,18 +143,25 @@ static int turn(session *chat, const char *prompt, const options *o, FILE *csv)
     }
 #endif
     const double start = seconds();
+#ifdef YSYX_C11B_NATIVE
+    logits = c16_qwen_prefill(chat->model, ids, (unsigned)count);
+    if (!logits || dump_logits(chat->logits_dump, logits))
+        return -1;
+    chat->position += (unsigned)count;
+#else
     for (int i = 0; i + 1 < count; ++i)
         if (advance(chat, ids[i]))
             return -1;
     logits = step(chat, ids[count - 1]);
     if (!logits)
         return -1;
+#endif
     const double prefill = seconds() - start;
 
     const double begin = seconds();
     unsigned generated = 0;
     for (; generated < limit; ++generated) {
-        const unsigned id = best(logits);
+        const unsigned id = best(logits, generated < o->min_steps);
         if (id == IM_END || id == END_OF_TEXT)
             break;
         size_t bytes = 0;
@@ -302,13 +314,16 @@ static int parse(options *o, int argc, char **argv)
             unsigned long n = strtoul(value, &end, 10);
             if (errno || *end || !n || n > 512)
                 return -1;
-            o->steps = (unsigned)n;
+            if (!strcmp(key, "--min-new-tokens"))
+                o->min_steps = (unsigned)n;
+            else
+                o->steps = (unsigned)n;
         } else {
             return -1;
         }
     }
     const int encode = !!o->plain + !!o->chat;
-    return !o->tokenizer || encode > 1 || (!encode && !o->weights) ||
+    return o->min_steps > o->steps || !o->tokenizer || encode > 1 || (!encode && !o->weights) ||
            (o->prompt && (encode || strcmp(o->mode, "chat"))) ||
 #ifdef YSYX_C11B_NATIVE
            (strcmp(o->backend, "cpu") && strcmp(o->backend, "z15") &&
@@ -471,7 +486,7 @@ int main(int argc, char **argv)
 #else
         "ysyx_qwen_chat --weights FILE --tokenizer FILE [--backend sim] "
 #endif
-        "[--mode chat|bench] [--prompt TEXT] [--max-new-tokens N] [--trace-steps on|off] [--csv FILE] [--dump-logits FILE]\n"
+        "[--mode chat|bench] [--prompt TEXT] [--max-new-tokens N] [--min-new-tokens N] [--trace-steps on|off] [--csv FILE] [--dump-logits FILE]\n"
         "--tokenizer FILE --encode TEXT|--encode-chat PROMPT\n";
     options o;
     if (argc == 2 && !strcmp(argv[1], "--help")) {
