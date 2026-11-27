@@ -1,4 +1,4 @@
-#include "../include/ysyx_yolo26n_api.h"
+#include "yolo26n_target.h"
 
 #include <ctype.h>
 #include <errno.h>
@@ -100,12 +100,16 @@ static void print_result(const ysyx_det_t *d, int count, const ysyx_perf_t *p, d
 int main(int argc, char **argv)
 {
     const char *path = NULL;
-    int sim = 0, ppm = 0;
+    int sim = 0, ppm = 0, phase17 = 0;
     float threshold = 0.25f;
     double npu_mhz = 0.0;
     for (int i = 2; i < argc; ++i) {
         if (!strcmp(argv[i], "--sim")) {
             sim = 1;
+        } else if (!strcmp(argv[i], "--target") && i + 1 < argc && !phase17) {
+            if (strcmp(argv[++i], "p17"))
+                goto usage;
+            phase17 = 1;
         } else if ((!strcmp(argv[i], "--rgb") || !strcmp(argv[i], "--ppm")) && i + 1 < argc && !path) {
             ppm = !strcmp(argv[i], "--ppm");
             path = argv[++i];
@@ -134,7 +138,8 @@ int main(int argc, char **argv)
         free(rgb);
         return 1;
     }
-    ysyx_yolo26n_ctx_t *ctx = ysyx_yolo26n_open(argv[1], sim);
+    ysyx_yolo26n_ctx_t *ctx = phase17 ? ysyx_yolo26n_open_p17(argv[1], sim) :
+                                       ysyx_yolo26n_open(argv[1], sim);
     if (!ctx) {
         perror("open YOLO26n");
         free(rgb);
@@ -153,7 +158,7 @@ int main(int argc, char **argv)
     return count < 0 ? 1 : 0;
 
 usage:
-    fprintf(stderr, "usage: %s MODEL.yhb (--rgb RGB320 | --ppm FRAME.ppm) [--conf FLOAT] [--npu-mhz MHz] [--sim]\n",
+    fprintf(stderr, "usage: %s MODEL (--rgb RGB320 | --ppm FRAME.ppm) [--conf FLOAT] [--npu-mhz MHz] [--sim] [--target p17]\n",
             argv[0]);
     return 2;
 }

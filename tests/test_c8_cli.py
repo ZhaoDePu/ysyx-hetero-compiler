@@ -12,14 +12,22 @@ ROOT = Path(__file__).resolve().parents[1]
 COUNTER_FIXTURE = r"""
 #include "ysyx_yolo26n_api.h"
 
-struct ysyx_yolo26n_ctx { int sim; };
+struct ysyx_yolo26n_ctx { int sim, phase17; };
 static struct ysyx_yolo26n_ctx ctx;
 
 ysyx_yolo26n_ctx_t *ysyx_yolo26n_open(const char *path, int sim)
 {
     (void)path;
     ctx.sim = sim;
+    ctx.phase17 = 0;
     return &ctx;
+}
+
+ysyx_yolo26n_ctx_t *ysyx_yolo26n_open_p17(const char *path, int sim)
+{
+    ysyx_yolo26n_ctx_t *handle = ysyx_yolo26n_open(path, sim);
+    handle->phase17 = 1;
+    return handle;
 }
 
 int ysyx_yolo26n_infer_rgb320(ysyx_yolo26n_ctx_t *handle, const uint8_t *rgb,
@@ -30,7 +38,7 @@ int ysyx_yolo26n_infer_rgb320(ysyx_yolo26n_ctx_t *handle, const uint8_t *rgb,
     (void)detections;
     (void)max_dets;
     *perf = (ysyx_perf_t){
-        .wall_ticks = 25000000,
+        .wall_ticks = handle->phase17 ? 9129685 : 25000000,
         .hardware_counters_valid = !handle->sim,
         .io_and_compute_ms = 250.0,
         .estimated_ms_at_125_mhz = 200.0,
@@ -102,6 +110,12 @@ class YoloCliClockTests(unittest.TestCase):
         self.assertIsNone(perf["estimated_ms_at_npu_mhz"])
         self.assertIsNone(perf["estimated_fps_at_npu_mhz"])
         self.assertIsNone(perf["estimated_fps_at_125_mhz"])
+
+    def test_explicit_phase17_uses_its_own_backend(self):
+        perf = self.result("--target", "p17", "--sim")["perf"]
+        self.assertEqual(perf["wall_ticks"], 9129685)
+        self.assertFalse(perf["hardware_counters_valid"])
+        self.assertEqual(self.invoke("--target", "old").returncode, 2)
 
     def test_invalid_frequency_fails_with_usage(self):
         for options in [("--npu-mhz",), *[("--npu-mhz", value) for value in

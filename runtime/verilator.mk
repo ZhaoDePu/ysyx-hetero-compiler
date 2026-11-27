@@ -21,6 +21,7 @@ $(OUT)/ysyx_run: $(OBJECTS) $(RTL_OBJECTS)
 	mv -f -- "$@.tmp" "$@"
 
 $(OUT)/yolo26n_post.o $(OUT)/ysyx_yolo26n_api.o $(OUT)/ysyx_yolo26n_cli.o: yolo26n_post.h ../include/ysyx_yolo26n_api.h
+$(OUT)/ysyx_yolo26n_api.o $(OUT)/ysyx_yolo26n_cli.o: yolo26n_target.h
 $(OUT)/yolo26n_post.o: CFLAGS += -ffp-contract=off
 
 $(OUT)/ysyx_yolo26n_cli: $(addprefix $(OUT)/,ysyx_yolo26n_cli.o ysyx_yolo26n_api.o yolo26n_post.o ysyx_rt.o hal_linux_uio.o hal_verilator_z15.o) $(RTL_OBJECTS)

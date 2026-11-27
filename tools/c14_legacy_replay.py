@@ -11,7 +11,8 @@ from runtime import verify_z15_abi
 from tools import verify_bundle, verify_gpu
 
 
-PRIORITY = ["nice", "-n", "15", "ionice", "-c3"]
+# The resume script applies nice/ionice to this process. Children inherit both.
+PRIORITY = []
 
 
 def memory_available():
@@ -30,14 +31,10 @@ def memory_available():
     return available
 
 
-def guard(root):
-    deadline = int((root / "memory-deadline").read_text())
-    while (value := memory_available()) < (6 << 30):
-        remaining = deadline - int(time.time())
-        print(f"memory wait legacy effective_available_B={value} remaining_s={remaining}", flush=True)
-        if remaining <= 0:
-            raise RuntimeError("memory gate timed out during legacy replay")
-        time.sleep(min(90, remaining))
+def guard(_root=None):
+    while (value := memory_available()) < (8 << 30):
+        print(f"memory wait legacy effective_available_B={value}", flush=True)
+        time.sleep(60)
 
 
 def yhb(root, native, simulator):
@@ -47,7 +44,7 @@ def yhb(root, native, simulator):
 
     def checked(runner, arguments, log):
         if runner == simulator and "--inspect" not in arguments:
-            guard(root)
+            guard()
         return run(runner, arguments, log)
 
     verify_z15_abi.run = checked
@@ -67,7 +64,7 @@ def o4(root, models):
     execute = verify_bundle._execute
 
     def replay(command):
-        guard(root)
+        guard()
         if len(command) > 3 and str(command[2]).endswith("/verify_gpu.py"):
             params = dict(zip(command[3::2], command[4::2], strict=True))
             print(verify_gpu.simulate(Path(params["--bundle"]), params["--stage"],

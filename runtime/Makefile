@@ -31,6 +31,7 @@ check: $(OUT)/test-z15-abi
 
 $(OUT)/yolo26n_post.o $(OUT)/ysyx_yolo26n_api.o $(OUT)/ysyx_yolo26n_cli.o: yolo26n_post.h ../include/ysyx_yolo26n_api.h
 $(OUT)/hal_reference_c6.o $(OUT)/ysyx_yolo26n_api.o: hal_reference_c6.h
+$(OUT)/ysyx_yolo26n_api.o $(OUT)/ysyx_yolo26n_cli.o: yolo26n_target.h
 $(OUT)/yolo26n_post.o: CFLAGS += -ffp-contract=off
 
 $(OUT)/libysyx_yolo26n.a: $(addprefix $(OUT)/,ysyx_yolo26n_api.o yolo26n_post.o ysyx_rt.o hal_linux_uio.o hal_reference_c6.o)

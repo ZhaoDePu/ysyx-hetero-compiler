@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 #include "yolo26n_post.h"
+#include "yolo26n_target.h"
 #include "hal_reference_c6.h"
 #include "c10_session.h"
 #include "z15_regs.h"
@@ -93,7 +94,19 @@ static int open_buffers(ysyx_yolo26n_ctx_t *ctx)
     return 0;
 }
 
-ysyx_yolo26n_ctx_t *ysyx_yolo26n_open(const char *yhb_path, int use_mock_backend)
+static int fpga_operating(void)
+{
+    char state[32];
+    FILE *stream = fopen("/sys/class/fpga_manager/fpga0/state", "r");
+    if (!stream)
+        return 0;
+    const int operating = fgets(state, sizeof(state), stream) &&
+                          !strcmp(state, "operating\n");
+    fclose(stream);
+    return operating;
+}
+
+static ysyx_yolo26n_ctx_t *open_target(const char *yhb_path, int use_mock_backend, int phase17)
 {
     if (!yhb_path) {
         errno = EINVAL;
@@ -106,6 +119,13 @@ ysyx_yolo26n_ctx_t *ysyx_yolo26n_open(const char *yhb_path, int use_mock_backend
     size_t size = 0;
     const char *error = NULL;
     ctx->image = load_program(yhb_path, &size);
+    if (phase17) {
+        if (!ctx->image || size < 4u || memcmp(ctx->image, "YHP1", 4))
+            goto fail;
+        /* The marker selects the Phase 17 entry point. The inner YHB CRC
+           covers the standard magic restored in this private buffer. */
+        memcpy(ctx->image, "YHB1", 4);
+    }
     if (!ctx->image || ysyx_program_open(ctx->image, size, &ctx->program, &error)
             || ysyx_program_target(ctx->program) != YSYX_TARGET_Z15_BALANCED)
         goto fail;
@@ -120,14 +140,17 @@ ysyx_yolo26n_ctx_t *ysyx_yolo26n_open(const char *yhb_path, int use_mock_backend
             return ctx;
         failure = EIO;
 #else
-        if (!ysyx_hal_reference_c6_open(&ctx->hal, &error)) {
+        const int rc = phase17 ? ysyx_hal_reference_p17_open(&ctx->hal, &error) :
+                                 ysyx_hal_reference_c6_open(&ctx->hal, &error);
+        if (!rc) {
             ctx->software_reference = 1;
             return ctx;
         }
         failure = ENOMEM;
 #endif
     } else {
-        if (!ysyx_hal_linux_open(&ctx->hal, getenv("YSYX_CONTROL_UIO"), getenv("YSYX_DMA_UIO"), &error))
+        if ((!phase17 || fpga_operating()) &&
+            !ysyx_hal_linux_open(&ctx->hal, getenv("YSYX_CONTROL_UIO"), getenv("YSYX_DMA_UIO"), &error))
             return ctx;
         failure = ENODEV;
     }
@@ -135,6 +158,16 @@ fail:
     ysyx_yolo26n_close(ctx);
     errno = failure;
     return NULL;
+}
+
+ysyx_yolo26n_ctx_t *ysyx_yolo26n_open(const char *path, int use_mock_backend)
+{
+    return open_target(path, use_mock_backend, 0);
+}
+
+ysyx_yolo26n_ctx_t *ysyx_yolo26n_open_p17(const char *path, int use_reference)
+{
+    return open_target(path, use_reference, 1);
 }
 
 static float little_float(const uint8_t *b)

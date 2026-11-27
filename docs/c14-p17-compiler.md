@@ -18,4 +18,6 @@ S1 在相邻通道中搜索共享尺度。S2 额外迁移行尺度并聚类通�
 
 ## 验证
 
-tools/c14_p17_smoke.sh 只在专属内存盘生成派生源码与 Verilator 构建。Yosys 内嵌路径换算到发布路径后核对派生 RTL 的 SHA-256。编译和回放串行编排，编译最多两个工作任务。主机与 cgroup 的有效可用内存均需达到 6 GiB，低于门槛按 90 秒间隔轮询，等待期限为 180 分钟。
+tools/c14_p17_smoke.sh 只在专属内存盘生成派生源码与 Verilator 构建。Yosys 内嵌路径换算到发布路径后核对派生 RTL 的 SHA-256。编译和回放串行编排，编译使用 -j 4，Verilator 使用 --threads 1。每次启动前检查主机及 cgroup 有效可用内存至少 8 GiB，不足时每 60 秒重查。归档已有通过的长回放时，使用 --legacy-only 续跑旧 YHB 与 O4，或用 --o4-only 补跑 O4。
+
+C14 部署包使用 python3 -B -m tools.c14_export_yolo COMPILED_PLAN MODEL.yhp 导出。YHP1 标志使旧 YHB1 入口拒绝误装。x86-64 CLI 通过 --target p17 --sim 选择 C99 Phase 17 软件参考。板端 CLI 通过 --target p17 使用已由操作员验证的 Phase 17 PL，公开 C99 头文件和旧入口保持原有格式。Phase 17 与早期板壳共用版本标识，选择目标前须确认已加载 PL 的身份。
