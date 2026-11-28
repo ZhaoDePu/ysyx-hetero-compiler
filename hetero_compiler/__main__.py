@@ -11,7 +11,9 @@ def main():
     parser = argparse.ArgumentParser(description="Compile an integer graph for YSYX hardware.")
     parser.add_argument("--graph", required=True, type=Path)
     parser.add_argument("--format", choices=("auto", "onnx", "json", "legacy"), default="auto")
-    parser.add_argument("--profile", required=True, help="Built-in target name or profile JSON path")
+    parser.add_argument("--profile", help="Built-in target name or profile JSON path")
+    parser.add_argument("--target", choices=("p17", "p19a", "p19b-g11"),
+                        help="Select an explicit target or an offline P19 preview")
     parser.add_argument("--out", required=True, type=Path, help="New directory for the executable bundle")
     parser.add_argument("-O", dest="optimization_level", type=int, choices=(3,), default=3,
                         help="Default optimization level; selectively disable passes with flags")
@@ -35,6 +37,17 @@ def main():
                         help="Use native VPU fusion on optimized Z15 graphs")
     parser.add_argument("--vpu-attention", choices=("exact", "fast"), default="exact")
     args = parser.parse_args()
+    if args.target in ("p19a", "p19b-g11"):
+        if args.profile or args.emit_binary is True or args.pipeline_tiles:
+            parser.error("P19 preview uses its own plan format without --profile, --emit-yhb or --pipeline-tiles")
+        from .p19_preview import compile_preview
+        try:
+            compile_preview(args.target, args.graph, args.out)
+        except (ValueError, TypeError, KeyError, OSError) as exc:
+            parser.exit(2, f"preview error: {exc}\\n")
+        return
+    if not args.profile:
+        parser.error("--profile is required for the existing compilation path")
     if args.pipeline_scheduler and not args.pipeline_tiles:
         parser.error("--pipeline-scheduler requires --pipeline-tiles")
     model_format = args.format
