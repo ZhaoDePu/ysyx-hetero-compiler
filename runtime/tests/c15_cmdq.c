@@ -100,6 +100,43 @@ static int resident_tail_test(const ysyx_hal_t *hal)
     return 0;
 }
 
+static int capability_read(void *ctx, uint32_t reg, uint32_t *value)
+{
+    if (reg == Z15_EXT_VERSION)
+        *value = Z15_P18_VERSION;
+    else if (reg == Z15_CAP_FLAGS)
+        *value = *(const uint32_t *)ctx;
+    else
+        return -1;
+    return 0;
+}
+
+static int phase19_selection(void)
+{
+    uint32_t capabilities = 0x1f;
+    const ysyx_hal_t hal = {.ctx = &capabilities, .mmio_read32 = capability_read};
+    CHECK(!setenv("YSYX_EXEC_MODE", "p19a", 1));
+    CHECK(z15_cmdq_select(&hal) < 0 && !z15_cmdq_p19(&hal));
+    capabilities = 0x7f;
+    CHECK(z15_cmdq_select(&hal) == 1 && z15_cmdq_p19(&hal));
+    CHECK(!setenv("YSYX_EXEC_MODE", "auto", 1));
+    CHECK(z15_cmdq_select(&hal) == 1 && !z15_cmdq_p19(&hal));
+    const char *forced = "cmdq";
+    CHECK(!setenv("YSYX_EXEC_MODE", forced, 1));
+    z15_cmdq_plan *plan = z15_cmdq_create();
+    CHECK(plan);
+    CHECK(z15_cmdq_add(plan, CMDQ_CONSUME, 0, 0));
+    z15_cmdq_allow_p19(plan);
+    CHECK(!z15_cmdq_add(plan, CMDQ_RESET, 7, 0));
+    CHECK(!z15_cmdq_add(plan, CMDQ_CONSUME, 0, 0));
+    CHECK(z15_cmdq_add(plan, CMDQ_SIGNAL, 8, 0));
+    CHECK(z15_cmdq_add(plan, CMDQ_SIGNAL, 5, 1));
+    CHECK(!z15_cmdq_add(plan, CMDQ_WRITE, Z15_TMA_SRAM, 0));
+    z15_cmdq_destroy(plan);
+    puts("C18 Phase 19A capabilities and barrier word validation PASS");
+    return 0;
+}
+
 int main(void)
 {
     ysyx_hal_t hal;
@@ -143,6 +180,7 @@ int main(void)
     CHECK(s.starts == 2 && s.upload_bytes == 0);
     z15_cmdq_destroy(plan);
     CHECK(!resident_tail_test(&hal));
+    CHECK(!phase19_selection());
     hal.close(hal.ctx);
     puts("C15 reference legacy fallback, six opcodes, segmentation and resident replay PASS");
     return 0;

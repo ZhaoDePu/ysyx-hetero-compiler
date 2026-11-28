@@ -7,6 +7,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+uint64_t ysyx_verilator_tma_tensor(const ysyx_hal_t *hal);
+
 static unsigned greedy(const int32_t *scores)
 {
     unsigned best = 0;
@@ -17,7 +19,7 @@ static unsigned greedy(const int32_t *scores)
 }
 
 static int replay_step(qwen_reference *gold, qwen_reference *sim, c11b_z15 *dev,
-                       unsigned pos, unsigned id, unsigned layer, int is_decode,
+                       const ysyx_hal_t *hal, unsigned pos, unsigned id, unsigned layer, int is_decode,
                        int check_head, unsigned *next)
 {
     c12_qwen_capture reference = {0}, observed = {0};
@@ -28,6 +30,7 @@ static int replay_step(qwen_reference *gold, qwen_reference *sim, c11b_z15 *dev,
         return -1;
     const valence_submission_stats before_submit = c11b_z15_submission_stats(dev);
     const z15_cmdq_stats queue_before = c11b_z15_queue_stats(dev);
+    const uint64_t before_tma = ysyx_verilator_tma_tensor(hal);
     const uint64_t before_vpu = c11b_z15_vpu_ticks(dev);
     const int32_t *want = qwen_reference_step(gold, id);
     const int32_t *got = qwen_reference_step(sim, id);
@@ -50,7 +53,7 @@ static int replay_step(qwen_reference *gold, qwen_reference *sim, c11b_z15 *dev,
            " slverr=0 invalid_dma=%" PRIu32 " vpu=%" PRIu64 " dma_descriptors=%" PRIu32
            " mmio_writes=%" PRIu64 " doorbells=%" PRIu64 " host_reads=%" PRIu64
            " host_writes=%" PRIu64 " arm_reads=%" PRIu64 " arm_writes=%" PRIu64
-           " cmdq_batches=%" PRIu64 " cmdq_commands=%" PRIu64 " cmdq_cycles=%" PRIu64 " decode_upload_bytes=%" PRIu64 "\n",
+           " cmdq_batches=%" PRIu64 " cmdq_commands=%" PRIu64 " cmdq_cycles=%" PRIu64 " decode_upload_bytes=%" PRIu64 " tma_npu_overlap=%" PRIu64 "\n",
            layer, pos, id, *next, is_decode ? "decode" : "prefill", sizeof(reference.hidden),
            reference.cache_bytes, QWEN_VOCAB * sizeof(*want), check_head,
            after.wall_ticks - before.wall_ticks, after.npu_ticks - before.npu_ticks,
@@ -66,22 +69,23 @@ static int replay_step(qwen_reference *gold, qwen_reference *sim, c11b_z15 *dev,
            after_submit.host_writes - before_submit.host_writes,
            queue_after.reads - queue_before.reads, queue_after.writes - queue_before.writes,
            queue_after.starts - queue_before.starts, queue_after.commands - queue_before.commands,
-           queue_after.cycles - queue_before.cycles, queue_after.upload_bytes - queue_before.upload_bytes);
+           queue_after.cycles - queue_before.cycles, queue_after.upload_bytes - queue_before.upload_bytes,
+           ysyx_verilator_tma_tensor(hal) - before_tma);
     return fflush(stdout);
 }
 
 static int replay(qwen_reference *gold, qwen_reference *sim, c11b_z15 *dev,
-                  FILE *tokens, unsigned layer, unsigned decode, int check_head)
+                  const ysyx_hal_t *hal, FILE *tokens, unsigned layer, unsigned decode, int check_head)
 {
     unsigned pos = 0, id, next = 0;
     for (int n; (n = fscanf(tokens, "%u", &id)) != EOF; ++pos) {
-        if (n != 1 || replay_step(gold, sim, dev, pos, id, layer, 0, check_head, &next))
+        if (n != 1 || replay_step(gold, sim, dev, hal, pos, id, layer, 0, check_head, &next))
             return -1;
     }
     if (!pos || ferror(tokens))
         return -1;
     for (unsigned step = 0; step < decode; ++step) {
-        if (replay_step(gold, sim, dev, pos + step, next, layer, 1, check_head, &next))
+        if (replay_step(gold, sim, dev, hal, pos + step, next, layer, 1, check_head, &next))
             return -1;
     }
     printf("C12_RTL_PASS layer=%u prefill=%u decode=%u head_npu=%d\n",
@@ -128,7 +132,7 @@ int main(int argc, char **argv)
         mask |= UINT32_C(1) << QWEN_LAYERS;
     if (!dev || c12_z15_attach(rtl, dev, mask))
         goto done;
-    rc = replay(cpu, rtl, dev, ids, layer, decode, head) != 0;
+    rc = replay(cpu, rtl, dev, &hal, ids, layer, decode, head) != 0;
 done:
     if (rc)
         fprintf(stderr, "C12 frozen replay failed: %s\n", error ? error : "check inputs and AXI log");

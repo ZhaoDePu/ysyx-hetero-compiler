@@ -31,7 +31,8 @@ static inline int z15_exec_option(int *argc, char **argv)
             argv[out++] = argv[i];
             continue;
         }
-        if (strcmp(mode, "auto") && strcmp(mode, "cmdq") && strcmp(mode, "mmio"))
+        if (strcmp(mode, "auto") && strcmp(mode, "cmdq") && strcmp(mode, "mmio") &&
+            strcmp(mode, "p18b") && strcmp(mode, "p19a"))
             goto bad;
     }
     if (mode && setenv("YSYX_EXEC_MODE", mode, 1))
@@ -40,7 +41,7 @@ static inline int z15_exec_option(int *argc, char **argv)
     *argc = out;
     return 0;
 bad:
-    fputs("--exec-mode requires auto, cmdq or mmio\n", stderr);
+    fputs("--exec-mode requires auto, p18b, p19a, cmdq or mmio\n", stderr);
     return -1;
 }
 

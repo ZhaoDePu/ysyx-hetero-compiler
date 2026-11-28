@@ -65,7 +65,7 @@ struct c11b_z15 {
     const uint8_t *resident_image;
     size_t resident_bytes;
     valence_submission_stats submissions;
-    int cmdq, c17_head, queue_pending, c18_static, recording;
+    int cmdq, p19, c17_head, queue_pending, c18_static, recording;
     uint32_t cache_floor;
     unsigned cache_count, repack_count, repacked[C18_REPACK_SLOTS];
     static_entry plans[C18_CACHE_ENTRIES];
@@ -81,8 +81,11 @@ struct c11b_z15 {
 
 static int queue_add(c11b_z15 *d, z15_cmdq_op op, uint32_t reg, uint32_t value)
 {
-    if (!d->queue)
+    if (!d->queue) {
         d->queue = z15_cmdq_create();
+        if (d->queue && d->p19)
+            z15_cmdq_allow_p19(d->queue);
+    }
     if (!d->queue || z15_cmdq_add(d->queue, op, reg, value)) {
         d->failed = 1;
         return -1;
@@ -94,7 +97,14 @@ static int queue_add(c11b_z15 *d, z15_cmdq_op op, uint32_t reg, uint32_t value)
 static int run_queue(c11b_z15 *d, z15_cmdq_plan *plan)
 {
     z15_cmdq_stats stats = {0};
-    const int rc = z15_cmdq_run(plan, d->hal, &stats);
+    int rc = z15_cmdq_run(plan, d->hal, &stats);
+    if (!rc && d->p19) {
+        uint32_t code = 0;
+        rc = d->hal->mmio_read32(d->hal->ctx, Z15_TMA_ERR, &code) || code;
+        ++stats.reads;
+        if (rc)
+            fprintf(stderr, "Phase 19A TMA_ERR_CODE=%" PRIu32 "\n", code);
+    }
     d->queued.starts += stats.starts;
     d->queued.commands += stats.commands;
     d->queued.cycles += stats.cycles;
@@ -399,10 +409,109 @@ static int launch_tile(c11b_z15 *d, tile t, unsigned rows, unsigned group,
     return gemm_at(d, a, t.sram + NPU_B, t.sram + NPU_C, rows, t.width, group, packed_w4);
 }
 
+typedef struct {
+    unsigned col, width, group_first, groups, half, b, c;
+} tma_tile;
+
+enum { C18_TMA_B = 0x2000, TMA_PANEL = 2 * PANEL };
+
+static tma_tile tma_geometry(unsigned ordinal, unsigned n, unsigned groups,
+                            unsigned group_limit, unsigned weight_bytes)
+{
+    const unsigned column_tiles = (n + TMA_PANEL - 1) / TMA_PANEL;
+    tma_tile t = {.col = ordinal % column_tiles * TMA_PANEL,
+                  .group_first = ordinal / column_tiles * group_limit, .half = ordinal & 1u};
+    t.width = n - t.col < TMA_PANEL ? n - t.col : TMA_PANEL;
+    t.groups = groups - t.group_first < group_limit ? groups - t.group_first : group_limit;
+    t.b = t.half * Z15_HALF_BYTES + C18_TMA_B;
+    t.c = t.b + t.groups * t.width * weight_bytes;
+    return t;
+}
+
+static int transfer_2d(c11b_z15 *d, unsigned ddr, unsigned sram, unsigned bytes, unsigned rows,
+                       unsigned ddr_stride, unsigned flags)
+{
+    const uint64_t end = (uint64_t)ddr + (uint64_t)(rows - 1u) * ddr_stride + bytes;
+    const uint64_t scratch_end = (uint64_t)sram + (uint64_t)bytes * rows;
+    if (!rows || rows > 65535u || !bytes || bytes > ddr_stride || end > Z15_POOL_SIZE ||
+        scratch_end > Z15_SCRATCH_SIZE || (ddr | sram | bytes | ddr_stride) & 31u ||
+        sram / Z15_HALF_BYTES != (scratch_end - 1u) / Z15_HALF_BYTES)
+        return -1;
+    const word desc[] = {
+        {Z15_TMA_DDR, Z15_POOL_BASE + ddr}, {Z15_TMA_SRAM, sram}, {Z15_TMA_BYTES, bytes},
+        {Z15_TMA_ROWS, rows}, {Z15_TMA_DDR_STRIDE, ddr_stride}, {Z15_TMA_SRAM_STRIDE, bytes},
+        {Z15_TMA_CTRL, Z15_TMA_START | flags}
+    };
+    if (queue_add(d, CMDQ_ZERO, Z15_TMA_STATUS, Z15_TMA_BUSY | Z15_TMA_FAULT) ||
+        config(d, desc, sizeof(desc) / sizeof(*desc)))
+        return -1;
+    ++d->dma_moves;
+    d->dma_bytes += (uint64_t)bytes * rows;
+    return 0;
+}
+
+static int tma_prefetch(c11b_z15 *d, tma_tile t, unsigned weights, unsigned stride, unsigned row_bytes)
+{
+    return transfer_2d(d, weights + (t.group_first * stride + t.col) * row_bytes,
+                       t.b, t.width * row_bytes, t.groups, stride * row_bytes,
+                       Z15_TMA_SIGNAL | t.half << 9);
+}
+
+static int schedule_tma(c11b_z15 *d, unsigned stage, unsigned weights, unsigned output,
+                        unsigned n, unsigned k, unsigned group, unsigned packed_w4, unsigned stride)
+{
+    const unsigned row_bytes = packed_w4 ? group / 2 : group;
+    const unsigned groups = k / group, max_width = n < TMA_PANEL ? n : TMA_PANEL;
+    const unsigned group_limit = (Z15_HALF_BYTES - C18_TMA_B) / (max_width * (row_bytes + 4));
+    if (!group_limit || k > C18_TMA_B - NPU_A)
+        return -1;
+    const unsigned tiles = ((n + TMA_PANEL - 1) / TMA_PANEL) * ((groups + group_limit - 1) / group_limit);
+    if (dma(d, stage, NPU_A, k, 0) ||
+        (tiles > 1 && dma(d, stage, Z15_HALF_BYTES + NPU_A, k, 0)))
+        return -1;
+    for (unsigned i = 0; i < 4; ++i)
+        if (queue_add(d, CMDQ_RESET, i, 0))
+            return -1;
+    if (tma_prefetch(d, tma_geometry(0, n, groups, group_limit, row_bytes), weights, stride, row_bytes))
+        return -1;
+    for (unsigned i = 0; i < tiles; ++i) {
+        const tma_tile t = tma_geometry(i, n, groups, group_limit, row_bytes);
+        if (queue_add(d, CMDQ_CONSUME, t.half, 0))
+            return -1;
+        for (unsigned g = 0; g < t.groups; ++g) {
+            const unsigned a = t.half * Z15_HALF_BYTES + NPU_A + (t.group_first + g) * group;
+            for (unsigned col = 0; col < t.width; col += PANEL) {
+                const unsigned width = t.width - col < PANEL ? t.width - col : PANEL;
+                const int first = !g && !col;
+                const int last = g + 1 == t.groups && col + width == t.width;
+                if ((first || last) &&
+                    (ready(d, 0, Z15_NPU_BUSY) || wr(d, Z15_NPU_BIND, last ? 16u | (2u + t.half) << 5 : 0)))
+                    return -1;
+                const unsigned off = g * t.width + col;
+                if (gemm_at(d, a, t.b + off * row_bytes, t.c + off * 4, 1, width, group, packed_w4))
+                    return -1;
+                /* Fetch the next slab in the other half while the first TC group
+                   runs. The TMA engine drains the previous store before reuse. */
+                if (first && i + 1 < tiles &&
+                    tma_prefetch(d, tma_geometry(i + 1, n, groups, group_limit, row_bytes),
+                                 weights, stride, row_bytes))
+                    return -1;
+            }
+        }
+        if (transfer_2d(d, output + (t.group_first * n + t.col) * 4u, t.c,
+                        t.width * 4u, t.groups, n * 4u,
+                        Z15_TMA_STORE | Z15_TMA_WAIT | (2u + t.half) << 5))
+            return -1;
+    }
+    return queue_add(d, CMDQ_ZERO, Z15_TMA_STATUS, Z15_TMA_BUSY | Z15_TMA_FAULT) || wr(d, Z15_NPU_BIND, 0);
+}
+
 static int schedule_grouped(c11b_z15 *d, unsigned stage, unsigned base_weight, unsigned base_result,
                             unsigned n, unsigned k, unsigned group, unsigned packed_w4,
                             unsigned weight_stride, unsigned rows, int resident_a)
 {
+    if (d->p19 && rows == 1 && n > TMA_PANEL)
+        return schedule_tma(d, stage, base_weight, base_result, n, k, group, packed_w4, weight_stride);
     const unsigned row_bytes = packed_w4 ? group / 2 : group;
     const unsigned count = (k / group) * ((n + PANEL - 1) / PANEL);
     if (resident_a && (k * rows > NPU_B - NPU_A ||
@@ -1144,6 +1253,7 @@ int c12_z15_attach(qwen_reference *m, c11b_z15 *d, uint32_t layers)
         if (d->c18_static) {
             d->cache_floor = Z15_POOL_SIZE - C18_QUEUE_GUARD;
             ops.project_block16_wide = project_block16_wide;
+            d->p19 = z15_cmdq_p19(d->hal);
         }
         ops.project_head = project_head;
         ops.head_panel = d->c17_head ? QWEN_VOCAB : C16_HEAD_PANEL;
@@ -1152,6 +1262,14 @@ int c12_z15_attach(qwen_reference *m, c11b_z15 *d, uint32_t layers)
         ops.project_block16_pair = project_block16_pair;
         ops.rope = NULL;
         ops.residual = NULL;
+    }
+    const char *mode = getenv("YSYX_EXEC_MODE");
+    if (mode && !strcmp(mode, "p19a")) {
+        uint32_t status = 0;
+        if (!d->p19 || rd(d, Z15_TMA_STATUS, &status) || (status & (Z15_TMA_BUSY | Z15_TMA_FAULT))) {
+            fputs("Phase 19A replay requires supported S3-H2, idle TMA and a clean error register.\n", stderr);
+            return -1;
+        }
     }
     return c12_qwen_set_device(m, &ops, layers);
 }

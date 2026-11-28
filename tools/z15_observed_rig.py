@@ -10,7 +10,7 @@ def substitute(source, old, new):
     return source.replace(old, new)
 
 
-def observe(source, gpu_step=2, gpu_divisor=3, *, p17=False):
+def observe(source, gpu_step=2, gpu_divisor=3, *, p17=False, p19a=False):
     if not 0 < gpu_step < gpu_divisor:
         raise ValueError("expected GPU/NPU clock ratio between zero and one")
     result = substitute(source, '#include "Vz15_bd_axi_shell.h"',
@@ -22,7 +22,7 @@ def observe(source, gpu_step=2, gpu_divisor=3, *, p17=False):
     result = substitute(result, "    unsigned transactions=0;",
                         """    unsigned transactions=0;
     uint64_t c2_dma=0,c2_compute_dma=0,c2_triple=0,c2_gpu_clock=0;
-    uint64_t c2_dma_gpu=0,c2_dma_tensor=0;
+    uint64_t c2_dma_gpu=0,c2_dma_tensor=0,c18_tma_tensor=0;
     uint64_t c3_read_bytes=0,c3_write_bytes=0;
     uint64_t c4_occupancy[8]={};
     uint64_t c4_tc_busy=0,c4_vc_busy=0;
@@ -57,7 +57,7 @@ def observe(source, gpu_step=2, gpu_divisor=3, *, p17=False):
         result = substitute(result, original, original + "\n"
                             "        if(address==Z15_CTRL && (value==8 || value==32 || value==64))\n"
                             "            last_tensor_action=value;")
-    return substitute(result, "        ++tick_count;",
+    result = substitute(result, "        ++tick_count;",
                       """        ++tick_count;
         if(dut.aresetn) {
             const auto *r=dut.rootp;
@@ -73,6 +73,12 @@ def observe(source, gpu_step=2, gpu_divisor=3, *, p17=False):
             c2_dma_tensor+=dma && npu;
             c2_triple+=dma && gpu && npu;
         }""")
+    if p19a:
+        result = substitute(result, "            c2_dma+=dma;",
+                            "            const bool tma=r->z15_bd_axi_shell__DOT__implementation__DOT__tma__DOT__state==4;\\n"
+                            "            c18_tma_tensor+=tma && npu;\\n"
+                            "            c2_dma+=dma || tma;".replace("\\n", "\n"))
+    return result
 
 
 def paged_ddr(source):
@@ -101,9 +107,10 @@ if __name__ == "__main__":
     cli.add_argument("--gpu-clock-ratio", choices=("2:3", "4:5", "24840:32911", "3:4", "161:221"), default="2:3")
     cli.add_argument("--paged-ddr", action="store_true")
     cli.add_argument("--p17", action="store_true", help="instrument the pinned Phase 17 board rig")
+    cli.add_argument("--p19a", action="store_true", help="count TMA TRANSFER cycles concurrent with TC")
     args = cli.parse_args()
     step, divisor = map(int, args.gpu_clock_ratio.split(":"))
-    instrumented = observe(args.src.read_text(encoding="utf-8"), step, divisor, p17=args.p17)
+    instrumented = observe(args.src.read_text(encoding="utf-8"), step, divisor, p17=args.p17, p19a=args.p19a)
     if args.paged_ddr:
         instrumented = "#include <array>\n#include <memory>\n#include <vector>\n" + paged_ddr(instrumented)
     args.dst.write_text(instrumented, encoding="utf-8")

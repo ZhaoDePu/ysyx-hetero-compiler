@@ -538,7 +538,7 @@ int main(int argc, char **argv)
     static const char help[] =
 #ifdef YSYX_C11B_NATIVE
          "z15_qwen25_chat --weights FILE --tokenizer FILE [--backend cpu|z15|cmdq-reference] "
-        "[--kv-bits 4|8 (C12 default: 8)] [--target step2|p17|auto] [--fallback-weights FILE] [--exec-mode auto|cmdq|mmio] [--exec-stats] [--mmio-profile v1|turbo] [--mode verify --token-id ID --golden FILE]\n"
+        "[--kv-bits 4|8 (C12 default: 8)] [--target step2|p17|auto] [--fallback-weights FILE] [--exec-mode auto|p18b|p19a|cmdq|mmio] [--exec-stats] [--mmio-profile v1|turbo] [--mode verify --token-id ID --golden FILE]\n"
         "Chat and bench options: "
 #else
         "ysyx_qwen_chat --weights FILE --tokenizer FILE [--backend sim] "

@@ -91,3 +91,8 @@ extern "C" int ysyx_hal_verilator_open(ysyx_hal_t *out, const char **error)
         return -1;
     }
 }
+
+extern "C" uint64_t ysyx_verilator_tma_tensor(const ysyx_hal_t *hal)
+{
+    return static_cast<const Rig *>(hal->ctx)->c18_tma_tensor;
+}

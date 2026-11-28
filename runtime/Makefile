@@ -92,7 +92,7 @@ $(OUT)/c11b_qwen_z15.o: c11b_qwen_z15.c c11b_qwen_z15_cmdq.h z15_cmdq.h c11b_qwe
 $(OUT)/c11b_qwen_ref.o: c11_qwen_ref.c c11_qwen_ref.h c12_qwen_ref.h c12_qwen_cache.h c11b_reference.inc c11b_qwen_ops.h | $(OUT)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(WARNFLAGS) -DYSYX_C11B_NATIVE -c "$<" -o "$@"
 
-$(OUT)/c11b_qwen_chat.o: c11_qwen_chat.c hal_reference_c6.h z15_exec_option.h c11_qwen_ref.h c12_qwen_ref.h c11_qwen_bpe.h c11b_qwen_ops.h | $(OUT)
+$(OUT)/c11b_qwen_chat.o: c11_qwen_chat.c c11b_qwen_z15_cmdq.h z15_cmdq.h hal_reference_c6.h z15_exec_option.h c11_qwen_ref.h c12_qwen_ref.h c11_qwen_bpe.h c11b_qwen_ops.h | $(OUT)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(WARNFLAGS) -DYSYX_C11B_NATIVE -c "$<" -o "$@"
 
 $(OUT)/z15_qwen25_chat: $(addprefix $(OUT)/,c11b_qwen_chat.o c11b_qwen_ref.o c11_qwen_bpe.o c11b_qwen_ops.o c11b_qwen_z15.o z15_cmdq.o hal_linux_uio.o hal_reference_c6.o)

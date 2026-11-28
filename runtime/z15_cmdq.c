@@ -22,7 +22,7 @@ struct z15_cmdq_plan {
     const uint8_t *image, *loaded_image;
     size_t image_bytes, loaded_bytes, first;
     uint32_t ddr_end;
-    int placed, uploaded;
+    int placed, uploaded, p19;
 };
 
 static int writable(uint32_t reg, uint32_t value)
@@ -57,18 +57,51 @@ int z15_cmdq_validate(uint64_t word)
     }
 }
 
+static unsigned hardware_capabilities(const ysyx_hal_t *hal)
+{
+    uint32_t ext, cap;
+    if (hal->mmio_read32(hal->ctx, Z15_EXT_VERSION, &ext) || ext != Z15_P18_VERSION ||
+        hal->mmio_read32(hal->ctx, Z15_CAP_FLAGS, &cap))
+        return 0;
+    return cap;
+}
+
 int z15_cmdq_select(const ysyx_hal_t *hal)
 {
     const char *mode = getenv("YSYX_EXEC_MODE");
     if (mode && !strcmp(mode, "mmio"))
         return 0;
-    const int forced = mode && !strcmp(mode, "cmdq");
-    uint32_t ext, cap;
-    const int found = !hal->mmio_read32(hal->ctx, Z15_EXT_VERSION, &ext) &&
-                      ext == Z15_P18_VERSION &&
-                      !hal->mmio_read32(hal->ctx, Z15_CAP_FLAGS, &cap) &&
-                      (cap & Z15_CAP_CMDQ);
-    return found ? 1 : forced ? -1 : 0;
+    const unsigned cap = hardware_capabilities(hal);
+    if (mode && !strcmp(mode, "p19a"))
+        return (cap & (Z15_CAP_P19A | Z15_CAP_CMDQ)) == (Z15_CAP_P19A | Z15_CAP_CMDQ) ? 1 : -1;
+    const int forced = mode && (!strcmp(mode, "cmdq") || !strcmp(mode, "p18b"));
+    return cap & Z15_CAP_CMDQ ? 1 : forced ? -1 : 0;
+}
+
+int z15_cmdq_p19(const ysyx_hal_t *hal)
+{
+    const char *mode = getenv("YSYX_EXEC_MODE");
+    /* TMA is an explicit comparison path until the frozen wall gate passes. */
+    if (!mode || strcmp(mode, "p19a"))
+        return 0;
+    return (hardware_capabilities(hal) & Z15_CAP_P19A) == Z15_CAP_P19A;
+}
+
+void z15_cmdq_allow_p19(z15_cmdq_plan *plan)
+{
+    plan->p19 = 1;
+}
+
+static int p19_word(z15_cmdq_op op, unsigned reg, unsigned value)
+{
+    if (op == CMDQ_SIGNAL || op == CMDQ_CONSUME || op == CMDQ_RESET)
+        return reg < 8 && !value;
+    if (reg & 3u)
+        return 0;
+    if (op == CMDQ_WRITE)
+        return (reg >= Z15_TMA_DDR && reg <= Z15_TMA_CTRL) || reg == Z15_NPU_BIND || reg == Z15_VPU_BIND;
+    return (op == CMDQ_ONE || op == CMDQ_ZERO) &&
+           (reg == Z15_TMA_STATUS || reg == Z15_TMA_ERR || reg == 0x1c8 || reg == 0x1cc);
 }
 
 int z15_cmdq_idle(const ysyx_hal_t *hal)
@@ -87,7 +120,7 @@ void z15_cmdq_reset(z15_cmdq_plan *plan)
 {
     const z15_cmdq_plan storage = {
         .bytes = plan->bytes, .capacity = plan->capacity,
-        .batches = plan->batches, .batch_capacity = plan->batch_capacity
+        .batches = plan->batches, .batch_capacity = plan->batch_capacity, .p19 = plan->p19
     };
     *plan = storage;
 }
@@ -147,7 +180,7 @@ int z15_cmdq_add(z15_cmdq_plan *plan, z15_cmdq_op op, uint32_t reg, uint32_t val
     if (plan->placed || reg > UINT16_MAX || (unsigned)op >= CMDQ_END)
         return -1;
     const uint64_t word = (uint64_t)op << 60 | (uint64_t)reg << 32 | value;
-    if (z15_cmdq_validate(word) ||
+    if ((z15_cmdq_validate(word) && !(plan->p19 && p19_word(op, reg, value))) ||
         (plan->count - plan->first == CMDQ_LIMIT - 2u && seal(plan)))
         return -1;
     return append(plan, word);
@@ -179,6 +212,8 @@ int z15_cmdq_place_bounded(z15_cmdq_plan *plan, uint32_t base, uint32_t limit)
     if (plan->placed || base > limit || limit > Z15_POOL_SIZE || seal(plan))
         return -1;
     uint64_t cursor = ((uint64_t)base + 31u) & ~UINT64_C(31);
+    if (cursor > limit)
+        return -1;
     for (size_t i = 0; i < plan->batch_count; ++i) {
         batch_t *batch = plan->batches + i;
         uint64_t end = (cursor + batch->count * 8u + 31u) & ~UINT64_C(31);
