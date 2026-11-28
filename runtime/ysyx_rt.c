@@ -1140,6 +1140,18 @@ static int execute_auto(const ysyx_program_t *p, const ysyx_hal_t *hal, uint32_t
     ysyx_stats_t queued = {0};
     if (mode && record_range(p, &plan, &queued, start, end, error))
         return -1;
+    /* KV checkpoints expose outputs to the host before the next segment.
+       Small segments pay a fresh upload and doorbell on every checkpoint. */
+    const char *selection = getenv("YSYX_EXEC_MODE");
+    enum { KV_CMDQ_MIN_WORDS_PER_START = 128 };
+    if (plan && p->kv_steps && (!selection || !strcmp(selection, "auto")) &&
+        z15_cmdq_count(plan) < z15_cmdq_batches(plan) * KV_CMDQ_MIN_WORDS_PER_START) {
+        if (trace || getenv("YSYX_CMDQ_STATS"))
+            fprintf(trace ? trace : stderr, "CMDQ auto: KV segment uses MMIO (words=%u starts=%zu)\n",
+                    z15_cmdq_count(plan), z15_cmdq_batches(plan));
+        z15_cmdq_destroy(plan);
+        plan = NULL;
+    }
     const int rc = execute_range(p, hal, start, end, stats, trace, error, 0, plan, &queued);
     z15_cmdq_destroy(plan);
     return rc;

@@ -164,15 +164,25 @@ int z15_cmdq_image(z15_cmdq_plan *plan, const uint8_t *image, size_t size)
     return 0;
 }
 
-int z15_cmdq_place(z15_cmdq_plan *plan, uint32_t high_water)
+size_t z15_cmdq_batches(const z15_cmdq_plan *plan)
 {
-    if (plan->placed || seal(plan))
+    return plan->batch_count;
+}
+
+unsigned z15_cmdq_count(const z15_cmdq_plan *plan)
+{
+    return (unsigned)plan->count;
+}
+
+int z15_cmdq_place_bounded(z15_cmdq_plan *plan, uint32_t base, uint32_t limit)
+{
+    if (plan->placed || base > limit || limit > Z15_POOL_SIZE || seal(plan))
         return -1;
-    uint64_t cursor = ((uint64_t)high_water + 31u) & ~UINT64_C(31);
+    uint64_t cursor = ((uint64_t)base + 31u) & ~UINT64_C(31);
     for (size_t i = 0; i < plan->batch_count; ++i) {
         batch_t *batch = plan->batches + i;
         uint64_t end = (cursor + batch->count * 8u + 31u) & ~UINT64_C(31);
-        if (end > Z15_POOL_SIZE)
+        if (end > limit)
             return -1;
         batch->offset = (uint32_t)cursor;
         cursor = end;
@@ -180,6 +190,36 @@ int z15_cmdq_place(z15_cmdq_plan *plan, uint32_t high_water)
     plan->ddr_end = (uint32_t)cursor;
     plan->placed = 1;
     return 0;
+}
+
+int z15_cmdq_place(z15_cmdq_plan *plan, uint32_t base)
+{
+    return z15_cmdq_place_bounded(plan, base, Z15_POOL_SIZE);
+}
+
+int z15_cmdq_place_tail(z15_cmdq_plan *plan, uint32_t low, uint32_t *upper)
+{
+    if (seal(plan) || low > *upper || (*upper & 31u))
+        return -1;
+    size_t bytes = 0;
+    for (size_t i = 0; i < plan->batch_count; ++i)
+        bytes += (plan->batches[i].count * 8u + 31u) & ~(size_t)31;
+    if (bytes > *upper - low)
+        return -1;
+    const uint32_t base = *upper - (uint32_t)bytes;
+    if (z15_cmdq_place_bounded(plan, base, *upper))
+        return -1;
+    *upper = base;
+    return 0;
+}
+
+void z15_cmdq_discard_uploaded_bytes(z15_cmdq_plan *plan)
+{
+    if (plan->uploaded) {
+        free(plan->bytes);
+        plan->bytes = NULL;
+        plan->capacity = 0;
+    }
 }
 
 static int rd(const ysyx_hal_t *hal, z15_cmdq_stats *s, uint32_t reg, uint32_t *value)

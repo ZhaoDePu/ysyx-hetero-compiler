@@ -50,7 +50,7 @@ static int replay_step(qwen_reference *gold, qwen_reference *sim, c11b_z15 *dev,
            " slverr=0 invalid_dma=%" PRIu32 " vpu=%" PRIu64 " dma_descriptors=%" PRIu32
            " mmio_writes=%" PRIu64 " doorbells=%" PRIu64 " host_reads=%" PRIu64
            " host_writes=%" PRIu64 " arm_reads=%" PRIu64 " arm_writes=%" PRIu64
-           " cmdq_batches=%" PRIu64 " cmdq_commands=%" PRIu64 " cmdq_cycles=%" PRIu64 "\n",
+           " cmdq_batches=%" PRIu64 " cmdq_commands=%" PRIu64 " cmdq_cycles=%" PRIu64 " decode_upload_bytes=%" PRIu64 "\n",
            layer, pos, id, *next, is_decode ? "decode" : "prefill", sizeof(reference.hidden),
            reference.cache_bytes, QWEN_VOCAB * sizeof(*want), check_head,
            after.wall_ticks - before.wall_ticks, after.npu_ticks - before.npu_ticks,
@@ -66,7 +66,7 @@ static int replay_step(qwen_reference *gold, qwen_reference *sim, c11b_z15 *dev,
            after_submit.host_writes - before_submit.host_writes,
            queue_after.reads - queue_before.reads, queue_after.writes - queue_before.writes,
            queue_after.starts - queue_before.starts, queue_after.commands - queue_before.commands,
-           queue_after.cycles - queue_before.cycles);
+           queue_after.cycles - queue_before.cycles, queue_after.upload_bytes - queue_before.upload_bytes);
     return fflush(stdout);
 }
 

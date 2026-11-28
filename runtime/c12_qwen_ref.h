@@ -42,6 +42,8 @@ typedef struct {
                         unsigned, const int8_t *, int32_t *);
     int (*project_block16_rows)(void *, const uint8_t *, const uint8_t *, unsigned, unsigned, unsigned,
                                 const int8_t *, int32_t *);
+    int (*project_block16_wide)(void *, const valence_block16_projection *, unsigned,
+                                unsigned, unsigned, const int8_t *);
     int (*project_block16_pair)(void *, const valence_block16_projection *, unsigned, const int8_t *);
 } c12_qwen_device;
 

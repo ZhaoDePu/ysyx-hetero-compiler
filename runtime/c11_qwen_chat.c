@@ -5,6 +5,7 @@
 #include "c12_qwen_ref.h"
 #ifdef YSYX_C11B_NATIVE
 #include "hal_reference_c6.h"
+#include "c11b_qwen_z15_cmdq.h"
 #endif
 
 #include <errno.h>
@@ -48,12 +49,17 @@ typedef struct {
 #endif
 } session;
 
+static double clock_seconds(clockid_t clock)
+{
+    struct timespec now;
+    if (clock_gettime(clock, &now))
+        return 0;
+    return (double)now.tv_sec + now.tv_nsec / 1000000000.0;
+}
+
 static double seconds(void)
 {
-    struct timespec ts;
-    if (clock_gettime(CLOCK_MONOTONIC, &ts))
-        return 0.0;
-    return ts.tv_sec + ts.tv_nsec / 1e9;
+    return clock_seconds(CLOCK_MONOTONIC);
 }
 
 static int chat_prompt(const qwen_bpe *bpe, const char *prompt, int first, uint32_t *ids)
@@ -181,8 +187,10 @@ static int turn(session *chat, const char *prompt, const options *o, FILE *csv)
         if (!piece || fwrite(piece, 1, bytes, stdout) != bytes || fflush(stdout))
             return -1;
         const double step_start = o->trace_steps ? seconds() : 0;
+        const double cpu_start = o->trace_steps ? clock_seconds(CLOCK_THREAD_CPUTIME_ID) : 0;
 #ifdef YSYX_C11B_NATIVE
         ysyx_stats_t token_before;
+        const z15_cmdq_stats queue_before = c11b_z15_queue_stats(chat->device);
         const valence_submission_stats submit_before = c11b_z15_submission_stats(chat->device);
         if (o->trace_steps && chat->device && c11b_z15_stats(chat->device, &token_before))
             return -1;
@@ -195,8 +203,9 @@ static int turn(session *chat, const char *prompt, const options *o, FILE *csv)
         }
         if (o->trace_steps) {
             double latency = seconds() - step_start;
-            fprintf(stderr, "decode_step=%u token=%u ms=%.6f tok/s=%.3f",
-                    generated + 1, id, latency * 1000, latency > 0 ? 1 / latency : 0);
+            fprintf(stderr, "decode_step=%u token=%u ms=%.6f tok/s=%.3f host_cpu_ms=%.6f",
+                    generated + 1, id, latency * 1000, latency > 0 ? 1 / latency : 0,
+                    (clock_seconds(CLOCK_THREAD_CPUTIME_ID) - cpu_start) * 1000);
 #ifdef YSYX_C11B_NATIVE
             if (chat->device) {
                 ysyx_stats_t token_after;
@@ -209,6 +218,12 @@ static int turn(session *chat, const char *prompt, const options *o, FILE *csv)
                         token_after.gpu_ticks - token_before.gpu_ticks,
                         token_after.dma_bytes - token_before.dma_bytes,
                         token_after.npu_gpu_overlap_ticks - token_before.npu_gpu_overlap_ticks);
+                const z15_cmdq_stats queue_after = c11b_z15_queue_stats(chat->device);
+                fprintf(stderr, " decode_upload_bytes=%" PRIu64 " cmdq_commands=%" PRIu64
+                        " cmdq_cycles=%" PRIu64,
+                        queue_after.upload_bytes - queue_before.upload_bytes,
+                        queue_after.commands - queue_before.commands,
+                        queue_after.cycles - queue_before.cycles);
                 const valence_submission_stats submit_after = c11b_z15_submission_stats(chat->device);
                 fprintf(stderr, " batches=%" PRIu64 " descriptor_words=%" PRIu64
                         " mmio_writes=%" PRIu64 " doorbells=%" PRIu64 " host_writes=%" PRIu64

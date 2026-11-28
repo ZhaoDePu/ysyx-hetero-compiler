@@ -80,6 +80,26 @@ static int turbo_read(void *ctx, uint32_t reg, uint32_t *value)
     return 0;
 }
 
+static int resident_tail_test(const ysyx_hal_t *hal)
+{
+    z15_cmdq_plan *plan = z15_cmdq_create();
+    CHECK(plan);
+    uint32_t upper = 4096;
+    CHECK(!z15_cmdq_add(plan, CMDQ_WRITE, Z15_SCRATCH, 42));
+    CHECK(z15_cmdq_place_tail(plan, 4080, &upper));
+    CHECK(upper == 4096);
+    CHECK(!z15_cmdq_place_tail(plan, 1024, &upper) && upper == 4064);
+    z15_cmdq_stats stats;
+    CHECK(!z15_cmdq_run(plan, hal, &stats));
+    CHECK(stats.starts == 1 && stats.upload_bytes == 24);
+    z15_cmdq_discard_uploaded_bytes(plan);
+    CHECK(!z15_cmdq_run(plan, hal, &stats));
+    CHECK(stats.starts == 1 && stats.upload_bytes == 0);
+    CHECK(read_reg(hal, Z15_SCRATCH) == 42);
+    z15_cmdq_destroy(plan);
+    return 0;
+}
+
 int main(void)
 {
     ysyx_hal_t hal;
@@ -122,6 +142,7 @@ int main(void)
     CHECK(!z15_cmdq_run(plan, &hal, &s));
     CHECK(s.starts == 2 && s.upload_bytes == 0);
     z15_cmdq_destroy(plan);
+    CHECK(!resident_tail_test(&hal));
     hal.close(hal.ctx);
     puts("C15 reference legacy fallback, six opcodes, segmentation and resident replay PASS");
     return 0;

@@ -844,9 +844,49 @@ static void apply_partials(const matrix *mat, const activation *input, const int
     }
 }
 
+static int block16_wide(qwen_reference *m, const matrix *const *mat, const activation *input,
+                        int32_t *const *out, unsigned count, unsigned rows, const int8_t *grouped)
+{
+    valence_block16_projection jobs[2];
+    int32_t *buffer = m->c12_partials;
+    const unsigned groups = QWEN_HIDDEN / m->group;
+    for (unsigned i = 0; i < count; ++i) {
+        jobs[i] = (valence_block16_projection){mat[i]->packed, mat[i]->fine, NULL, buffer, mat[i]->outputs};
+        buffer += groups * mat[i]->outputs * rows * (mat[i]->fine ? 2u : 1u);
+    }
+    if (m->c12_device.project_block16_wide(m->c12_device.ctx, jobs, count, m->group, rows, grouped))
+        return -1;
+    for (unsigned i = 0; i < count; ++i) {
+        const unsigned n = mat[i]->outputs, passes = mat[i]->fine ? 2 : 1;
+        for (unsigned row = 0; row < rows; ++row) {
+            uint64_t units[QWEN_INTER / 16];
+            uint16_t coefficients[2 * (QWEN_INTER / 16) * (QWEN_HIDDEN / 64)];
+            int32_t accumulated[QWEN_INTER] = {0};
+            block16_coefficients(mat[i], input + row, units, coefficients);
+            for (unsigned p = 0; p < n / 16; ++p) {
+                const unsigned c = p * 16, first = c / C16_GROUPED_COLS * C16_GROUPED_COLS;
+                const unsigned width = n - first < C16_GROUPED_COLS ? n - first : C16_GROUPED_COLS;
+                const unsigned at = first * rows + row * width + c - first;
+                for (unsigned g = 0; g < groups; ++g)
+                    for (unsigned pass = 0; pass < passes; ++pass) {
+                        const int32_t *dot = jobs[i].partials + ((pass * groups + g) * n * rows + at);
+                        const unsigned coef = coefficients[(p * groups + g) * passes + pass];
+                        for (unsigned lane = 0; lane < 16; ++lane)
+                            accumulated[c + lane] += (int32_t)round_even((int64_t)dot[lane] * coef, 256);
+                    }
+            }
+            block16_finish(mat[i], accumulated, units, out[i] + row * n);
+        }
+    }
+    return 0;
+}
+
 static int project_q16(qwen_reference *m, const matrix *mat, const activation *input,
                        int32_t *output, unsigned layer)
 {
+    if (mat->permutation && m->c12_device.project_block16_wide &&
+        (m->c12_hardware_layers & (UINT32_C(1) << layer)))
+        return block16_wide(m, &mat, input, &output, 1, 1, input->a8);
     if (mat->permutation)
         return linear_block16(mat, input, output,
                m->c12_hardware_layers & (UINT32_C(1) << layer) ? &m->c12_device : NULL);
@@ -914,6 +954,8 @@ static int project_gate_up(qwen_reference *m, const block *b, const activation *
     int32_t *const out[] = {m->gate, m->up};
     if (!mat[0]->permutation && !mat[1]->permutation)
         return project_parallel(m, input, layer, mat, out, 2);
+    if (m->c12_device.project_block16_wide && mat[0]->permutation && mat[1]->permutation)
+        return block16_wide(m, mat, input, out, 2, 1, input->a8);
     if (!m->c12_device.project_block16_pair || !mat[0]->permutation || !mat[1]->permutation)
         return project_q16(m, mat[0], input, out[0], layer) ||
                project_q16(m, mat[1], input, out[1], layer);
@@ -1106,8 +1148,11 @@ static int project_prefill(qwen_reference *m, const matrix *mat, prefill_work *w
     for (unsigned i = 0; i < groups; ++i)
         for (unsigned row = 0; row < rows; ++row)
             memcpy(work->grouped + (i * rows + row) * g, work->inputs[row].a8 + i * g, g);
-    if (mat->permutation)
+    if (mat->permutation) {
+        if (m->c12_device.project_block16_wide)
+            return block16_wide(m, &mat, work->inputs, &output, 1, rows, work->grouped);
         return block16_prefill(m, mat, work, output, rows);
+    }
     if (m->c12_device.project_rows(m->c12_device.ctx, mat->packed, n, mat->inputs, g,
                                    mat->bits, rows, work->grouped, m->c12_partials))
         return -1;

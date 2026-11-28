@@ -4,6 +4,7 @@
 #include "c12_qwen_ref.h"
 #include "z15_regs.h"
 
+#include <inttypes.h>
 #include <sched.h>
 #include <stdlib.h>
 #include <string.h>
@@ -34,6 +35,24 @@ typedef struct {
     uint32_t action;
 } valence_cmd_batch_t;
 
+enum {
+    C18_CACHE_ENTRIES = QWEN_LAYERS * 5 + 10,
+    C18_REPACK_SLOTS = QWEN_LAYERS * 4,
+    C18_QUEUE_GUARD = 512 * 1024,
+    C18_TRANSIENT_RESERVE = CMDQ_LIMIT * 8
+};
+
+typedef struct {
+    unsigned kind, k, group, n, weights[4], shape[4];
+} static_key;
+
+typedef struct {
+    static_key key;
+    z15_cmdq_plan *plan;
+    uint64_t dma_bytes;
+    uint32_t dma_moves;
+} static_entry;
+
 struct c11b_z15 {
     const ysyx_hal_t *hal;
     c11b_ops ops;
@@ -46,7 +65,13 @@ struct c11b_z15 {
     const uint8_t *resident_image;
     size_t resident_bytes;
     valence_submission_stats submissions;
-    int cmdq, c17_head, queue_pending;
+    int cmdq, c17_head, queue_pending, c18_static, recording;
+    uint32_t cache_floor;
+    unsigned cache_count, repack_count, repacked[C18_REPACK_SLOTS];
+    static_entry plans[C18_CACHE_ENTRIES];
+    uint64_t record_dma_bytes;
+    uint32_t record_dma_moves;
+    uint8_t *repack_buffer;
     uint32_t queue_base;
     z15_cmdq_plan *queue;
     z15_cmdq_stats queued;
@@ -66,17 +91,10 @@ static int queue_add(c11b_z15 *d, z15_cmdq_op op, uint32_t reg, uint32_t value)
     return 0;
 }
 
-static int queue_flush(c11b_z15 *d)
+static int run_queue(c11b_z15 *d, z15_cmdq_plan *plan)
 {
-    if (d->failed)
-        return -1;
-    if (!d->queue_pending)
-        return 0;
     z15_cmdq_stats stats = {0};
-    const int rc = z15_cmdq_place(d->queue, d->queue_base) ||
-                   z15_cmdq_run(d->queue, d->hal, &stats);
-    z15_cmdq_reset(d->queue);
-    d->queue_pending = 0;
+    const int rc = z15_cmdq_run(plan, d->hal, &stats);
     d->queued.starts += stats.starts;
     d->queued.commands += stats.commands;
     d->queued.cycles += stats.cycles;
@@ -91,6 +109,60 @@ static int queue_flush(c11b_z15 *d)
         z15_cmdq_report(stderr, &stats);
     d->failed = rc;
     return rc ? -1 : 0;
+}
+
+static int queue_flush(c11b_z15 *d)
+{
+    if (d->failed)
+        return -1;
+    if (!d->queue_pending)
+        return 0;
+    const int keep = d->recording &&
+        !z15_cmdq_place_tail(d->queue, d->queue_base + C18_TRANSIENT_RESERVE, &d->cache_floor);
+    if (!keep && z15_cmdq_place_bounded(d->queue, d->queue_base, d->cache_floor)) {
+        d->failed = 1;
+        return -1;
+    }
+    const int rc = run_queue(d, d->queue);
+    if (keep && !rc) {
+        static_entry *entry = d->plans + d->cache_count++;
+        entry->plan = d->queue;
+        entry->dma_bytes = d->dma_bytes - d->record_dma_bytes;
+        entry->dma_moves = d->dma_moves - d->record_dma_moves;
+        z15_cmdq_discard_uploaded_bytes(d->queue);
+        d->queue = NULL;
+    } else {
+        z15_cmdq_reset(d->queue);
+    }
+    if (d->recording)
+        memset(d->config_known, 0, sizeof(d->config_known));
+    d->recording = d->queue_pending = 0;
+    return rc;
+}
+
+static int cached_start(c11b_z15 *d, const static_key *key)
+{
+    if (!d->c18_static)
+        return 0;
+    for (unsigned i = 0; i < d->cache_count; ++i) {
+        static_entry *entry = d->plans + i;
+        if (memcmp(&entry->key, key, sizeof(*key)))
+            continue;
+        memset(d->config_known, 0, sizeof(d->config_known));
+        if (run_queue(d, entry->plan))
+            return -1;
+        d->dma_bytes += entry->dma_bytes;
+        d->dma_moves += entry->dma_moves;
+        return 1;
+    }
+    if (d->cache_count < C18_CACHE_ENTRIES) {
+        memset(d->config_known, 0, sizeof(d->config_known));
+        d->plans[d->cache_count].key = *key;
+        d->record_dma_bytes = d->dma_bytes;
+        d->record_dma_moves = d->dma_moves;
+        d->recording = 1;
+    }
+    return 0;
 }
 
 static int bad(void *ctx)
@@ -391,7 +463,10 @@ int c11b_z15_project_grouped(void *ctx, const uint8_t *packed, unsigned n, unsig
         return -1;
     if (host_write(d, stage, a8, k))
         return -1;
-    if (schedule_grouped(d, stage, base_weight, base_result, n, k, group, packed_w4, n, 1, 0))
+    const static_key key = {.kind = 1, .k = k, .group = group, .n = n,
+                            .weights = {base_weight}, .shape = {bits}};
+    const int hit = cached_start(d, &key);
+    if (hit < 0 || (!hit && schedule_grouped(d, stage, base_weight, base_result, n, k, group, packed_w4, n, 1, 0)))
         return -1;
     return host_read(d, base_result, result, (size_t)(k / group) * n * sizeof(*result));
 }
@@ -426,7 +501,15 @@ static int project_parallel(void *ctx, const valence_raw_projection *jobs, unsig
     }
     if (next > stage + STAGE_DDR || host_write(d, stage, input, QWEN_HIDDEN))
         return -1;
-    for (unsigned i = 0; i < count; ++i)
+    static_key key = {.kind = 2, .group = group, .n = count};
+    for (unsigned i = 0; i < count; ++i) {
+        key.weights[i] = weights[i];
+        key.shape[i] = jobs[i].rows * 16u + jobs[i].bits;
+    }
+    const int hit = cached_start(d, &key);
+    if (hit < 0)
+        return -1;
+    for (unsigned i = 0; !hit && i < count; ++i)
         if (schedule_grouped(d, stage, weights[i], offsets[i], jobs[i].rows,
                              QWEN_HIDDEN, group, jobs[i].bits == 4, jobs[i].rows, 1, 0))
             return -1;
@@ -456,8 +539,13 @@ static int project_head(void *ctx, const uint8_t *weights, unsigned first, unsig
         resident_offset(d, weights, (size_t)vocab * QWEN_HIDDEN * bits / 8, &offset))
         return -1;
     offset += first * (group * bits / 8);
-    if (host_write(d, stage, input, QWEN_HIDDEN) ||
-        schedule_grouped(d, stage, offset, output, rows, QWEN_HIDDEN, group, bits == 4, vocab, 1, d->c17_head))
+    if (host_write(d, stage, input, QWEN_HIDDEN))
+        return -1;
+    const static_key key = {.kind = 3, .k = vocab, .group = group, .n = rows,
+                            .weights = {offset}, .shape = {bits, first}};
+    const int hit = cached_start(d, &key);
+    if (hit < 0 || (!hit && schedule_grouped(d, stage, offset, output, rows, QWEN_HIDDEN,
+                                             group, bits == 4, vocab, 1, d->c17_head)))
         return -1;
     return host_read(d, output, partials, bytes);
 }
@@ -486,6 +574,76 @@ static int project_rows(void *ctx, const uint8_t *weights, unsigned n, unsigned 
 
 /* Raw products are independent across batch rows. The host applies each
    token's own dynamic Q0.8 coefficient with the same rounding as C15. */
+/* The weight image remains in its original public format on the host.
+   The device copy is reordered once from [OC/16][K group] to [K group][OC]. */
+static int repack_w4(c11b_z15 *d, const uint8_t *packed, unsigned n, unsigned group, unsigned *offset)
+{
+    const unsigned chunk = 16 * (group / 2), groups = QWEN_HIDDEN / group;
+    const unsigned bytes = n * QWEN_HIDDEN / 2;
+    if (resident_offset(d, packed, bytes, offset))
+        return -1;
+    for (unsigned i = 0; i < d->repack_count; ++i)
+        if (d->repacked[i] == *offset)
+            return 0;
+    if (d->repack_count == C18_REPACK_SLOTS)
+        return -1;
+    if (!d->repack_buffer)
+        d->repack_buffer = malloc(QWEN_HIDDEN * QWEN_INTER / 2);
+    if (!d->repack_buffer)
+        return -1;
+    const unsigned panels = n / 16;
+    for (unsigned g = 0; g < groups; ++g)
+        for (unsigned p = 0; p < panels; ++p)
+            memcpy(d->repack_buffer + (g * panels + p) * chunk,
+                   packed + (p * groups + g) * chunk, chunk);
+    if (host_write(d, *offset, d->repack_buffer, bytes))
+        return -1;
+    d->repacked[d->repack_count++] = *offset;
+    if (d->repack_count == C18_REPACK_SLOTS) {
+        free(d->repack_buffer);
+        d->repack_buffer = NULL;
+    }
+    return 0;
+}
+
+static int project_block16_wide(void *ctx, const valence_block16_projection *jobs, unsigned count,
+                                unsigned group, unsigned rows, const int8_t *a8)
+{
+    c11b_z15 *d = ctx;
+    enum { OUTPUT_OFFSET = 128 * 1024 };
+    if (!count || count > 2 || !rows || rows > C16_PREFILL_ROWS || (group != 64 && group != 128))
+        return -1;
+    const unsigned stage = d->ring;
+    unsigned output = stage + OUTPUT_OFFSET, lengths[2], offsets[2];
+    static_key key = {.kind = 4, .group = group, .n = count};
+    for (unsigned i = 0; i < count; ++i) {
+        const unsigned n = jobs[i].channels;
+        if (!n || n > MAX_OUTPUT || n % 16 ||
+            repack_w4(d, jobs[i].packed, n, group, key.weights + i * 2) ||
+            (jobs[i].fine && repack_w4(d, jobs[i].fine, n, group, key.weights + i * 2 + 1)))
+            return -1;
+        key.shape[i] = n;
+        lengths[i] = n * (QWEN_HIDDEN / group) * 4u * rows;
+        offsets[i] = output;
+        output += lengths[i] * (jobs[i].fine ? 2u : 1u);
+    }
+    if (output > d->queue_base || host_write(d, stage, a8, QWEN_HIDDEN * rows))
+        return -1;
+    const int hit = rows == 1 ? cached_start(d, &key) : 0;
+    if (hit < 0)
+        return -1;
+    for (unsigned i = 0; !hit && i < count; ++i)
+        for (unsigned j = 0; j < (jobs[i].fine ? 2u : 1u); ++j)
+            if (schedule_grouped(d, stage, key.weights[i * 2 + j], offsets[i] + j * lengths[i],
+                                 jobs[i].channels, QWEN_HIDDEN, group, 1, jobs[i].channels, rows,
+                                 rows == 1))
+                return -1;
+    for (unsigned i = 0; i < count; ++i)
+        if (host_read(d, offsets[i], jobs[i].partials, lengths[i] * (jobs[i].fine ? 2u : 1u)))
+            return -1;
+    return 0;
+}
+
 static int project_block16_rows(void *ctx, const uint8_t *packed, const uint8_t *fine,
                                 unsigned n, unsigned group, unsigned rows,
                                 const int8_t *activation, int32_t *partials)
@@ -852,6 +1010,7 @@ static c11b_z15 *open_device(const ysyx_hal_t *hal, const uint8_t *image, size_t
     }
     const int mode = probe ? z15_cmdq_select(hal) : 0;
     d->queue_base = d->ring + ring_bytes;
+    d->cache_floor = Z15_POOL_SIZE;
     if (mode < 0 || (mode && (d->queue_base > Z15_POOL_SIZE - 32u || !z15_cmdq_idle(hal)))) {
         if (error)
             *error = "Qwen requires Phase 18 CMDQ capability and reserved queue DDR";
@@ -905,8 +1064,16 @@ void c11b_z15_close(c11b_z15 *d)
 {
     if (d) {
         z15_cmdq_destroy(d->queue);
-        if (d->cmdq && getenv("YSYX_CMDQ_STATS"))
+        for (unsigned i = 0; i < d->cache_count; ++i)
+            z15_cmdq_destroy(d->plans[i].plan);
+        free(d->repack_buffer);
+        if (d->cmdq && getenv("YSYX_CMDQ_STATS")) {
             z15_cmdq_report(stderr, &d->queued);
+            if (d->c18_static)
+                fprintf(stderr, "C18 resident_plans=%u resident_cmdq_bytes=%u repacked_planes=%u\n",
+                        d->cache_count, Z15_POOL_SIZE - C18_QUEUE_GUARD - d->cache_floor,
+                        d->repack_count);
+        }
         free(d->expanded);
         free(d);
     }
@@ -971,6 +1138,13 @@ int c12_z15_attach(qwen_reference *m, c11b_z15 *d, uint32_t layers)
         ops.project_parallel = project_parallel;
         const char *c17 = getenv("YSYX_QWEN_C17");
         d->c17_head = !c17 || !strcmp(c17, "1");
+        const char *c18 = getenv("YSYX_QWEN_C18");
+        d->c18_static = d->c17_head && (!c18 || !strcmp(c18, "1")) &&
+                        d->queue_base <= Z15_POOL_SIZE - C18_QUEUE_GUARD - C18_TRANSIENT_RESERVE;
+        if (d->c18_static) {
+            d->cache_floor = Z15_POOL_SIZE - C18_QUEUE_GUARD;
+            ops.project_block16_wide = project_block16_wide;
+        }
         ops.project_head = project_head;
         ops.head_panel = d->c17_head ? QWEN_VOCAB : C16_HEAD_PANEL;
         ops.project_rows = project_rows;
