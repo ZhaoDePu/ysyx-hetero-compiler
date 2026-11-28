@@ -133,3 +133,5 @@ c15-wait-check: $(OUT)/test-c15-wait
 $(OUT)/test-c15-wait: tests/c15_wait.c $(OUT)/z15_cmdq.o
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(WARNFLAGS) -I. $^ $(LDFLAGS) \
 	      -Wl,--wrap=nanosleep -Wl,--wrap=clock_gettime $(LDLIBS) -o "$@"
+
+$(addprefix $(OUT)/,c11_qwen_ref.o c11b_qwen_ref.o c11_qwen_chat.o c11b_qwen_chat.o c10_pixels.o ysyx_yolo26n_api.o test-c12-cache): c17_simd.h

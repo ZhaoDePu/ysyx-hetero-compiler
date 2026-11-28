@@ -94,3 +94,5 @@ $(OUT)/c16_prefill_rtl.o: tests/c16_prefill_rtl.c c12_qwen_ref.h c11b_qwen_z15_c
 $(OUT)/c16_prefill_rtl: $(OUT)/c16_prefill_rtl.o $(C11B_RTL)
 	$(CXX) -pthread $^ -o "$@.tmp"
 	mv -f -- "$@.tmp" "$@"
+
+$(addprefix $(OUT)/,c11b_qwen_ref.o ysyx_yolo26n_api.o): c17_simd.h

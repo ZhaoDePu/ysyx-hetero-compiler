@@ -32,6 +32,7 @@ int z15_cmdq_validate(uint64_t word);
 int z15_cmdq_select(const ysyx_hal_t *hal);
 int z15_cmdq_idle(const ysyx_hal_t *hal);
 z15_cmdq_plan *z15_cmdq_create(void);
+void z15_cmdq_reset(z15_cmdq_plan *plan);
 void z15_cmdq_destroy(z15_cmdq_plan *plan);
 int z15_cmdq_add(z15_cmdq_plan *plan, z15_cmdq_op op, uint32_t reg, uint32_t value);
 int z15_cmdq_image(z15_cmdq_plan *plan, const uint8_t *image, size_t size);

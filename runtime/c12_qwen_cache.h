@@ -1,6 +1,8 @@
 #ifndef YSYX_C12_QWEN_CACHE_H
 #define YSYX_C12_QWEN_CACHE_H
 
+#include "c17_simd.h"
+
 #include <stddef.h>
 #include <stdint.h>
 
@@ -24,15 +26,9 @@ static inline unsigned c12_cache_code(int32_t value, uint32_t scale, int limit)
 
 static inline void c12_cache_pack(uint8_t *record, const int32_t *values, unsigned bits)
 {
-    uint32_t peak = 0;
+    const uint32_t peak = c17_peak(values, C12_KV_GROUP);
     const unsigned limit = (1u << (bits - 1)) - 1;
     const unsigned payload = C12_KV_GROUP * bits / 8;
-    for (unsigned i = 0; i < C12_KV_GROUP; ++i) {
-        int32_t x = values[i];
-        uint32_t magnitude = (uint32_t)(x < 0 ? -(int64_t)x : x);
-        if (magnitude > peak)
-            peak = magnitude;
-    }
     uint32_t scale = (peak + limit / 2) / limit;
     if (!scale)
         scale = 1;
@@ -43,8 +39,17 @@ static inline void c12_cache_pack(uint8_t *record, const int32_t *values, unsign
             record[i / 2] = (uint8_t)(lo | hi << 4);
         }
     } else {
+#if C17_NEON
+        const uint32_t reciprocal = scale > 1 ? (uint32_t)((UINT64_C(1) << 32) / scale) : 0;
+        for (unsigned i = 0; i < C12_KV_GROUP; i += 8) {
+            const int16x4_t lo = vmovn_s32(c17_quant4(vld1q_s32(values + i), scale, reciprocal, limit));
+            const int16x4_t hi = vmovn_s32(c17_quant4(vld1q_s32(values + i + 4), scale, reciprocal, limit));
+            vst1_s8((int8_t *)record + i, vmovn_s16(vcombine_s16(lo, hi)));
+        }
+#else
         for (unsigned i = 0; i < C12_KV_GROUP; ++i)
             record[i] = (uint8_t)c12_cache_code(values[i], scale, (int)limit);
+#endif
     }
     for (unsigned i = 0; i < 4; ++i)
         record[payload + i] = (uint8_t)(scale >> (8 * i));
@@ -56,6 +61,16 @@ static inline void c12_cache_unpack(const uint8_t *record, int32_t *values, unsi
     uint32_t scale = 0;
     for (unsigned i = 0; i < 4; ++i)
         scale |= (uint32_t)record[payload + i] << (8 * i);
+#if C17_NEON
+    if (bits == 8 && scale <= (UINT32_C(1) << 24)) {
+        for (unsigned i = 0; i < C12_KV_GROUP; i += 8) {
+            const int16x8_t q = vmovl_s8(vld1_s8((const int8_t *)record + i));
+            vst1q_s32(values + i, vmulq_n_s32(vmovl_s16(vget_low_s16(q)), (int32_t)scale));
+            vst1q_s32(values + i + 4, vmulq_n_s32(vmovl_high_s16(q), (int32_t)scale));
+        }
+        return;
+    }
+#endif
     for (unsigned i = 0; i < C12_KV_GROUP; ++i) {
         unsigned code = bits == 4 ? (record[i / 2] >> (4 * (i & 1u))) & 15u : record[i];
         unsigned sign = 1u << (bits - 1);

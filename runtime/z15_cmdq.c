@@ -83,6 +83,15 @@ z15_cmdq_plan *z15_cmdq_create(void)
     return calloc(1, sizeof(z15_cmdq_plan));
 }
 
+void z15_cmdq_reset(z15_cmdq_plan *plan)
+{
+    const z15_cmdq_plan storage = {
+        .bytes = plan->bytes, .capacity = plan->capacity,
+        .batches = plan->batches, .batch_capacity = plan->batch_capacity
+    };
+    *plan = storage;
+}
+
 void z15_cmdq_destroy(z15_cmdq_plan *plan)
 {
     if (plan) {

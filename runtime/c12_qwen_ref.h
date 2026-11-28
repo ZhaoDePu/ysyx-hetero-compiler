@@ -27,6 +27,7 @@ enum { C16_HEAD_PANEL = 16384, C16_PREFILL_ROWS = 16, C16_GROUPED_COLS = 496 };
 
 typedef struct {
     void *ctx;
+    unsigned head_panel;
     int (*project)(void *, const uint8_t *, unsigned, unsigned, unsigned, unsigned,
                    const int8_t *, int32_t *);
     int (*rope)(void *, int32_t *, int32_t *, const uint8_t *);

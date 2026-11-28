@@ -1,3 +1,4 @@
+#include "c17_simd.h"
 #define _POSIX_C_SOURCE 200809L
 #include "c11_qwen_ref.h"
 #include "c12_qwen_ref.h"
@@ -306,16 +307,20 @@ typedef struct {
 
 static int32_t quantize_block(int8_t *out, const int32_t *src, unsigned width)
 {
-    int32_t peak = 0;
-    for (unsigned i = 0; i < width; ++i) {
-        int32_t a = src[i] < 0 ? -src[i] : src[i];
-        if (a > peak)
-            peak = a;
-    }
+    const int32_t peak = (int32_t)c17_peak(src, width);
     int32_t scale = (peak + 63) / 127;
     if (!scale)
         scale = 1;
-    for (unsigned i = 0; i < width; ++i) {
+    unsigned i = 0;
+#if C17_NEON
+    const uint32_t reciprocal = scale > 1 ? (uint32_t)((UINT64_C(1) << 32) / scale) : 0;
+    for (; i + 8 <= width; i += 8) {
+        const int16x4_t lo = vmovn_s32(c17_quant4(vld1q_s32(src + i), (uint32_t)scale, reciprocal, 127));
+        const int16x4_t hi = vmovn_s32(c17_quant4(vld1q_s32(src + i + 4), (uint32_t)scale, reciprocal, 127));
+        vst1_s8(out + i, vmovn_s16(vcombine_s16(lo, hi)));
+    }
+#endif
+    for (; i < width; ++i) {
         const int32_t v = src[i], magnitude = v < 0 ? -v : v;
         int32_t a = (magnitude + scale / 2) / scale;
         if (v < 0)
@@ -558,11 +563,7 @@ static uint64_t integer_sqrt(uint64_t x)
 
 static void rms(const int32_t *x, const uint8_t *gamma, int32_t *out)
 {
-    uint64_t sum = 0;
-    for (unsigned i = 0; i < QWEN_HIDDEN; ++i) {
-        int64_t v = x[i];
-        sum += (uint64_t)(v * v);
-    }
+    const uint64_t sum = (uint64_t)c17_dot(x, x, QWEN_HIDDEN);
     uint64_t root = integer_sqrt(sum / QWEN_HIDDEN + RMS_EPS_Q32);
     for (unsigned i = 0; i < QWEN_HIDDEN; ++i)
         out[i] = bounded(rounded((int64_t)x[i] * s32(gamma + 4 * i), (int64_t)root));
@@ -570,13 +571,28 @@ static void rms(const int32_t *x, const uint8_t *gamma, int32_t *out)
 
 static void rotate(int32_t *x, unsigned heads, const uint8_t *table)
 {
-    for (unsigned head = 0; head < heads; ++head, x += QWEN_HEAD_DIM)
-        for (unsigned i = 0; i < QWEN_HEAD_DIM / 2; ++i) {
+    for (unsigned head = 0; head < heads; ++head, x += QWEN_HEAD_DIM) {
+        unsigned i = 0;
+#if C17_NEON && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+        const int32x2_t lower = vdup_n_s32(-STATE_BOUND), upper = vdup_n_s32(STATE_BOUND);
+        for (; i < QWEN_HEAD_DIM / 2; i += 2) {
+            const int32x4_t coeff = vreinterpretq_s32_u8(vld1q_u8(table + 8 * i));
+            const int32x2_t c = vget_low_s32(vuzp1q_s32(coeff, coeff));
+            const int32x2_t s = vget_low_s32(vuzp2q_s32(coeff, coeff));
+            const int32x2_t u = vld1_s32(x + i), v = vld1_s32(x + i + QWEN_HEAD_DIM / 2);
+            const int64x2_t real = vmlsl_s32(vmull_s32(c, u), s, v);
+            const int64x2_t imag = vmlal_s32(vmull_s32(s, u), c, v);
+            vst1_s32(x + i, vmax_s32(lower, vmin_s32(upper, vqmovn_s64(c17_round_q16(real)))));
+            vst1_s32(x + i + QWEN_HEAD_DIM / 2, vmax_s32(lower, vmin_s32(upper, vqmovn_s64(c17_round_q16(imag)))));
+        }
+#endif
+        for (; i < QWEN_HEAD_DIM / 2; ++i) {
             int32_t u = x[i], v = x[i + QWEN_HEAD_DIM / 2];
             int64_t c = s32(table + 8 * i), s = s32(table + 8 * i + 4);
             x[i] = bounded(rounded(c * u - s * v, QWEN_Q16));
             x[i + QWEN_HEAD_DIM / 2] = bounded(rounded(s * u + c * v, QWEN_Q16));
         }
+    }
 }
 
 static uint32_t exp_negative(const uint8_t *table, int64_t magnitude)
@@ -597,9 +613,7 @@ static void causal_attention(qwen_reference *m, const int32_t *keys, const int32
         int32_t maximum = -STATE_BOUND;
         for (unsigned p = 0; p <= m->position; ++p) {
             const int32_t *k = keys + (size_t)p * KV_WIDTH + group * QWEN_HEAD_DIM;
-            int64_t dot = 0;
-            for (unsigned d = 0; d < QWEN_HEAD_DIM; ++d)
-                dot += (int64_t)q[d] * k[d];
+            const int64_t dot = c17_dot(q, k, QWEN_HEAD_DIM);
             m->scores[p] = bounded(rounded(dot, 8 * QWEN_Q16));
             if (m->scores[p] > maximum)
                 maximum = m->scores[p];
@@ -609,8 +623,7 @@ static void causal_attention(qwen_reference *m, const int32_t *keys, const int32
             uint32_t weight = exp_negative(m->exp, (int64_t)maximum - m->scores[p]);
             const int32_t *v = values + (size_t)p * KV_WIDTH + group * QWEN_HEAD_DIM;
             total += weight;
-            for (unsigned d = 0; d < QWEN_HEAD_DIM; ++d)
-                mix[d] += (int64_t)weight * v[d];
+            c17_accumulate(mix, v, (int32_t)weight, QWEN_HEAD_DIM);
         }
         for (unsigned d = 0; d < QWEN_HEAD_DIM; ++d)
             m->mix[head * QWEN_HEAD_DIM + d] = bounded(rounded(mix[d], total));
@@ -619,7 +632,24 @@ static void causal_attention(qwen_reference *m, const int32_t *keys, const int32
 
 static void swiglu(int32_t *gate, const int32_t *up, const uint8_t *exp)
 {
-    for (unsigned i = 0; i < QWEN_INTER; ++i) {
+    unsigned i = 0;
+#if C17_NEON
+    const int32x4_t lower = vdupq_n_s32(-STATE_BOUND), upper = vdupq_n_s32(STATE_BOUND);
+    for (; i + 4 <= QWEN_INTER; i += 4) {
+        int32_t silu[4];
+        for (unsigned j = 0; j < 4; ++j) {
+            const int32_t x = gate[i + j];
+            const uint32_t e = exp_negative(exp, x < 0 ? -x : x);
+            silu[j] = (int32_t)rounded((int64_t)(x < 0 ? e : Q24) * x, Q24 + e);
+        }
+        const int32x4_t gate_vec = vld1q_s32(silu), up_vec = vld1q_s32(up + i);
+        const int64x2_t lo = c17_round_q16(vmull_s32(vget_low_s32(gate_vec), vget_low_s32(up_vec)));
+        const int64x2_t hi = c17_round_q16(vmull_high_s32(gate_vec, up_vec));
+        const int32x4_t result = vcombine_s32(vqmovn_s64(lo), vqmovn_s64(hi));
+        vst1q_s32(gate + i, vmaxq_s32(lower, vminq_s32(upper, result)));
+    }
+#endif
+    for (; i < QWEN_INTER; ++i) {
         int32_t x = gate[i];
         uint32_t e = exp_negative(exp, x < 0 ? -x : x);
         int64_t p = x < 0 ? e : Q24;
@@ -762,16 +792,26 @@ static void store_cache(qwen_reference *m, unsigned layer, unsigned unpack_from)
 
 enum { C12_LM_PANEL = 2048 };
 
+static unsigned head_panel(const c12_qwen_device *ops)
+{
+    if (!ops->project_head)
+        return C12_LM_PANEL;
+    return ops->head_panel ? ops->head_panel : C16_HEAD_PANEL;
+}
+
 int c12_qwen_set_device(qwen_reference *m, const c12_qwen_device *ops, uint32_t layers)
 {
     if (!m || !m->kv_bits || m->position || !ops || !ops->project ||
         !layers || layers >> (QWEN_LAYERS + 1))
         return -1;
-    size_t partials = (size_t)QWEN_HIDDEN *
-        (ops->project_head && (layers >> QWEN_LAYERS) ? C16_HEAD_PANEL : QWEN_INTER) / m->group;
+    size_t partials = (size_t)QWEN_HIDDEN * QWEN_INTER / m->group;
     if (ops->project_rows)
-        partials = (size_t)QWEN_HIDDEN * QWEN_INTER * C16_PREFILL_ROWS / m->group *
-                   (ops->project_block16_rows ? 2u : 1u);
+        partials *= C16_PREFILL_ROWS * (ops->project_block16_rows ? 2u : 1u);
+    if (layers >> QWEN_LAYERS) {
+        const size_t head = (size_t)QWEN_HIDDEN * head_panel(ops) / m->group;
+        if (partials < head)
+            partials = head;
+    }
     int32_t *buffer = realloc(m->c12_partials, partials * sizeof(*m->c12_partials));
     if (!buffer)
         return -1;
@@ -819,7 +859,7 @@ static int project_q16(qwen_reference *m, const matrix *mat, const activation *i
     const unsigned groups = mat->inputs / mat->group;
     const unsigned stride = mat->group * mat->bits / 8;
     const int resident_head = vocab && m->c12_device.project_head;
-    const unsigned panel = vocab ? (resident_head ? C16_HEAD_PANEL : C12_LM_PANEL) : mat->outputs;
+    const unsigned panel = vocab ? head_panel(&m->c12_device) : mat->outputs;
     for (unsigned first = 0; first < mat->outputs; first += panel) {
         unsigned count = mat->outputs - first;
         if (count > panel)

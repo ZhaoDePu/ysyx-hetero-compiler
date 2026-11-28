@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 #include "c11_qwen_bpe.h"
+#include "c17_simd.h"
 #include "z15_exec_option.h"
 #include "c12_qwen_ref.h"
 #ifdef YSYX_C11B_NATIVE
@@ -67,6 +68,17 @@ static int chat_prompt(const qwen_bpe *bpe, const char *prompt, int first, uint3
 
 static unsigned best(const int32_t *logits, int suppress_stop)
 {
+#if C17_NEON
+    if (!suppress_stop) {
+        int32x4_t maximum = vdupq_n_s32(INT32_MIN);
+        for (unsigned i = 0; i < QWEN_VOCAB; i += 4)
+            maximum = vmaxq_s32(maximum, vld1q_s32(logits + i));
+        const int32_t score = vmaxvq_s32(maximum);
+        for (unsigned i = 0; i < QWEN_VOCAB; ++i)
+            if (logits[i] == score)
+                return i;
+    }
+#endif
     unsigned id = 0;
     for (unsigned i = 1; i < QWEN_VOCAB; ++i)
         if ((!suppress_stop || (i != IM_END && i != END_OF_TEXT)) && logits[i] > logits[id])

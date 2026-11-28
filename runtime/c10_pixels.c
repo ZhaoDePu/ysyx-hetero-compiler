@@ -1,5 +1,6 @@
 #include "c10_pixels.h"
 #include "c10_jpeg.h"
+#include "c17_simd.h"
 #include <string.h>
 
 enum { SIZE = YSYX_YOLO26N_SIZE, PAD = 114 };
@@ -47,6 +48,9 @@ void c10_letterbox_rgb320(const c10_rgb_frame *frame, uint8_t *buffer, c10_lette
     memset(buffer, PAD, YSYX_YOLO26N_RGB_BYTES);
     const unsigned dx = 2 * g->out_width, dy = 2 * g->out_height;
     const unsigned denominator = dx * dy;
+#if C17_NEON
+    const uint32_t recip = (uint32_t)((UINT64_C(1) << 32) / denominator);
+#endif
     sample_axis xs[SIZE], ys[SIZE];
     axis_samples(xs, frame->width, g->out_width);
     axis_samples(ys, frame->height, g->out_height);
@@ -55,7 +59,35 @@ void c10_letterbox_rgb320(const c10_rgb_frame *frame, uint8_t *buffer, c10_lette
         const uint8_t *b = frame->pixels + (size_t)ys[y].hi * frame->width * 3;
         uint8_t *dest = buffer + ((size_t)(g->top + y) * SIZE + g->left) * 3;
         const unsigned fy = ys[y].fraction;
-        for (unsigned x = 0; x < g->out_width; ++x) {
+        unsigned x = 0;
+#if C17_NEON
+        for (; x + 4 <= g->out_width; x += 4, dest += 12) {
+            uint32_t offsets_lo[4], offsets_hi[4], fx_data[4];
+            for (unsigned i = 0; i < 4; ++i) {
+                offsets_lo[i] = xs[x + i].lo * 3;
+                offsets_hi[i] = xs[x + i].hi * 3;
+                fx_data[i] = xs[x + i].fraction;
+            }
+            const uint32x4_t fx = vld1q_u32(fx_data);
+            const uint32x4_t inv_x = vsubq_u32(vdupq_n_u32(dx), fx);
+            for (unsigned k = 0; k < 3; ++k) {
+                uint32_t a_lo[4], a_hi[4], b_lo[4], b_hi[4], result[4];
+                for (unsigned i = 0; i < 4; ++i) {
+                    a_lo[i] = a[offsets_lo[i] + k];
+                    a_hi[i] = a[offsets_hi[i] + k];
+                    b_lo[i] = b[offsets_lo[i] + k];
+                    b_hi[i] = b[offsets_hi[i] + k];
+                }
+                const uint32x4_t top = vmlaq_u32(vmulq_u32(vld1q_u32(a_lo), inv_x), vld1q_u32(a_hi), fx);
+                const uint32x4_t bot = vmlaq_u32(vmulq_u32(vld1q_u32(b_lo), inv_x), vld1q_u32(b_hi), fx);
+                const uint32x4_t sum = vmlaq_n_u32(vmulq_n_u32(top, dy - fy), bot, fy);
+                vst1q_u32(result, c17_divide4(vaddq_u32(sum, vdupq_n_u32(denominator / 2)), denominator, recip));
+                for (unsigned i = 0; i < 4; ++i)
+                    dest[i * 3 + k] = (uint8_t)result[i];
+            }
+        }
+#endif
+        for (; x < g->out_width; ++x) {
             const unsigned lo = xs[x].lo * 3, hi = xs[x].hi * 3, fx = xs[x].fraction;
             for (unsigned k = 0; k < 3; ++k) {
                 unsigned top = a[lo + k] * (dx - fx) + a[hi + k] * fx;

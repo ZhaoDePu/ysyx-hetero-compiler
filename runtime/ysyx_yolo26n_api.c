@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 #include "yolo26n_post.h"
+#include "c17_simd.h"
 #include "yolo26n_target.h"
 #include "hal_reference_c6.h"
 #include "c10_session.h"
@@ -242,14 +243,7 @@ static int valid_arguments(const ysyx_yolo26n_ctx_t *ctx, const uint8_t *rgb,
 
 static void quantize_rgb(ysyx_yolo26n_ctx_t *ctx, const uint8_t *rgb)
 {
-    uint8_t *input = ctx->input;
-    const uint8_t *quant = ctx->quant;
-    for (size_t i = 0; i < (size_t)320 * 320; ++i) {
-        input[4 * i] = quant[rgb[3 * i]];
-        input[4 * i + 1u] = quant[rgb[3 * i + 1u]];
-        input[4 * i + 2u] = quant[rgb[3 * i + 2u]];
-        input[4 * i + 3u] = 0;
-    }
+    c17_rgb_quantize(ctx->input, rgb, ctx->quant, (size_t)320 * 320);
 }
 
 static void record_perf(ysyx_perf_t *perf, const ysyx_stats_t *stats, int hardware)
