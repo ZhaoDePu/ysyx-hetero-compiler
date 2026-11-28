@@ -87,3 +87,10 @@ $(OUT)/c12_qwen_rtl: $(OUT)/c12_qwen_rtl.o $(C11B_RTL)
 
 $(OUT)/ysyx_rt.o $(OUT)/z15_cmdq.o $(OUT)/hal_reference_c6.o $(OUT)/hal_linux_uio.o: z15_cmdq.h
 $(addprefix $(OUT)/,ysyx_run.o ysyx_yolo26n_cli.o c10_benchmark.o): z15_exec_option.h
+
+$(OUT)/c16_prefill_rtl.o: tests/c16_prefill_rtl.c c12_qwen_ref.h c11b_qwen_z15_cmdq.h
+	$(CC) $(CFLAGS) -DYSYX_C11B_NATIVE -I. -c "$<" -o "$@"
+
+$(OUT)/c16_prefill_rtl: $(OUT)/c16_prefill_rtl.o $(C11B_RTL)
+	$(CXX) -pthread $^ -o "$@.tmp"
+	mv -f -- "$@.tmp" "$@"

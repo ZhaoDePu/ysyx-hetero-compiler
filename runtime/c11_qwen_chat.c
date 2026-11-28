@@ -25,13 +25,13 @@ static const char *const bench_prompts[] = {
 typedef struct {
     const char *weights, *tokenizer, *mode, *backend, *csv, *plain, *chat, *prompt;
     const char *logits_path;
-    unsigned steps, kv_bits;
+    unsigned steps, min_steps, kv_bits;
     int turbo, trace_steps;
 #ifdef YSYX_C11B_NATIVE
-    const char *golden;
+    const char *golden, *fallback_weights;
     valence_target target;
     unsigned token;
-    int token_given;
+    int token_given, auto_target, mmio_profile_given;
 #endif
 } options;
 
@@ -65,36 +65,41 @@ static int chat_prompt(const qwen_bpe *bpe, const char *prompt, int first, uint3
     return qwen_bpe_encode(bpe, text, ids, MAX_IDS);
 }
 
-static unsigned best(const int32_t *logits)
+static unsigned best(const int32_t *logits, int suppress_stop)
 {
     unsigned id = 0;
     for (unsigned i = 1; i < QWEN_VOCAB; ++i)
-        if (logits[i] > logits[id])
+        if ((!suppress_stop || (i != IM_END && i != END_OF_TEXT)) && logits[i] > logits[id])
             id = i;
     return id;
+}
+
+static int dump_logits(FILE *file, const int32_t *logits)
+{
+    if (!file)
+        return 0;
+    uint8_t block[4096];
+    for (unsigned first = 0; first < QWEN_VOCAB; first += sizeof(block) / 4) {
+        unsigned count = QWEN_VOCAB - first;
+        if (count > sizeof(block) / 4)
+            count = sizeof(block) / 4;
+        for (unsigned j = 0; j < count; ++j) {
+            const uint32_t value = (uint32_t)logits[first + j];
+            for (unsigned i = 0; i < 4; ++i)
+                block[j * 4 + i] = (uint8_t)(value >> (8 * i));
+        }
+        if (fwrite(block, 4, count, file) != count)
+            return -1;
+    }
+    return 0;
 }
 
 static const int32_t *step(session *chat, unsigned id)
 {
     const int32_t *result = qwen_reference_step(chat->model, id);
-    if (result) {
-        ++chat->position;
-        if (chat->logits_dump) {
-            uint8_t block[4096];
-            for (unsigned first = 0; first < QWEN_VOCAB; first += sizeof(block) / 4) {
-                unsigned count = QWEN_VOCAB - first;
-                if (count > sizeof(block) / 4)
-                    count = sizeof(block) / 4;
-                for (unsigned j = 0; j < count; ++j) {
-                    const uint32_t value = (uint32_t)result[first + j];
-                    for (unsigned i = 0; i < 4; ++i)
-                        block[j * 4 + i] = (uint8_t)(value >> (8 * i));
-                }
-                if (fwrite(block, 4, count, chat->logits_dump) != count)
-                    return NULL;
-            }
-        }
-    }
+    if (!result || dump_logits(chat->logits_dump, result))
+        return NULL;
+    ++chat->position;
     return result;
 }
 
@@ -138,18 +143,25 @@ static int turn(session *chat, const char *prompt, const options *o, FILE *csv)
     }
 #endif
     const double start = seconds();
+#ifdef YSYX_C11B_NATIVE
+    logits = c16_qwen_prefill(chat->model, ids, (unsigned)count);
+    if (!logits || dump_logits(chat->logits_dump, logits))
+        return -1;
+    chat->position += (unsigned)count;
+#else
     for (int i = 0; i + 1 < count; ++i)
         if (advance(chat, ids[i]))
             return -1;
     logits = step(chat, ids[count - 1]);
     if (!logits)
         return -1;
+#endif
     const double prefill = seconds() - start;
 
     const double begin = seconds();
     unsigned generated = 0;
     for (; generated < limit; ++generated) {
-        const unsigned id = best(logits);
+        const unsigned id = best(logits, generated < o->min_steps);
         if (id == IM_END || id == END_OF_TEXT)
             break;
         size_t bytes = 0;
@@ -266,13 +278,16 @@ static int parse(options *o, int argc, char **argv)
         else if (!strcmp(key, "--encode-chat")) o->chat = value;
 #ifdef YSYX_C11B_NATIVE
         else if (!strcmp(key, "--target")) {
-            if (strcmp(value, "step2") && strcmp(value, "p17"))
+            if (strcmp(value, "step2") && strcmp(value, "p17") && strcmp(value, "auto"))
                 return -1;
+            o->auto_target = !strcmp(value, "auto");
             o->target = !strcmp(value, "p17") ? VALENCE_P17 : VALENCE_STEP2;
         }
+        else if (!strcmp(key, "--fallback-weights")) o->fallback_weights = value;
         else if (!strcmp(key, "--mmio-profile")) {
             if (strcmp(value, "v1") && strcmp(value, "turbo"))
                 return -1;
+            o->mmio_profile_given = 1;
             o->turbo = !strcmp(value, "turbo");
         }
         else if (!strcmp(key, "--kv-bits")) {
@@ -296,25 +311,30 @@ static int parse(options *o, int argc, char **argv)
                 return -1;
             o->trace_steps = !strcmp(value, "on");
         }
-        else if (!strcmp(key, "--max-new-tokens")) {
+        else if (!strcmp(key, "--max-new-tokens") || !strcmp(key, "--min-new-tokens")) {
             char *end;
             errno = 0;
             unsigned long n = strtoul(value, &end, 10);
             if (errno || *end || !n || n > 512)
                 return -1;
-            o->steps = (unsigned)n;
+            if (!strcmp(key, "--min-new-tokens"))
+                o->min_steps = (unsigned)n;
+            else
+                o->steps = (unsigned)n;
         } else {
             return -1;
         }
     }
     const int encode = !!o->plain + !!o->chat;
-    return !o->tokenizer || encode > 1 || (!encode && !o->weights) ||
+    return o->min_steps > o->steps || !o->tokenizer || encode > 1 || (!encode && !o->weights) ||
            (o->prompt && (encode || strcmp(o->mode, "chat"))) ||
 #ifdef YSYX_C11B_NATIVE
            (strcmp(o->backend, "cpu") && strcmp(o->backend, "z15") &&
             strcmp(o->backend, "cmdq-reference")) ||
            (!strcmp(o->backend, "cmdq-reference") && (o->target != VALENCE_P17 || encode)) ||
            (encode && !strcmp(o->backend, "z15")) ||
+           (o->auto_target && (strcmp(o->backend, "z15") || o->mmio_profile_given)) ||
+           (o->fallback_weights && !o->auto_target) ||
            (o->turbo && strcmp(o->backend, "z15")) ||
            (o->target == VALENCE_P17 && (o->turbo || !strcmp(o->backend, "cpu"))) ||
            (!strcmp(o->mode, "verify") ? !o->golden || !o->token_given || encode || o->csv
@@ -411,18 +431,16 @@ static int verify_token(session *chat, const options *o)
 #ifdef YSYX_C11B_NATIVE
 static int native_start(session *chat, const options *o)
 {
-    int mixed = c12_qwen_mixed(chat->model);
-    if (o->kv_bits && c12_qwen_cache_bits(chat->model, o->kv_bits))
-        return -1;
-    if (!strcmp(o->backend, "cpu"))
-        return mixed ? 0 : qwen_reference_native(chat->model, NULL);
+    valence_target target = o->target;
+    int turbo = o->turbo;
+    const char *weights = o->weights;
     const char *why = NULL;
+    const int cpu = !strcmp(o->backend, "cpu");
     if (!strcmp(o->backend, "cmdq-reference")) {
         const char *mode = getenv("YSYX_EXEC_MODE");
-        if (!mixed || (mode && !strcmp(mode, "mmio")) ||
-            ysyx_hal_reference_cmdq_open(&chat->hal, &why))
+        if ((mode && !strcmp(mode, "mmio")) || ysyx_hal_reference_cmdq_open(&chat->hal, &why))
             return -1;
-    } else {
+    } else if (!cpu) {
         FILE *state = fopen("/sys/class/fpga_manager/fpga0/state", "r");
         char line[32];
         const int operating = state && fgets(line, sizeof(line), state) &&
@@ -438,20 +456,47 @@ static int native_start(session *chat, const options *o)
             return -1;
         }
     }
+    if (o->auto_target) {
+        if (c16_z15_detect(&chat->hal, &target, &turbo)) {
+            fputs("Unsupported Z15 extension or missing Phase 18 CMDQ capability.\n", stderr);
+            return -1;
+        }
+        if (target == VALENCE_STEP2 && o->fallback_weights)
+            weights = o->fallback_weights;
+        fprintf(stderr, "Z15 auto target: %s, weights=%s\n",
+                target == VALENCE_P17 ? "Phase 18" : turbo ? "Step 2-v3 Turbo" : "Step 2 v1",
+                weights);
+    }
+    chat->model = qwen_reference_open(weights);
+    if (!chat->model) {
+        fprintf(stderr, "Cannot open Qwen weights: %s\n", weights);
+        return -1;
+    }
+    const int mixed = c12_qwen_mixed(chat->model);
+    if (o->kv_bits && c12_qwen_cache_bits(chat->model, o->kv_bits))
+        return -1;
+    if (cpu)
+        return mixed ? 0 : qwen_reference_native(chat->model, NULL);
+    if (!mixed && !strcmp(o->backend, "cmdq-reference"))
+        return -1;
+    if (target == VALENCE_STEP2 && c14_qwen_block16(chat->model)) {
+        fputs("Step 2 requires C12 KV8 weights; supply --fallback-weights with --target auto.\n", stderr);
+        return -1;
+    }
     size_t bytes;
     const uint8_t *data = qwen_reference_image(chat->model, &bytes);
-    chat->device = c11b_z15_open_target(&chat->hal, data, bytes, o->target, &why);
+    chat->device = c11b_z15_open_target(&chat->hal, data, bytes, target, &why);
     if (!chat->device) {
         fprintf(stderr, "%s\n", why ? why : "could not open the Z15 Qwen runtime");
         return -1;
     }
-    if (o->turbo && c12_z15_enable_turbo(chat->device)) {
+    if (turbo && c12_z15_enable_turbo(chat->device)) {
         fputs("The selected Turbo image did not report MMIO extension 0x0c0c0101.\n", stderr);
         return -1;
     }
     if (mixed) {
-        fputs(o->target == VALENCE_P17
-              ? "Valence P17: packed W4/INT8 TC projections, SC RoPE/residual, host Q16 nonlinearities.\n"
+        fputs(target == VALENCE_P17
+              ? "Valence P17: packed W4/INT8 TC projections and Q16 nonlinearities.\n"
               : "Valence C12: NPU projections, GPU RoPE/residual and host Q16 nonlinearities.\n", stderr);
         return c12_z15_attach(chat->model, chat->device, (UINT32_C(1) << (QWEN_LAYERS + 1)) - 1);
     }
@@ -466,12 +511,12 @@ int main(int argc, char **argv)
     static const char help[] =
 #ifdef YSYX_C11B_NATIVE
          "z15_qwen25_chat --weights FILE --tokenizer FILE [--backend cpu|z15|cmdq-reference] "
-        "[--kv-bits 4|8 (C12 default: 8)] [--target step2|p17] [--exec-mode auto|cmdq|mmio] [--exec-stats] [--mmio-profile v1|turbo] [--mode verify --token-id ID --golden FILE]\n"
+        "[--kv-bits 4|8 (C12 default: 8)] [--target step2|p17|auto] [--fallback-weights FILE] [--exec-mode auto|cmdq|mmio] [--exec-stats] [--mmio-profile v1|turbo] [--mode verify --token-id ID --golden FILE]\n"
         "Chat and bench options: "
 #else
         "ysyx_qwen_chat --weights FILE --tokenizer FILE [--backend sim] "
 #endif
-        "[--mode chat|bench] [--prompt TEXT] [--max-new-tokens N] [--trace-steps on|off] [--csv FILE] [--dump-logits FILE]\n"
+        "[--mode chat|bench] [--prompt TEXT] [--max-new-tokens N] [--min-new-tokens N] [--trace-steps on|off] [--csv FILE] [--dump-logits FILE]\n"
         "--tokenizer FILE --encode TEXT|--encode-chat PROMPT\n";
     options o;
     if (argc == 2 && !strcmp(argv[1], "--help")) {
@@ -504,11 +549,17 @@ int main(int argc, char **argv)
         for (int i = 0; i < count; ++i)
             printf("%u\n", ids[i]);
     } else {
+#ifndef YSYX_C11B_NATIVE
         chat.model = qwen_reference_open(o.weights);
+#endif
         FILE *csv = o.csv ? fopen(o.csv, "w") : NULL;
         chat.logits_dump = o.logits_path ? fopen(o.logits_path, "wb") : NULL;
-        if (!chat.model || (o.csv && !csv) || (o.logits_path && !chat.logits_dump)) {
-            fputs("Cannot open Qwen weights or CSV output.\n", stderr);
+        if ((o.csv && !csv) || (o.logits_path && !chat.logits_dump)
+#ifndef YSYX_C11B_NATIVE
+            || !chat.model
+#endif
+        ) {
+            fputs("Cannot open Qwen input or output files.\n", stderr);
             rc = 1;
 #ifdef YSYX_C11B_NATIVE
         } else if (native_start(&chat, &o)) {

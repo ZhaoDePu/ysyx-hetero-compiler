@@ -1,12 +1,14 @@
 /* Exercise extension discovery and packed table writes with no physical I/O. */
 #include "c12_qwen_ref.h"
 #include "z15_regs.h"
+#include "z15_cmdq.h"
 
 #include <stdio.h>
 #include <string.h>
 
 typedef struct {
-    int is_turbo;
+    uint32_t extension, capabilities;
+    int is_turbo, extension_present;
     unsigned capability_reads, packed_writes, classic_writes;
     unsigned dma_high_reads;
     uint8_t activations[256];
@@ -22,11 +24,13 @@ static int read_reg(void *ctx, uint32_t reg, uint32_t *value)
         *value = Z15_VERSION_VALUE;
     else if (reg == Z15_STATUS)
         *value = Z15_LOCKED | Z15_DMA_DONE | Z15_NPU_DONE | Z15_GPU_DONE;
-    else if (reg == 0x0120) {
+    else if (reg == Z15_EXT_VERSION) {
         ++state->capability_reads;
-        if (!state->is_turbo)
+        if (!state->extension_present)
             return -1;
-        *value = UINT32_C(0x0c0c0101);
+        *value = state->extension;
+    } else if (reg == Z15_CAP_FLAGS) {
+        *value = state->capabilities;
     } else if (reg == 0x0100) {
         *value = 3;
     } else if (reg == 0x0104) {
@@ -76,7 +80,8 @@ static int sync_data(void *ctx, uint32_t offset, size_t size, int direction)
 
 static int exercise(int turbo)
 {
-    bus state = {.is_turbo = turbo};
+    bus state = {.is_turbo = turbo, .extension_present = turbo,
+                 .extension = UINT32_C(0x0c0c0101)};
     const ysyx_hal_t hal = {&state, read_reg, write_reg, write_data, read_data,
                             sync_data, NULL, NULL};
     const uint8_t dummy[] = {0};
@@ -104,10 +109,31 @@ static int exercise(int turbo)
     return fail;
 }
 
+static int detect(int present, uint32_t version, uint32_t capabilities,
+                  valence_target expected, int expected_turbo, int expected_result)
+{
+    bus state = {.extension_present = present, .extension = version, .capabilities = capabilities};
+    const ysyx_hal_t hal = {&state, read_reg, write_reg, write_data, read_data,
+                            sync_data, NULL, NULL};
+    valence_target target;
+    int turbo;
+    return c16_z15_detect(&hal, &target, &turbo) != expected_result ||
+           target != expected || turbo != expected_turbo ||
+           state.capability_reads != 1 || state.packed_writes || state.classic_writes;
+}
+
 int main(void)
 {
     if (exercise(0) || exercise(1))
         return 1;
+    if (detect(0, 0, 0, VALENCE_STEP2, 0, 0) ||
+        detect(1, 0, 0, VALENCE_STEP2, 0, 0) ||
+        detect(1, UINT32_C(0x0c0c0101), 0, VALENCE_STEP2, 1, 0) ||
+        detect(1, Z15_P18_VERSION, Z15_CAP_CMDQ, VALENCE_P17, 0, 0) ||
+        detect(1, Z15_P18_VERSION, 0, VALENCE_STEP2, 0, -1) ||
+        detect(1, UINT32_C(0x0c0cffff), 0, VALENCE_STEP2, 0, -1))
+        return 1;
     puts("C12 v1 no extension probe, Turbo capability, packed LUT and 64-bit retry PASS");
+    puts("C16 auto target Phase 18 CMDQ / Step 2-v3 Turbo / Step 2 v1 PASS");
     return 0;
 }
